@@ -1,0 +1,29 @@
+# Research database location
+research_dir: ~/sentinel/research
+
+# Default LLM backend ("claude" or "ollama")
+default_backend: claude
+
+# Claude CLI configuration
+claude:
+  binary: claude
+  model: opus
+  max_tokens: 16000
+
+# Ollama configuration
+ollama:
+  host: http://localhost:11434
+  model: qwen3-coder-next
+  fallback_model: nemotron
+
+# Scheduler
+scheduler:
+  poll_interval: 60s
+  max_concurrent: 1
+  log_file: ~/.researcher/scheduler.log
+  pid_file: ~/.researcher/scheduler.pid
+
+# grepai
+grepai:
+  auto_index: true
+  binary: grepai
