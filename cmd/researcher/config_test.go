@@ -43,6 +43,27 @@ func TestConfigSet(t *testing.T) {
 	}
 }
 
+func TestConfigSet_DifferentKey(t *testing.T) {
+	testSetup(t)
+
+	out, err := runCmd(t, "config", "set", "default_backend", "claude")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Set default_backend") {
+		t.Errorf("output missing confirmation: %s", out)
+	}
+
+	// Verify
+	out2, err := runCmd(t, "config", "show")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out2, "claude") {
+		t.Errorf("config show missing updated value: %s", out2)
+	}
+}
+
 func TestConfigSet_MissingArgs(t *testing.T) {
 	testSetup(t)
 

@@ -90,6 +90,21 @@ func TestNewProvider_Override(t *testing.T) {
 	})
 }
 
+func TestNewProvider_OllamaModelOverride(t *testing.T) {
+	cfg := defaultTestConfig()
+	p, err := NewProvider(cfg, "ollama", "custom-model")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	o, ok := p.(*Ollama)
+	if !ok {
+		t.Fatalf("expected *Ollama, got %T", p)
+	}
+	if o.Model != "custom-model" {
+		t.Errorf("Model = %q, want %q", o.Model, "custom-model")
+	}
+}
+
 func TestNewProvider_Unknown(t *testing.T) {
 	cfg := defaultTestConfig()
 	_, err := NewProvider(cfg, "unknown", "")

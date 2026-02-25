@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,6 +115,44 @@ func TestLinkCmd(t *testing.T) {
 	}
 }
 
+func TestLinkCmd_RelativePath(t *testing.T) {
+	_, researchDir := testSetup(t)
+
+	// Use a relative path — cmd needs to resolve it to absolute
+	tmpDir := t.TempDir()
+	// Change to tmpDir so relative path resolves there
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	out, err := runCmd(t, "link", "relative-link")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Linked") {
+		t.Errorf("output missing 'Linked': %s", out)
+	}
+
+	// Verify the symlink was created at the absolute path
+	target := filepath.Join(tmpDir, "relative-link")
+	dest, err := os.Readlink(target)
+	if err != nil {
+		t.Fatalf("readlink: %v", err)
+	}
+	if dest != researchDir {
+		t.Errorf("symlink target = %q, want %q", dest, researchDir)
+	}
+}
+
+func TestLinkCmd_MissingArg(t *testing.T) {
+	testSetup(t)
+
+	_, err := runCmd(t, "link")
+	if err == nil {
+		t.Fatal("expected error for missing argument")
+	}
+}
+
 func TestLinkCmd_AlreadyExists(t *testing.T) {
 	testSetup(t)
 
@@ -164,6 +203,53 @@ func TestInitCmd_AlreadyExists(t *testing.T) {
 
 	if !strings.Contains(out, "already exists") {
 		t.Errorf("output missing 'already exists': %s", out)
+	}
+}
+
+func TestInitCmd_GrepaiEnabled(t *testing.T) {
+	configDir := t.TempDir()
+	researchDir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", configDir)
+
+	// Write config with auto_index: true and binary: echo (which will always succeed)
+	yaml := fmt.Sprintf(`research_dir: %s
+default_backend: ollama
+claude:
+  binary: echo
+  model: test
+  max_tokens: 100
+ollama:
+  host: http://127.0.0.1:0
+  model: test
+  fallback_model: test
+tools:
+  enabled: false
+  max_iterations: 1
+  max_results: 1
+scheduler:
+  poll_interval: 60s
+  max_concurrent: 1
+  log_file: %s/scheduler.log
+  pid_file: %s/scheduler.pid
+grepai:
+  auto_index: true
+  binary: echo
+`, researchDir, configDir, configDir)
+
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+
+	out, err := runCmd(t, "init")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should mention grepai since auto_index is true
+	if !strings.Contains(out, "grepai") {
+		t.Errorf("output should mention grepai with auto_index=true: %s", out)
+	}
+	if !strings.Contains(out, "initialized") {
+		t.Errorf("output missing 'initialized': %s", out)
 	}
 }
 

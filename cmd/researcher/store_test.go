@@ -76,6 +76,30 @@ func TestScheduleAdd_MissingCron(t *testing.T) {
 	}
 }
 
+func TestScheduleAdd_WithBackendAndModel(t *testing.T) {
+	testSetup(t)
+
+	out, err := runCmd(t, "schedule", "add", "--topic", "test", "--cron", "0 9 * * 1", "--backend", "ollama", "--model", "llama3", "--priority", "5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Scheduled task") {
+		t.Errorf("output missing 'Scheduled task': %s", out)
+	}
+}
+
+func TestScheduleAdd_MissingTopic(t *testing.T) {
+	testSetup(t)
+
+	_, err := runCmd(t, "schedule", "add", "--cron", "0 9 * * 1")
+	if err == nil {
+		t.Fatal("expected error for missing --topic")
+	}
+	if !strings.Contains(err.Error(), "--topic is required") {
+		t.Errorf("error = %q, want to contain '--topic is required'", err.Error())
+	}
+}
+
 func TestScheduleList(t *testing.T) {
 	testSetup(t)
 
@@ -153,5 +177,63 @@ func TestWatchCmd_CustomCron(t *testing.T) {
 	}
 	if !strings.Contains(out, "0 */6 * * *") {
 		t.Errorf("output missing custom cron: %s", out)
+	}
+}
+
+func TestWatchCmd_WithBackendAndModel(t *testing.T) {
+	testSetup(t)
+
+	out, err := runCmd(t, "watch", "test topic", "--backend", "ollama", "--model", "llama3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Scheduled watch") {
+		t.Errorf("output missing 'Scheduled watch': %s", out)
+	}
+}
+
+func TestScheduleRemove_NonexistentID(t *testing.T) {
+	testSetup(t)
+
+	// SQLite DELETE with no matching rows doesn't error, so this should succeed
+	out, err := runCmd(t, "schedule", "remove", "nonexistent-id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Removed") {
+		t.Errorf("output missing 'Removed': %s", out)
+	}
+}
+
+func TestQueueAdd_WithBackendAndModel(t *testing.T) {
+	testSetup(t)
+
+	out, err := runCmd(t, "queue", "add", "--topic", "test", "--type", "dive", "--backend", "ollama", "--model", "llama3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Queued task") {
+		t.Errorf("output missing 'Queued task': %s", out)
+	}
+}
+
+func TestQueueAdd_WithPriority(t *testing.T) {
+	testSetup(t)
+
+	out, err := runCmd(t, "queue", "add", "--topic", "test", "--type", "ask", "--priority", "5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Queued task") {
+		t.Errorf("output missing 'Queued task': %s", out)
+	}
+}
+
+func TestWatchCmd_MissingArg(t *testing.T) {
+	testSetup(t)
+
+	_, err := runCmd(t, "watch")
+	if err == nil {
+		t.Fatal("expected error for missing argument")
 	}
 }

@@ -3,8 +3,11 @@ package scheduler
 import (
 	"io"
 	"log"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/marklubin/researcher/internal/config"
 )
 
 func TestShouldRun(t *testing.T) {
@@ -55,6 +58,188 @@ func TestShouldRun(t *testing.T) {
 			t.Error("expected false for recently-run task")
 		}
 	})
+}
+
+func TestNewStore_FromConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	cfg := &config.Config{
+		Scheduler: config.SchedulerConfig{
+			LogFile: filepath.Join(dir, "sched.log"),
+			PIDFile: filepath.Join(dir, "sched.pid"),
+		},
+	}
+
+	store, err := NewStore(cfg)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	// Verify we can perform operations on the store
+	task := &Task{Type: "ask", Topic: "test", Status: StatusQueued}
+	if err := store.Create(task); err != nil {
+		t.Fatalf("Create on new store failed: %v", err)
+	}
+}
+
+func TestNew_Success(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	cfg := &config.Config{
+		Scheduler: config.SchedulerConfig{
+			PollInterval:  "1s",
+			MaxConcurrent: 1,
+			LogFile:       filepath.Join(dir, "sched.log"),
+			PIDFile:       filepath.Join(dir, "sched.pid"),
+		},
+	}
+
+	// Use a nil-safe mock provider
+	sched, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if sched == nil {
+		t.Fatal("New() returned nil scheduler")
+	}
+	if sched.store == nil {
+		t.Error("scheduler.store is nil")
+	}
+	if sched.logger == nil {
+		t.Error("scheduler.logger is nil")
+	}
+	// Clean up
+	sched.store.Close()
+}
+
+func TestStop_ClosesChannel(t *testing.T) {
+	s := &Scheduler{
+		logger: log.New(io.Discard, "", 0),
+		stopCh: make(chan struct{}),
+	}
+
+	s.Stop()
+
+	// Reading from a closed channel should return immediately
+	select {
+	case <-s.stopCh:
+		// success — channel is closed
+	default:
+		t.Error("stopCh was not closed after Stop()")
+	}
+}
+
+func TestRun_StopsOnSignal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	cfg := &config.Config{
+		Scheduler: config.SchedulerConfig{
+			PollInterval:  "100ms",
+			MaxConcurrent: 1,
+			LogFile:       filepath.Join(dir, "sched.log"),
+			PIDFile:       filepath.Join(dir, "sched.pid"),
+		},
+	}
+
+	sched, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		sched.Run()
+		close(done)
+	}()
+
+	// Give it a moment to start, then stop
+	time.Sleep(150 * time.Millisecond)
+	sched.Stop()
+
+	select {
+	case <-done:
+		// success — Run() returned
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not stop within 2s after Stop()")
+	}
+}
+
+func TestNew_InvalidLogPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	cfg := &config.Config{
+		Scheduler: config.SchedulerConfig{
+			PollInterval:  "1s",
+			MaxConcurrent: 1,
+			LogFile:       "/nonexistent/dir/that/does/not/exist/sched.log",
+			PIDFile:       filepath.Join(dir, "sched.pid"),
+		},
+	}
+
+	_, err := New(cfg, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid log path")
+	}
+}
+
+func TestPoll_EmptyStore(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	store := newTestStore(t)
+	s := &Scheduler{
+		cfg: &config.Config{
+			Scheduler: config.SchedulerConfig{
+				PollInterval:  "1s",
+				MaxConcurrent: 1,
+			},
+		},
+		store:  store,
+		logger: log.New(io.Discard, "", 0),
+		stopCh: make(chan struct{}),
+	}
+
+	// poll should run without error on empty store
+	s.poll()
+}
+
+func TestPoll_ScheduledNotDue(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	store := newTestStore(t)
+
+	// Create a scheduled task with a yearly cron and recent CreatedAt.
+	// Next run will be Jan 1 next year, so shouldRun returns false.
+	yearly := "0 0 1 1 *"
+	task := &Task{
+		Type:      "watch",
+		Topic:     "test",
+		Status:    StatusScheduled,
+		Cron:      &yearly,
+		CreatedAt: time.Now(),
+	}
+	store.Create(task)
+
+	s := &Scheduler{
+		cfg: &config.Config{
+			Scheduler: config.SchedulerConfig{
+				PollInterval:  "1s",
+				MaxConcurrent: 1,
+			},
+		},
+		store:  store,
+		logger: log.New(io.Discard, "", 0),
+		stopCh: make(chan struct{}),
+	}
+
+	// poll should check the scheduled task, find it not due, and check queued (empty)
+	s.poll()
 }
 
 func TestStatusConstants(t *testing.T) {

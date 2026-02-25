@@ -283,6 +283,36 @@ func TestStore_DueScheduled(t *testing.T) {
 	}
 }
 
+func TestStore_UpdateStatus_Failed(t *testing.T) {
+	s := newTestStore(t)
+
+	task := &Task{Type: "dive", Topic: "test", Status: StatusQueued}
+	s.Create(task)
+
+	if err := s.UpdateStatus(task.ID, StatusFailed); err != nil {
+		t.Fatalf("UpdateStatus(failed): %v", err)
+	}
+	got, _ := s.Get(task.ID)
+	if got.Status != StatusFailed {
+		t.Errorf("Status = %q, want %q", got.Status, StatusFailed)
+	}
+}
+
+func TestStore_UpdateStatus_Scheduled(t *testing.T) {
+	s := newTestStore(t)
+
+	task := &Task{Type: "watch", Topic: "test", Status: StatusQueued}
+	s.Create(task)
+
+	if err := s.UpdateStatus(task.ID, StatusScheduled); err != nil {
+		t.Fatalf("UpdateStatus(scheduled): %v", err)
+	}
+	got, _ := s.Get(task.ID)
+	if got.Status != StatusScheduled {
+		t.Errorf("Status = %q, want %q", got.Status, StatusScheduled)
+	}
+}
+
 func TestStore_CreateWithExplicitID(t *testing.T) {
 	s := newTestStore(t)
 

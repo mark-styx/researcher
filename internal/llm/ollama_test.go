@@ -13,6 +13,175 @@ import (
 	"github.com/marklubin/researcher/internal/tools"
 )
 
+func TestOllama_Name(t *testing.T) {
+	o := &Ollama{}
+	if got := o.Name(); got != "ollama" {
+		t.Errorf("Name() = %q, want %q", got, "ollama")
+	}
+}
+
+func TestOllama_Complete_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ollamaChatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		resp := ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: "completed response"},
+			Done:    true,
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	o := &Ollama{
+		Host:     srv.URL,
+		Model:    "primary",
+		Executor: tools.NewExecutor(10),
+	}
+
+	got, err := o.Complete(context.Background(), Request{UserPrompt: "hello"})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	if got != "completed response" {
+		t.Errorf("Complete() = %q, want %q", got, "completed response")
+	}
+}
+
+func TestOllama_Complete_Fallback(t *testing.T) {
+	var requestedModels []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ollamaChatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		requestedModels = append(requestedModels, req.Model)
+
+		if req.Model == "primary" {
+			// Return error for primary model
+			resp := ollamaChatResponse{
+				Error: "model not found",
+			}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		// Fallback succeeds
+		resp := ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: "fallback response"},
+			Done:    true,
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	o := &Ollama{
+		Host:          srv.URL,
+		Model:         "primary",
+		FallbackModel: "fallback",
+		Executor:      tools.NewExecutor(10),
+	}
+
+	got, err := o.Complete(context.Background(), Request{UserPrompt: "hello"})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	if got != "fallback response" {
+		t.Errorf("Complete() = %q, want %q", got, "fallback response")
+	}
+	if len(requestedModels) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(requestedModels))
+	}
+	if requestedModels[0] != "primary" {
+		t.Errorf("first request model = %q, want %q", requestedModels[0], "primary")
+	}
+	if requestedModels[1] != "fallback" {
+		t.Errorf("second request model = %q, want %q", requestedModels[1], "fallback")
+	}
+}
+
+func TestDoChat_MaxIterationsExceeded(t *testing.T) {
+	// Server always returns tool calls, never a final answer
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		argsJSON, _ := json.Marshal(map[string]string{"url": "http://example.com"})
+		resp := ollamaChatResponse{
+			Message: ollamaMessage{
+				Role: "assistant",
+				ToolCalls: []ollamaToolCall{
+					{Function: ollamaFunction{Name: "web_fetch", Arguments: argsJSON}},
+				},
+			},
+			Done: false,
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	o := &Ollama{
+		Host:          srv.URL,
+		MaxIterations: 2,
+		Executor:      tools.NewExecutor(10),
+	}
+
+	_, err := o.doChat(context.Background(), "test", Request{
+		UserPrompt: "hello",
+		Tools:      tools.DefaultTools(),
+	})
+	if err == nil {
+		t.Fatal("expected error for max iterations exceeded")
+	}
+	if !strings.Contains(err.Error(), "max tool iterations") {
+		t.Errorf("error = %q, want to contain 'max tool iterations'", err.Error())
+	}
+}
+
+func TestDoChat_WithSystemPrompt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ollamaChatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// Verify system prompt is included
+		if len(req.Messages) < 2 || req.Messages[0].Role != "system" {
+			http.Error(w, "missing system prompt", 400)
+			return
+		}
+
+		resp := ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: "sys response"},
+			Done:    true,
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	o := &Ollama{Host: srv.URL, Executor: tools.NewExecutor(10)}
+	got, err := o.doChat(context.Background(), "test", Request{
+		SystemPrompt: "You are a helper",
+		UserPrompt:   "hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "sys response" {
+		t.Errorf("got %q, want %q", got, "sys response")
+	}
+}
+
+func TestSendChat_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	o := &Ollama{Host: srv.URL}
+	_, err := o.sendChat(context.Background(), ollamaChatRequest{
+		Model:    "test",
+		Messages: []ollamaMessage{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON response")
+	}
+}
+
 func TestConvertToolsToOllama(t *testing.T) {
 	tt := tools.DefaultTools()
 	result := convertToolsToOllama(tt)
