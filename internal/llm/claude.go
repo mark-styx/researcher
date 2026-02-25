@@ -5,15 +5,15 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
 // Claude shells out to the Claude CLI for completions.
 type Claude struct {
-	Binary    string
-	Model     string
-	MaxTokens int
+	Binary       string
+	Model        string
+	MaxTokens    int     // Deprecated: Claude CLI no longer supports --max-tokens.
+	MaxBudgetUSD float64 // Optional max spend per call (--max-budget-usd).
 }
 
 func (c *Claude) Name() string {
@@ -38,12 +38,9 @@ func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
 		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
 
-	maxTokens := req.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = c.MaxTokens
-	}
-	if maxTokens > 0 {
-		args = append(args, "--max-tokens", strconv.Itoa(maxTokens))
+	// Apply budget limit if configured
+	if c.MaxBudgetUSD > 0 {
+		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", c.MaxBudgetUSD))
 	}
 
 	// Enable tools if requested

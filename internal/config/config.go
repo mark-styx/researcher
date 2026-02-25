@@ -20,9 +20,10 @@ type Config struct {
 }
 
 type ClaudeConfig struct {
-	Binary    string `yaml:"binary"`
-	Model     string `yaml:"model"`
-	MaxTokens int    `yaml:"max_tokens"`
+	Binary       string  `yaml:"binary"`
+	Model        string  `yaml:"model"`
+	MaxTokens    int     `yaml:"max_tokens"`     // Deprecated: Claude CLI no longer supports --max-tokens.
+	MaxBudgetUSD float64 `yaml:"max_budget_usd"` // Optional max spend per call (--max-budget-usd).
 }
 
 type OllamaConfig struct {

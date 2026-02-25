@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/marklubin/researcher/internal/tools"
@@ -81,24 +82,27 @@ func TestClaude_Complete_WithTools(t *testing.T) {
 	}
 }
 
-func TestClaude_Complete_WithMaxTokensOverride(t *testing.T) {
+func TestClaude_Complete_WithMaxBudget(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-claude")
-	err := os.WriteFile(script, []byte("#!/bin/sh\necho 'ok'\n"), 0755)
+	// Script that echoes args so we can verify --max-budget-usd is passed
+	err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\"\n"), 0755)
 	if err != nil {
 		t.Fatalf("writing fake script: %v", err)
 	}
 
-	c := &Claude{Binary: script, Model: "test", MaxTokens: 0}
+	c := &Claude{Binary: script, Model: "test", MaxBudgetUSD: 1.50}
 	got, err := c.Complete(context.Background(), Request{
 		UserPrompt: "test",
-		MaxTokens:  500,
 	})
 	if err != nil {
 		t.Fatalf("Complete() error: %v", err)
 	}
-	if got != "ok" {
-		t.Errorf("Complete() = %q, want %q", got, "ok")
+	if !strings.Contains(got, "--max-budget-usd") {
+		t.Errorf("output %q should contain --max-budget-usd", got)
+	}
+	if !strings.Contains(got, "1.50") {
+		t.Errorf("output %q should contain budget value 1.50", got)
 	}
 }
 

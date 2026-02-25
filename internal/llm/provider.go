@@ -36,9 +36,9 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			model = modelOverride
 		}
 		return &Claude{
-			Binary:    cfg.Claude.Binary,
-			Model:     model,
-			MaxTokens: cfg.Claude.MaxTokens,
+			Binary:       cfg.Claude.Binary,
+			Model:        model,
+			MaxBudgetUSD: cfg.Claude.MaxBudgetUSD,
 		}, nil
 
 	case "ollama":
