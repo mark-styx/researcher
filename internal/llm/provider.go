@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researcher/internal/tools"
 )
 
 // Provider is the interface for LLM backends.
@@ -18,6 +19,7 @@ type Request struct {
 	SystemPrompt string
 	UserPrompt   string
 	MaxTokens    int
+	Tools        []tools.Tool // nil = no tools
 }
 
 // NewProvider creates an LLM provider based on config and optional overrides.
@@ -48,6 +50,8 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			Host:          cfg.Ollama.Host,
 			Model:         model,
 			FallbackModel: cfg.Ollama.FallbackModel,
+			MaxIterations: cfg.Tools.MaxIterations,
+			Executor:      tools.NewExecutor(cfg.Tools.MaxResults),
 		}, nil
 
 	default:

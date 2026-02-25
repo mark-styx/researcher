@@ -20,16 +20,22 @@ func (c *Claude) Name() string {
 	return "claude"
 }
 
-func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
-	prompt := req.UserPrompt
-	if req.SystemPrompt != "" {
-		prompt = req.SystemPrompt + "\n\n" + req.UserPrompt
-	}
+// toolNameMap maps our tool names to Claude CLI tool names.
+var toolNameMap = map[string]string{
+	"web_search": "WebSearch",
+	"web_fetch":  "WebFetch",
+}
 
+func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
 	args := []string{
-		"-p", prompt,
+		"-p", req.UserPrompt,
 		"--model", c.Model,
 		"--output-format", "text",
+	}
+
+	// Use --system-prompt for proper system prompt handling
+	if req.SystemPrompt != "" {
+		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
 
 	maxTokens := req.MaxTokens
@@ -38,6 +44,22 @@ func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
 	}
 	if maxTokens > 0 {
 		args = append(args, "--max-tokens", strconv.Itoa(maxTokens))
+	}
+
+	// Enable tools if requested
+	if len(req.Tools) > 0 {
+		var claudeTools []string
+		for _, t := range req.Tools {
+			if mapped, ok := toolNameMap[t.Name]; ok {
+				claudeTools = append(claudeTools, mapped)
+			}
+		}
+		if len(claudeTools) > 0 {
+			for _, ct := range claudeTools {
+				args = append(args, "--allowedTools", ct)
+			}
+			args = append(args, "--max-turns", "25")
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, c.Binary, args...)

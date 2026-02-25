@@ -10,6 +10,7 @@ import (
 
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researcher/internal/tools"
 )
 
 // Runner orchestrates research tasks.
@@ -40,10 +41,18 @@ func (r *Runner) Run(ctx context.Context, task Task) (string, error) {
 	}
 }
 
+func (r *Runner) defaultTools() []tools.Tool {
+	if r.cfg.Tools.Enabled {
+		return tools.DefaultTools()
+	}
+	return nil
+}
+
 func (r *Runner) runAsk(ctx context.Context, task Task) (string, error) {
 	resp, err := r.provider.Complete(ctx, llm.Request{
 		SystemPrompt: SystemPrompt(TypeAsk),
 		UserPrompt:   task.Topic,
+		Tools:        r.defaultTools(),
 	})
 	if err != nil {
 		return "", err
@@ -65,6 +74,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
 		SystemPrompt: SystemPrompt(TypeDive),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
+		Tools:        r.defaultTools(),
 	})
 	if err != nil {
 		return "", err
@@ -94,6 +104,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 		SystemPrompt: SystemPrompt(TypeWatch),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
+		Tools:        r.defaultTools(),
 	})
 	if err != nil {
 		return "", err
@@ -143,6 +154,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
 		SystemPrompt: SystemPrompt(TypeReview),
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
+		Tools:        r.defaultTools(),
 	})
 	if err != nil {
 		return "", err
@@ -176,6 +188,7 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (string, error) {
 		SystemPrompt: SystemPrompt(TypeEnrich),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
+		Tools:        r.defaultTools(),
 	})
 	if err != nil {
 		return "", err

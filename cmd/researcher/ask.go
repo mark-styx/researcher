@@ -6,6 +6,8 @@ import (
 
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researcher/internal/tools"
 	"github.com/spf13/cobra"
 )
 
@@ -29,10 +31,16 @@ func askCmd() *cobra.Command {
 				return fmt.Errorf("creating LLM provider: %w", err)
 			}
 
+			var tt []tools.Tool
+			if cfg.Tools.Enabled {
+				tt = tools.DefaultTools()
+			}
+
 			resp, err := provider.Complete(context.Background(), llm.Request{
-				SystemPrompt: "You are a knowledgeable research assistant. Provide clear, accurate, and well-structured answers.",
+				SystemPrompt: research.SystemPrompt(research.TypeAsk),
 				UserPrompt:   question,
 				MaxTokens:    cfg.Claude.MaxTokens,
+				Tools:        tt,
 			})
 			if err != nil {
 				return fmt.Errorf("LLM call failed: %w", err)

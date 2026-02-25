@@ -14,6 +14,7 @@ type Config struct {
 	DefaultBackend string          `yaml:"default_backend"`
 	Claude         ClaudeConfig    `yaml:"claude"`
 	Ollama         OllamaConfig    `yaml:"ollama"`
+	Tools          ToolsConfig     `yaml:"tools"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
 	Grepai         GrepaiConfig    `yaml:"grepai"`
 }
@@ -35,6 +36,12 @@ type SchedulerConfig struct {
 	MaxConcurrent int    `yaml:"max_concurrent"`
 	LogFile       string `yaml:"log_file"`
 	PIDFile       string `yaml:"pid_file"`
+}
+
+type ToolsConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	MaxIterations int  `yaml:"max_iterations"`
+	MaxResults    int  `yaml:"max_results"`
 }
 
 type GrepaiConfig struct {
@@ -59,6 +66,12 @@ ollama:
   host: http://localhost:11434
   model: qwen3-coder-next
   fallback_model: nemotron
+
+# Tool use (web search, web fetch)
+tools:
+  enabled: true
+  max_iterations: 20
+  max_results: 10
 
 # Scheduler
 scheduler:
@@ -121,6 +134,11 @@ func defaults() *Config {
 			Host:          "http://localhost:11434",
 			Model:         "qwen3-coder-next",
 			FallbackModel: "nemotron",
+		},
+		Tools: ToolsConfig{
+			Enabled:       true,
+			MaxIterations: 20,
+			MaxResults:    10,
 		},
 		Scheduler: SchedulerConfig{
 			PollInterval:  "60s",
