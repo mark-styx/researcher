@@ -87,6 +87,9 @@ grepai:
 `
 
 func Dir() string {
+	if dir := os.Getenv("RESEARCHER_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".researcher")
 }
