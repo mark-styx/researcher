@@ -15,6 +15,10 @@ func queueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "queue",
 		Short: "Manage one-shot task queue",
+		Long: `Manage the one-shot task queue. Queued tasks run once and are picked up
+by the daemon in priority order. Use this to batch research tasks for
+background processing.`,
+		GroupID: "scheduling",
 	}
 
 	cmd.AddCommand(queueListCmd())
@@ -24,8 +28,9 @@ func queueCmd() *cobra.Command {
 
 func queueListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "Show pending queued tasks",
+		Use:     "list",
+		Short:   "Show pending queued tasks",
+		Example: `  researcher queue list`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -62,6 +67,10 @@ func queueAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a one-shot task to the queue",
+		Long: `Add a one-shot research task to the queue. Task types: dive, watch,
+review, enrich, ask. The daemon processes queued tasks in priority order.`,
+		Example: `  researcher queue add --type dive --topic "quantum computing"
+  researcher queue add --type review --topic "AI safety" --priority 10`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if topic == "" {
 				return fmt.Errorf("--topic is required")

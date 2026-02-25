@@ -15,6 +15,10 @@ func listCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all research projects",
+		Long: `List all research projects in the research directory. Shows each project
+name, number of markdown files, and path.`,
+		Example: `  researcher list`,
+		GroupID: "project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

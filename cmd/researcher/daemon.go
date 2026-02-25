@@ -17,6 +17,10 @@ func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the scheduler daemon",
+		Long: `Manage the background scheduler daemon. The daemon processes queued tasks
+and executes scheduled cron tasks. It must be running for any scheduled
+or queued research to execute.`,
+		GroupID: "scheduling",
 	}
 
 	cmd.AddCommand(daemonStartCmd())
@@ -29,6 +33,10 @@ func daemonStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
 		Short: "Start the scheduler daemon (foreground)",
+		Long: `Start the scheduler daemon in the foreground. It polls the task store
+for queued and scheduled tasks and executes them using the configured
+LLM backend. Send SIGINT or SIGTERM to stop.`,
+		Example: `  researcher daemon start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -72,8 +80,10 @@ func daemonStartCmd() *cobra.Command {
 
 func daemonStopCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop",
-		Short: "Stop the scheduler daemon",
+		Use:     "stop",
+		Short:   "Stop the scheduler daemon",
+		Long:    `Send SIGTERM to the running scheduler daemon using the PID file.`,
+		Example: `  researcher daemon stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -108,8 +118,10 @@ func daemonStopCmd() *cobra.Command {
 
 func daemonStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status",
-		Short: "Show daemon status",
+		Use:     "status",
+		Short:   "Show daemon status",
+		Long:    `Check whether the scheduler daemon is currently running.`,
+		Example: `  researcher daemon status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

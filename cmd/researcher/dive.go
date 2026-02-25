@@ -16,7 +16,14 @@ func diveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dive <topic>",
 		Short: "Deep research on a topic, outputs structured markdown",
-		Args:  cobra.ExactArgs(1),
+		Long: `Generate a comprehensive research report on any topic. The report includes
+an executive summary, key concepts, current state of the art, major players,
+challenges, future directions, and references. Output is saved as markdown
+in the research directory.`,
+		Example: `  researcher dive "quantum computing"
+  researcher dive "CRISPR gene editing" --backend ollama --model llama3`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topic := args[0]
 

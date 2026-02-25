@@ -14,6 +14,11 @@ func initCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Initialize researcher config, directories, and grepai",
+		Long: `Initialize the researcher environment. Creates the config directory
+(~/.researcher), writes a default config.yaml if none exists, creates
+the research directory, and optionally sets up grepai indexing.`,
+		Example: `  researcher init`,
+		GroupID: "setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configDir := config.Dir()
 			if err := os.MkdirAll(configDir, 0755); err != nil {

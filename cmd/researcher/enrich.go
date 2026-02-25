@@ -16,7 +16,13 @@ func enrichCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "enrich <path/to/doc.md>",
 		Short: "Expand an existing research document",
-		Args:  cobra.ExactArgs(1),
+		Long: `Expand thin sections and add missing context to an existing research document.
+Reads the document, identifies areas that need more depth, and produces an
+enriched version saved alongside the original.`,
+		Example: `  researcher enrich ./research/quantum-computing/README.md
+  researcher enrich report.md --backend ollama`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			docPath := args[0]
 

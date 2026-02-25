@@ -17,7 +17,13 @@ func reviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review <topic>",
 		Short: "Literature review / synthesis on a topic",
-		Args:  cobra.ExactArgs(1),
+		Long: `Synthesize a literature review on a topic. Optionally provide source files
+to include as context for the review. Output is saved as markdown in the
+research directory.`,
+		Example: `  researcher review "machine learning optimization"
+  researcher review "transformer architectures" --sources paper1.md,paper2.md`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topic := args[0]
 

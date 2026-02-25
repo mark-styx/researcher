@@ -11,8 +11,10 @@ import (
 
 func configCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "config",
-		Short: "Manage researcher configuration",
+		Use:     "config",
+		Short:   "Manage researcher configuration",
+		Long:    `View and update researcher configuration. Config is stored in ~/.researcher/config.yaml.`,
+		GroupID: "setup",
 	}
 
 	cmd.AddCommand(configShowCmd())
@@ -22,8 +24,9 @@ func configCmd() *cobra.Command {
 
 func configShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show",
-		Short: "Print current configuration",
+		Use:     "show",
+		Short:   "Print current configuration",
+		Example: `  researcher config show`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -45,7 +48,11 @@ func configSetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set <key> <value>",
 		Short: "Update a config value",
-		Args:  cobra.ExactArgs(2),
+		Long: `Update a top-level configuration key. For nested keys, use the top-level
+YAML key name. The value is written directly to ~/.researcher/config.yaml.`,
+		Example: `  researcher config set research_dir ~/my-research
+  researcher config set default_backend ollama`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
 

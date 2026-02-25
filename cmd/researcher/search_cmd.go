@@ -14,7 +14,13 @@ func searchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Semantic search across research via grepai",
-		Args:  cobra.ExactArgs(1),
+		Long: `Search across all research documents using grepai semantic search.
+Requires grepai to be installed and indexed (run 'researcher init' first).
+Returns ranked results matching the query.`,
+		Example: `  researcher search "neural network architectures"
+  researcher search "climate change policy" --limit 10`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
 

@@ -15,7 +15,14 @@ func watchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "watch <topic>",
 		Short: "Schedule recurring monitoring of a topic",
-		Args:  cobra.ExactArgs(1),
+		Long: `Schedule recurring monitoring of a research topic. Creates a scheduled task
+that runs on the given cron schedule. The daemon must be running to execute
+scheduled tasks (see 'researcher daemon start').`,
+		Example: `  researcher watch "AI safety developments"
+  researcher watch "quantum computing" --cron "0 9 * * 1"
+  researcher watch "LLM benchmarks" --cron "0 0 1 * *" --backend ollama`,
+		GroupID: "scheduling",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topic := args[0]
 

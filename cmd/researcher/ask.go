@@ -17,7 +17,13 @@ func askCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ask <question>",
 		Short: "Quick one-shot question, prints answer to stdout",
-		Args:  cobra.ExactArgs(1),
+		Long: `Ask a one-shot question and print the answer to stdout. Uses the configured
+LLM backend with optional web search and tool use. The answer is not saved
+to the research directory.`,
+		Example: `  researcher ask "What is quantum computing?"
+  researcher ask "Compare TCP vs UDP" --backend ollama --model llama3`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			question := args[0]
 

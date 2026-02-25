@@ -13,7 +13,11 @@ func showCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <project>",
 		Short: "Show project details and files",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show details for a research project, including its path and a listing
+of all files with their sizes.`,
+		Example: `  researcher show quantum-computing`,
+		GroupID: "project",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			project := args[0]
 

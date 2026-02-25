@@ -95,21 +95,28 @@ func buildRoot() *cobra.Command {
 		Short: "Automated research workflows with LLM backends",
 	}
 
-	root.AddCommand(versionCmd())
-	root.AddCommand(initCmd())
-	root.AddCommand(configCmd())
+	root.AddGroup(
+		&cobra.Group{ID: "research", Title: "Research Commands:"},
+		&cobra.Group{ID: "project", Title: "Project Management:"},
+		&cobra.Group{ID: "scheduling", Title: "Task Scheduling:"},
+		&cobra.Group{ID: "setup", Title: "Setup:"},
+	)
+
 	root.AddCommand(askCmd())
 	root.AddCommand(diveCmd())
-	root.AddCommand(listCmd())
-	root.AddCommand(showCmd())
-	root.AddCommand(searchCmd())
 	root.AddCommand(reviewCmd())
 	root.AddCommand(enrichCmd())
-	root.AddCommand(watchCmd())
-	root.AddCommand(daemonCmd())
-	root.AddCommand(scheduleCmd())
-	root.AddCommand(queueCmd())
+	root.AddCommand(searchCmd())
+	root.AddCommand(listCmd())
+	root.AddCommand(showCmd())
 	root.AddCommand(linkCmd())
+	root.AddCommand(watchCmd())
+	root.AddCommand(queueCmd())
+	root.AddCommand(scheduleCmd())
+	root.AddCommand(daemonCmd())
+	root.AddCommand(initCmd())
+	root.AddCommand(configCmd())
+	root.AddCommand(versionCmd())
 
 	return root
 }

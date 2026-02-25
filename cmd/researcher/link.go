@@ -13,7 +13,13 @@ func linkCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "link <path>",
 		Short: "Symlink research dir to another location",
-		Args:  cobra.ExactArgs(1),
+		Long: `Create a symlink from the given path to the research directory.
+Useful for making research accessible from other locations like
+your desktop or another project.`,
+		Example: `  researcher link ~/Desktop/research
+  researcher link /tmp/research-shortcut`,
+		GroupID: "project",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
 
