@@ -62,8 +62,10 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (string, error) {
 }
 
 func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
-	slug := Slugify(task.Topic)
-	dir := r.projectDir(slug)
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating project dir: %w", err)
 	}
@@ -80,7 +82,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
 		return "", err
 	}
 
-	outPath := filepath.Join(dir, "README.md")
+	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -92,8 +94,12 @@ func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
 }
 
 func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
-	slug := Slugify(task.Topic)
-	dir := r.projectDir(slug)
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return "", err
+	}
+	// Add -watch suffix to filename
+	filename = strings.TrimSuffix(filename, ".md") + "-watch.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating project dir: %w", err)
 	}
@@ -110,7 +116,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 		return "", err
 	}
 
-	outPath := filepath.Join(dir, "updates.md")
+	outPath := filepath.Join(dir, filename)
 	entry := fmt.Sprintf("\n\n---\n\n## Update: %s\n\n*Backend: %s*\n\n%s\n",
 		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), resp)
 
@@ -131,8 +137,12 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 }
 
 func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
-	slug := Slugify(task.Topic)
-	dir := r.projectDir(slug)
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return "", err
+	}
+	// Add -review suffix to filename
+	filename = strings.TrimSuffix(filename, ".md") + "-review.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating project dir: %w", err)
 	}
@@ -160,7 +170,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
 		return "", err
 	}
 
-	outPath := filepath.Join(dir, "review.md")
+	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# Review: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -209,6 +219,16 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (string, error) {
 	return outPath, nil
 }
 
-func (r *Runner) projectDir(slug string) string {
-	return filepath.Join(config.ExpandPath(r.cfg.ResearchDir), slug)
+// categorizedPath uses the LLM to determine the category directory and filename
+// for a research topic. Falls back to uncategorized/slugified on error.
+func (r *Runner) categorizedPath(ctx context.Context, topic string) (dir string, filename string, err error) {
+	researchDir := config.ExpandPath(r.cfg.ResearchDir)
+	cats, _ := ExistingCategories(researchDir)
+	loc, err := Categorize(ctx, r.provider, topic, cats)
+	if err != nil {
+		loc = FileLocation{Category: "uncategorized", Filename: Slugify(topic)}
+	}
+	dir = filepath.Join(researchDir, loc.Category)
+	filename = UniqueFilename(dir, loc.Filename) + ".md"
+	return dir, filename, nil
 }

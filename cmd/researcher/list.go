@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/marklubin/researcher/internal/config"
@@ -14,9 +15,9 @@ import (
 func listCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List all research projects",
-		Long: `List all research projects in the research directory. Shows each project
-name, number of markdown files, and path.`,
+		Short: "List all research files grouped by category",
+		Long: `List all research files in the research directory, grouped by category.
+Shows each file's category, name, and modification date.`,
 		Example: `  researcher list`,
 		GroupID: "project",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,37 +32,67 @@ name, number of markdown files, and path.`,
 				return fmt.Errorf("reading research dir: %w", err)
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PROJECT\tFILES\tPATH")
-
-			type project struct {
-				name  string
-				files int
-				path  string
+			type fileEntry struct {
+				category string
+				name     string
+				modified string
 			}
 
-			var projects []project
+			var files []fileEntry
 			for _, e := range entries {
 				if !e.IsDir() || e.Name()[0] == '.' {
 					continue
 				}
-				p := filepath.Join(researchDir, e.Name())
-				files, _ := os.ReadDir(p)
-				count := 0
-				for _, f := range files {
-					if !f.IsDir() && filepath.Ext(f.Name()) == ".md" {
-						count++
-					}
+
+				catDir := filepath.Join(researchDir, e.Name())
+				catFiles, err := os.ReadDir(catDir)
+				if err != nil {
+					continue
 				}
-				projects = append(projects, project{e.Name(), count, p})
+
+				for _, f := range catFiles {
+					if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+						continue
+					}
+					info, err := f.Info()
+					modified := ""
+					if err == nil {
+						modified = info.ModTime().Format("2006-01-02")
+					}
+					name := strings.TrimSuffix(f.Name(), ".md")
+					files = append(files, fileEntry{
+						category: e.Name(),
+						name:     name,
+						modified: modified,
+					})
+				}
 			}
 
-			sort.Slice(projects, func(i, j int) bool {
-				return projects[i].name < projects[j].name
+			if len(files) == 0 {
+				fmt.Println("No research files found.")
+				return nil
+			}
+
+			// Sort by category then name
+			sort.Slice(files, func(i, j int) bool {
+				if files[i].category != files[j].category {
+					return files[i].category < files[j].category
+				}
+				return files[i].name < files[j].name
 			})
 
-			for _, p := range projects {
-				fmt.Fprintf(w, "%s\t%d\t%s\n", p.name, p.files, p.path)
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "CATEGORY\tFILE\tMODIFIED")
+
+			lastCat := ""
+			for _, f := range files {
+				cat := f.category
+				if cat == lastCat {
+					cat = "" // don't repeat category name
+				} else {
+					lastCat = f.category
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", cat, f.name, f.modified)
 			}
 			w.Flush()
 			return nil

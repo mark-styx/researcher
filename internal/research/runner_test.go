@@ -13,16 +13,30 @@ import (
 )
 
 // mockProvider records calls and returns canned responses.
+// If responses is set, it returns them in order (cycling the last one).
+// Otherwise it returns the single response field.
 type mockProvider struct {
-	calls    []llm.Request
-	response string
-	err      error
+	calls     []llm.Request
+	response  string
+	responses []string
+	callIdx   int
+	err       error
 }
 
 func (m *mockProvider) Name() string { return "mock" }
 func (m *mockProvider) Complete(_ context.Context, req llm.Request) (string, error) {
 	m.calls = append(m.calls, req)
-	return m.response, m.err
+	if m.err != nil {
+		return "", m.err
+	}
+	if len(m.responses) > 0 {
+		resp := m.responses[m.callIdx]
+		if m.callIdx < len(m.responses)-1 {
+			m.callIdx++
+		}
+		return resp, nil
+	}
+	return m.response, nil
 }
 
 func testConfig(t *testing.T) *config.Config {
@@ -81,15 +95,21 @@ func TestRunner_Ask(t *testing.T) {
 
 func TestRunner_Dive(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "Deep dive content"}
+	mock := &mockProvider{responses: []string{
+		`{"category": "programming", "filename": "rust-language"}`, // categorize call
+		"Deep dive content", // content call
+	}}
 	r := NewRunner(cfg, mock)
 
 	out, err := r.Run(context.Background(), Task{Type: TypeDive, Topic: "Rust Language"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "README.md") {
-		t.Errorf("output path = %q, expected to end with README.md", out)
+	if !strings.HasSuffix(out, "rust-language.md") {
+		t.Errorf("output path = %q, expected to end with rust-language.md", out)
+	}
+	if !strings.Contains(out, "programming") {
+		t.Errorf("output path = %q, expected to contain category 'programming'", out)
 	}
 
 	data, err := os.ReadFile(out)
@@ -103,19 +123,25 @@ func TestRunner_Dive(t *testing.T) {
 	if !strings.Contains(content, "Deep dive content") {
 		t.Error("missing LLM response in output")
 	}
+	if len(mock.calls) != 2 {
+		t.Errorf("expected 2 LLM calls (categorize + content), got %d", len(mock.calls))
+	}
 }
 
 func TestRunner_Watch(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "Latest updates"}
+	mock := &mockProvider{responses: []string{
+		`{"category": "llm", "filename": "ai-news"}`, // categorize call
+		"Latest updates",                               // content call
+	}}
 	r := NewRunner(cfg, mock)
 
 	out, err := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "AI News"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "updates.md") {
-		t.Errorf("output path = %q, expected to end with updates.md", out)
+	if !strings.HasSuffix(out, "-watch.md") {
+		t.Errorf("output path = %q, expected to end with -watch.md", out)
 	}
 
 	data, _ := os.ReadFile(out)
@@ -130,12 +156,16 @@ func TestRunner_Watch(t *testing.T) {
 
 func TestRunner_Watch_Appends(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "update 1"}
+	mock := &mockProvider{responses: []string{
+		`{"category": "general", "filename": "test-topic"}`, // categorize call 1
+		"update 1",                                           // content call 1
+		`{"category": "general", "filename": "test-topic"}`, // categorize call 2
+		"update 2",                                           // content call 2
+	}}
 	r := NewRunner(cfg, mock)
 
 	out1, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
 
-	mock.response = "update 2"
 	out2, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
 
 	if out1 != out2 {
@@ -154,21 +184,30 @@ func TestRunner_Watch_Appends(t *testing.T) {
 
 func TestRunner_Review(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "Synthesis content"}
+	mock := &mockProvider{responses: []string{
+		`{"category": "llm", "filename": "llm-agents"}`, // categorize call
+		"Synthesis content",                               // content call
+	}}
 	r := NewRunner(cfg, mock)
 
 	out, err := r.Run(context.Background(), Task{Type: TypeReview, Topic: "LLM Agents"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "review.md") {
-		t.Errorf("output path = %q, expected to end with review.md", out)
+	if !strings.HasSuffix(out, "-review.md") {
+		t.Errorf("output path = %q, expected to end with -review.md", out)
+	}
+	if !strings.Contains(out, "llm") {
+		t.Errorf("output path = %q, expected to contain category 'llm'", out)
 	}
 }
 
 func TestRunner_Review_WithSources(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "Combined review"}
+	mock := &mockProvider{responses: []string{
+		`{"category": "general", "filename": "test-review"}`, // categorize call
+		"Combined review",                                     // content call
+	}}
 	r := NewRunner(cfg, mock)
 
 	// Create a temp source file
@@ -184,10 +223,11 @@ func TestRunner_Review_WithSources(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(mock.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	if len(mock.calls) != 2 {
+		t.Fatalf("expected 2 calls (categorize + content), got %d", len(mock.calls))
 	}
-	if !strings.Contains(mock.calls[0].UserPrompt, "source document content") {
+	// The content call is the second one (index 1)
+	if !strings.Contains(mock.calls[1].UserPrompt, "source document content") {
 		t.Error("source content not included in prompt")
 	}
 }

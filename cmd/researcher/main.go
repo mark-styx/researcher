@@ -47,6 +47,7 @@ Get started:
 	root.AddCommand(queueCmd())
 	root.AddCommand(scheduleCmd())
 	root.AddCommand(daemonCmd())
+	root.AddCommand(migrateCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(versionCmd())

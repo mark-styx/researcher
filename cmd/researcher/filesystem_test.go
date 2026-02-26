@@ -13,14 +13,14 @@ import (
 func TestListCmd(t *testing.T) {
 	_, researchDir := testSetup(t)
 
-	// Create two project dirs with .md files
-	for _, proj := range []string{"alpha", "beta"} {
-		dir := filepath.Join(researchDir, proj)
+	// Create two category dirs with .md files
+	for _, cat := range []string{"alpha", "beta"} {
+		dir := filepath.Join(researchDir, cat)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
 		for i := 0; i < 2; i++ {
-			f := filepath.Join(dir, "doc"+string(rune('0'+i))+".md")
+			f := filepath.Join(dir, fmt.Sprintf("doc%d.md", i))
 			os.WriteFile(f, []byte("# test"), 0644)
 		}
 	}
@@ -36,8 +36,8 @@ func TestListCmd(t *testing.T) {
 	if !strings.Contains(out, "beta") {
 		t.Errorf("output missing 'beta': %s", out)
 	}
-	if !strings.Contains(out, "2") {
-		t.Errorf("output missing file count '2': %s", out)
+	if !strings.Contains(out, "doc0") {
+		t.Errorf("output missing file name 'doc0': %s", out)
 	}
 }
 
@@ -48,9 +48,8 @@ func TestListCmd_EmptyDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should have header but no project rows
-	if !strings.Contains(out, "PROJECT") {
-		t.Errorf("output missing header: %s", out)
+	if !strings.Contains(out, "No research files found") {
+		t.Errorf("output missing empty message: %s", out)
 	}
 }
 
