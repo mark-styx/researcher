@@ -8,6 +8,8 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **One-shot Q&A** — quick answers with optional web search and tool use
 - **Literature review** — synthesis from topics or source documents
 - **Document enrichment** — expand thin sections and add context to existing research
+- **Smart file organization** — LLM-based auto-categorization into topic directories with descriptive filenames
+- **Migration tool** — reorganize existing flat research directories into the new category structure
 - **Semantic search** — find across all research via grepai
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
@@ -65,8 +67,10 @@ researcher search "entanglement"
 
 | Command | Description |
 |---------|-------------|
-| `list` | List all research projects with file counts |
-| `show <project>` | Show files and details for a project |
+| `list` | List all research files grouped by category |
+| `show <category>` | List files in a category |
+| `show <category>/<file>` | Show details for a specific file |
+| `migrate` | Reorganize flat slug directories into categories |
 | `link <path>` | Create a symlink to the research directory |
 
 ### Task Scheduling
@@ -143,10 +147,10 @@ Override backend and model per-command with `--backend` and `--model` flags.
 | Type | Command | Purpose | Output |
 |------|---------|---------|--------|
 | Ask | `ask` | Quick one-shot Q&A | Printed to stdout |
-| Dive | `dive` | Comprehensive research report | `<research_dir>/<topic>/README.md` |
-| Review | `review` | Literature review / synthesis | `<research_dir>/<topic>/review.md` |
+| Dive | `dive` | Comprehensive research report | `<research_dir>/<category>/<topic>.md` |
+| Review | `review` | Literature review / synthesis | `<research_dir>/<category>/<topic>-review.md` |
 | Enrich | `enrich` | Expand existing document | Enriched version alongside original |
-| Watch | `watch` | Recurring topic monitoring | Periodic reports in project dir |
+| Watch | `watch` | Recurring topic monitoring | `<research_dir>/<category>/<topic>-watch.md` |
 
 ## Task Scheduling
 
@@ -199,19 +203,36 @@ Override per-command:
 researcher dive "topic" --backend ollama --model llama3
 ```
 
-## Project Structure
+## File Organization
+
+Research files are automatically categorized by the LLM into topic directories with short descriptive filenames:
+
+```
+~/sentinel/research/           # Default research directory
+  llm/                         # Auto-created category
+    agentic-code.md            # Dive report
+    open-source-models.md
+    ai-agents-review.md        # Literature review
+  architecture/
+    tool-calling-patterns.md
+  adblock/
+    political-ads.md
+    device-comparison.md
+  .grepai/                     # Semantic search index
+```
+
+To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
+
+```bash
+researcher migrate --dry-run   # Preview changes
+researcher migrate             # Apply changes
+```
+
+### Config Directory
 
 ```
 ~/.researcher/
   config.yaml          # Configuration
   scheduler.log        # Daemon log
   scheduler.pid        # Daemon PID file
-
-~/sentinel/research/   # Default research directory
-  quantum-computing/
-    README.md          # Dive report
-    review.md          # Literature review
-  ai-safety/
-    README.md
-  .grepai/             # Semantic search index
 ```
