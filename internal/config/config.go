@@ -17,6 +17,11 @@ type Config struct {
 	Tools          ToolsConfig     `yaml:"tools"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
 	Grepai         GrepaiConfig    `yaml:"grepai"`
+	Ask            AskConfig       `yaml:"ask"`
+}
+
+type AskConfig struct {
+	MaxAge string `yaml:"max_age"`
 }
 
 type ClaudeConfig struct {
@@ -85,6 +90,10 @@ scheduler:
 grepai:
   auto_index: true
   binary: grepai
+
+# ask command
+ask:
+  max_age: 90d
 `
 
 func Dir() string {
@@ -153,6 +162,9 @@ func defaults() *Config {
 		Grepai: GrepaiConfig{
 			AutoIndex: true,
 			Binary:    "grepai",
+		},
+		Ask: AskConfig{
+			MaxAge: "90d",
 		},
 	}
 }

@@ -38,6 +38,36 @@ func TestSystemPrompt_Unknown(t *testing.T) {
 	}
 }
 
+func TestAskSystemPrompt_NoContext(t *testing.T) {
+	p := AskSystemPrompt("")
+	if p == "" {
+		t.Error("expected non-empty prompt")
+	}
+	if !strings.Contains(p, "knowledgeable research assistant") {
+		t.Error("expected generic prompt when no context")
+	}
+	if strings.Contains(p, "Existing Research") {
+		t.Error("should not contain 'Existing Research' section when context is empty")
+	}
+}
+
+func TestAskSystemPrompt_WithContext(t *testing.T) {
+	ctx := "--- Source: agents.md ---\nSome research about agents\n"
+	p := AskSystemPrompt(ctx)
+	if p == "" {
+		t.Error("expected non-empty prompt")
+	}
+	if !strings.Contains(p, "Existing Research") {
+		t.Error("expected 'Existing Research' section")
+	}
+	if !strings.Contains(p, "PRIMARY source") {
+		t.Error("expected 'PRIMARY source' instruction")
+	}
+	if !strings.Contains(p, "agents.md") {
+		t.Error("expected research context to be included")
+	}
+}
+
 func TestSystemPrompt_ContainsToolInstructions(t *testing.T) {
 	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich}
 	for _, typ := range types {

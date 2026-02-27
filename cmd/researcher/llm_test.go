@@ -54,12 +54,58 @@ grepai:
 func TestAskCmd(t *testing.T) {
 	testSetupWithOllama(t, "42")
 
-	out, err := runCmd(t, "ask", "What is the meaning of life?")
+	// Use --no-save --no-research to preserve original simple behavior
+	out, err := runCmd(t, "ask", "What is the meaning of life?", "--no-save", "--no-research")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(out, "42") {
 		t.Errorf("output missing '42': %s", out)
+	}
+}
+
+func TestAskCmd_WithSave(t *testing.T) {
+	_, researchDir := testSetupWithOllama(t, "saved answer")
+
+	out, err := runCmd(t, "ask", "test question", "--no-research")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "saved answer") {
+		t.Errorf("output missing 'saved answer': %s", out)
+	}
+	if !strings.Contains(out, "Answer saved to:") {
+		t.Errorf("output missing 'Answer saved to:': %s", out)
+	}
+
+	// Verify a file was actually created in the research dir
+	found := false
+	filepath.Walk(researchDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasSuffix(path, "-ask.md") {
+			found = true
+		}
+		return nil
+	})
+	if !found {
+		t.Error("expected an -ask.md file in research dir")
+	}
+}
+
+func TestAskCmd_NoSaveFlag(t *testing.T) {
+	testSetupWithOllama(t, "ephemeral answer")
+
+	out, err := runCmd(t, "ask", "test question", "--no-save", "--no-research")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "ephemeral answer") {
+		t.Errorf("output missing 'ephemeral answer': %s", out)
+	}
+	if strings.Contains(out, "Answer saved to:") {
+		t.Error("should not show 'Answer saved to:' with --no-save")
 	}
 }
 
