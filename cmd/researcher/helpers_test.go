@@ -117,6 +117,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(migrateCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(configCmd())
+	root.AddCommand(mcpCmd())
 	root.AddCommand(versionCmd())
 
 	return root

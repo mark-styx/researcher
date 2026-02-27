@@ -10,6 +10,7 @@ import (
 
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researcher/internal/search"
 	"github.com/marklubin/researcher/internal/tools"
 )
 
@@ -23,8 +24,8 @@ func NewRunner(cfg *config.Config, provider llm.Provider) *Runner {
 	return &Runner{cfg: cfg, provider: provider}
 }
 
-// Run executes a research task and returns the output file path.
-func (r *Runner) Run(ctx context.Context, task Task) (string, error) {
+// Run executes a research task and returns the result.
+func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
 	switch task.Type {
 	case TypeAsk:
 		return r.runAsk(ctx, task)
@@ -37,7 +38,7 @@ func (r *Runner) Run(ctx context.Context, task Task) (string, error) {
 	case TypeEnrich:
 		return r.runEnrich(ctx, task)
 	default:
-		return "", fmt.Errorf("unknown task type: %q", task.Type)
+		return RunResult{}, fmt.Errorf("unknown task type: %q", task.Type)
 	}
 }
 
@@ -48,26 +49,97 @@ func (r *Runner) defaultTools() []tools.Tool {
 	return nil
 }
 
-func (r *Runner) runAsk(ctx context.Context, task Task) (string, error) {
+func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
+	// Gather research context unless --no-research
+	researchContext := ""
+	if !task.NoResearch {
+		researchContext = r.gatherResearchContext(task)
+	}
+
+	// Build system prompt (with or without research context)
+	sysPrompt := AskSystemPrompt(researchContext)
+
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeAsk),
+		SystemPrompt: sysPrompt,
 		UserPrompt:   task.Topic,
 		Tools:        r.defaultTools(),
 	})
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
-	fmt.Println(resp)
-	return "", nil
-}
 
-func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
+	if !task.Quiet {
+		fmt.Println(resp)
+	}
+
+	// Save unless --no-save
+	if task.NoSave {
+		return RunResult{Response: resp}, nil
+	}
+
 	dir, filename, err := r.categorizedPath(ctx, task.Topic)
 	if err != nil {
-		return "", err
+		return RunResult{Response: resp}, err
+	}
+	filename = strings.TrimSuffix(filename, ".md") + "-ask.md"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return RunResult{Response: resp}, fmt.Errorf("creating project dir: %w", err)
+	}
+
+	outPath := filepath.Join(dir, filename)
+	header := fmt.Sprintf("# Ask: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+
+	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
+		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
+	}
+
+	return RunResult{FilePath: outPath, Response: resp}, nil
+}
+
+// gatherResearchContext searches existing research via grepai, filters by freshness,
+// reads full contents, and returns a formatted context string.
+// Failures are non-fatal: warnings go to stderr, empty string returned on error.
+func (r *Runner) gatherResearchContext(task Task) string {
+	// Determine max age: task override > config default
+	maxAgeStr := r.cfg.Ask.MaxAge
+	if task.MaxAge != "" {
+		maxAgeStr = task.MaxAge
+	}
+
+	maxAge, err := search.ParseMaxAge(maxAgeStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: invalid max-age %q, using 90d default: %v\n", maxAgeStr, err)
+		maxAge = 90 * 24 * time.Hour
+	}
+
+	results, err := search.QueryJSON(r.cfg, task.Topic, 10)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: research search failed (continuing without context): %v\n", err)
+		return ""
+	}
+
+	if len(results) == 0 {
+		return ""
+	}
+
+	researchDir := config.ExpandPath(r.cfg.ResearchDir)
+	fresh := search.FilterFresh(results, researchDir, maxAge)
+	if len(fresh) == 0 {
+		return ""
+	}
+
+	contents := search.ReadContents(fresh, researchDir)
+	return search.FormatContext(contents)
+}
+
+func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return RunResult{}, err
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating project dir: %w", err)
+		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
 	}
 
 	prompt := fmt.Sprintf("Produce a comprehensive deep-dive research report on: %s", task.Topic)
@@ -79,7 +151,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
 		Tools:        r.defaultTools(),
 	})
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 
 	outPath := filepath.Join(dir, filename)
@@ -87,21 +159,21 @@ func (r *Runner) runDive(ctx context.Context, task Task) (string, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return "", fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return outPath, nil
+	return RunResult{FilePath: outPath, Response: resp}, nil
 }
 
-func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
+func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	dir, filename, err := r.categorizedPath(ctx, task.Topic)
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 	// Add -watch suffix to filename
 	filename = strings.TrimSuffix(filename, ".md") + "-watch.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating project dir: %w", err)
+		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
 	}
 
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
@@ -113,7 +185,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 		Tools:        r.defaultTools(),
 	})
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 
 	outPath := filepath.Join(dir, filename)
@@ -123,7 +195,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 	// Append to existing file or create new
 	f, err := os.OpenFile(outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", fmt.Errorf("opening updates file: %w", err)
+		return RunResult{}, fmt.Errorf("opening updates file: %w", err)
 	}
 	defer f.Close()
 
@@ -133,18 +205,18 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (string, error) {
 	}
 	f.WriteString(entry)
 
-	return outPath, nil
+	return RunResult{FilePath: outPath, Response: resp}, nil
 }
 
-func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
+func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 	dir, filename, err := r.categorizedPath(ctx, task.Topic)
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 	// Add -review suffix to filename
 	filename = strings.TrimSuffix(filename, ".md") + "-review.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating project dir: %w", err)
+		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
 	}
 
 	var promptBuilder strings.Builder
@@ -167,7 +239,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
 		Tools:        r.defaultTools(),
 	})
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 
 	outPath := filepath.Join(dir, filename)
@@ -175,21 +247,21 @@ func (r *Runner) runReview(ctx context.Context, task Task) (string, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return "", fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return outPath, nil
+	return RunResult{FilePath: outPath, Response: resp}, nil
 }
 
-func (r *Runner) runEnrich(ctx context.Context, task Task) (string, error) {
+func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 	if len(task.Sources) == 0 {
-		return "", fmt.Errorf("enrich requires a source document path")
+		return RunResult{}, fmt.Errorf("enrich requires a source document path")
 	}
 
 	docPath := task.Sources[0]
 	content, err := os.ReadFile(docPath)
 	if err != nil {
-		return "", fmt.Errorf("reading document: %w", err)
+		return RunResult{}, fmt.Errorf("reading document: %w", err)
 	}
 
 	prompt := fmt.Sprintf("Enrich and expand the following research document:\n\n%s", string(content))
@@ -201,7 +273,7 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (string, error) {
 		Tools:        r.defaultTools(),
 	})
 	if err != nil {
-		return "", err
+		return RunResult{}, err
 	}
 
 	// Write enriched version alongside original
@@ -213,10 +285,10 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (string, error) {
 		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), filepath.Base(docPath))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return "", fmt.Errorf("writing enriched output: %w", err)
+		return RunResult{Response: resp}, fmt.Errorf("writing enriched output: %w", err)
 	}
 
-	return outPath, nil
+	return RunResult{FilePath: outPath, Response: resp}, nil
 }
 
 // categorizedPath uses the LLM to determine the category directory and filename

@@ -7,21 +7,30 @@ import (
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
 	"github.com/marklubin/researcher/internal/research"
-	"github.com/marklubin/researcher/internal/tools"
 	"github.com/spf13/cobra"
 )
 
 func askCmd() *cobra.Command {
-	var backend, model string
+	var backend, model, maxAge string
+	var noSave, noResearch bool
 
 	cmd := &cobra.Command{
 		Use:   "ask <question>",
-		Short: "Quick one-shot question, prints answer to stdout",
-		Long: `Ask a one-shot question and print the answer to stdout. Uses the configured
-LLM backend with optional web search and tool use. The answer is not saved
-to the research directory.`,
+		Short: "Quick one-shot question with research context, saves answer",
+		Long: `Ask a question and get an answer informed by your existing research.
+
+By default, the command:
+1. Searches existing research via grepai for relevant context
+2. Filters out stale results (configurable, default 90 days)
+3. Sends the question + research context to the LLM
+4. Saves the answer to the research directory
+
+Use --no-save to skip saving, --no-research to skip the research lookup,
+or --max-age to control the freshness filter.`,
 		Example: `  researcher ask "What is quantum computing?"
-  researcher ask "Compare TCP vs UDP" --backend ollama --model llama3`,
+  researcher ask "Compare TCP vs UDP" --backend ollama --model llama3
+  researcher ask "What are the best open source LLMs?" --max-age 30d
+  researcher ask "Quick question" --no-save --no-research`,
 		GroupID: "research",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,27 +46,32 @@ to the research directory.`,
 				return fmt.Errorf("creating LLM provider: %w", err)
 			}
 
-			var tt []tools.Tool
-			if cfg.Tools.Enabled {
-				tt = tools.DefaultTools()
+			runner := research.NewRunner(cfg, provider)
+			task := research.Task{
+				Type:       research.TypeAsk,
+				Topic:      question,
+				NoSave:     noSave,
+				NoResearch: noResearch,
+				MaxAge:     maxAge,
 			}
 
-			resp, err := provider.Complete(context.Background(), llm.Request{
-				SystemPrompt: research.SystemPrompt(research.TypeAsk),
-				UserPrompt:   question,
-				MaxTokens:    cfg.Claude.MaxTokens,
-				Tools:        tt,
-			})
+			result, err := runner.Run(context.Background(), task)
 			if err != nil {
-				return fmt.Errorf("LLM call failed: %w", err)
+				return fmt.Errorf("ask failed: %w", err)
 			}
 
-			fmt.Println(resp)
+			if result.FilePath != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Answer saved to: %s\n", result.FilePath)
+			}
+
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
+	cmd.Flags().BoolVar(&noSave, "no-save", false, "Don't save the answer to the research directory")
+	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
 	return cmd
 }

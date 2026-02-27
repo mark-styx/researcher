@@ -50,6 +50,7 @@ Get started:
 	root.AddCommand(migrateCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(configCmd())
+	root.AddCommand(mcpCmd())
 	root.AddCommand(versionCmd())
 
 	if err := root.Execute(); err != nil {

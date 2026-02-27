@@ -7,9 +7,19 @@ const TypeEnrich = "enrich"
 const TypeAsk = "ask"
 
 type Task struct {
-	Type    string
-	Topic   string
-	Sources []string // file paths for review/enrich
+	Type       string
+	Topic      string
+	Sources    []string // file paths for review/enrich
+	NoSave     bool     // skip saving the answer
+	NoResearch bool     // skip searching existing research
+	MaxAge     string   // override max-age for freshness filter (e.g. "30d")
+	Quiet      bool     // suppress stdout output (used by MCP server)
+}
+
+// RunResult holds the output from a research task execution.
+type RunResult struct {
+	FilePath string // path to saved file (empty if NoSave)
+	Response string // LLM response text
 }
 
 var systemPrompts = map[string]string{
@@ -72,4 +82,32 @@ func SystemPrompt(taskType string) string {
 	return `You are a knowledgeable research assistant. Provide clear, accurate, and well-structured answers.
 
 Use web_search when you need current information beyond your training data. Use web_fetch to read articles or documentation at specific URLs.`
+}
+
+// AskSystemPrompt returns a system prompt for the ask command.
+// If researchContext is non-empty, the prompt instructs the LLM to use existing research
+// as its PRIMARY source and supplement with web search for gaps.
+// If researchContext is empty, returns a generic assistant prompt.
+func AskSystemPrompt(researchContext string) string {
+	if researchContext == "" {
+		return `You are a knowledgeable research assistant. Provide clear, accurate, and well-structured answers.
+
+Use web_search when you need current information beyond your training data. Use web_fetch to read articles or documentation at specific URLs.`
+	}
+
+	return `You are a knowledgeable research assistant with access to existing research.
+
+Use the following existing research as your PRIMARY source of information. Synthesize and reference it directly in your answer. Use web_search to fill in any gaps or verify claims that the existing research doesn't cover.
+
+## Existing Research
+
+` + researchContext + `
+
+## Instructions
+
+1. Answer the user's question primarily from the existing research above
+2. Cite which research documents you're drawing from
+3. Use web_search only for information not covered by existing research
+4. Use web_fetch to read articles at specific URLs if needed
+5. Be clear about what comes from existing research vs. new web sources`
 }

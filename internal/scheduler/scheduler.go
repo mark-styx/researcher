@@ -146,7 +146,7 @@ func (s *Scheduler) execute(task *Task) {
 	}
 
 	runner := research.NewRunner(s.cfg, provider)
-	output, err := runner.Run(context.Background(), research.Task{
+	result, err := runner.Run(context.Background(), research.Task{
 		Type:    task.Type,
 		Topic:   task.Topic,
 		Sources: nil,
@@ -162,8 +162,8 @@ func (s *Scheduler) execute(task *Task) {
 		return
 	}
 
-	if output != "" {
-		s.store.SetOutputDir(task.ID, output)
+	if result.FilePath != "" {
+		s.store.SetOutputDir(task.ID, result.FilePath)
 	}
 
 	// For recurring tasks, reset to scheduled; for one-shots, mark done
@@ -175,5 +175,5 @@ func (s *Scheduler) execute(task *Task) {
 		s.store.UpdateStatus(task.ID, StatusDone)
 	}
 
-	s.logger.Printf("Task %s completed: %s", task.ID[:8], output)
+	s.logger.Printf("Task %s completed: %s", task.ID[:8], result.FilePath)
 }

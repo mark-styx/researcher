@@ -43,7 +43,7 @@ research directory.`,
 			}
 
 			runner := research.NewRunner(cfg, provider)
-			output, err := runner.Run(context.Background(), research.Task{
+			result, err := runner.Run(context.Background(), research.Task{
 				Type:    research.TypeReview,
 				Topic:   topic,
 				Sources: sourceFiles,
@@ -52,7 +52,7 @@ research directory.`,
 				return fmt.Errorf("review failed: %w", err)
 			}
 
-			fmt.Printf("Review saved to: %s\n", output)
+			fmt.Printf("Review saved to: %s\n", result.FilePath)
 			return nil
 		},
 	}

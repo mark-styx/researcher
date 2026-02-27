@@ -72,24 +72,143 @@ func TestRunner_UnknownType(t *testing.T) {
 	}
 }
 
-func TestRunner_Ask(t *testing.T) {
+func TestRunner_Ask_DefaultBehavior(t *testing.T) {
 	cfg := testConfig(t)
-	mock := &mockProvider{response: "answer here"}
+	// grepai will fail (binary doesn't exist), which is fine — non-fatal
+	cfg.Grepai = config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	// Two responses: one for the ask LLM call, one for categorize
+	mock := &mockProvider{responses: []string{
+		"answer here",
+		`{"category": "general", "filename": "what-is-go"}`,
+	}}
 	r := NewRunner(cfg, mock)
 
-	out, err := r.Run(context.Background(), Task{Type: TypeAsk, Topic: "what is Go?"})
+	result, err := r.Run(context.Background(), Task{Type: TypeAsk, Topic: "what is Go?"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// ask returns empty string (prints to stdout)
-	if out != "" {
-		t.Errorf("output = %q, want empty", out)
+	// Should save and return a path with -ask.md suffix
+	if result.FilePath == "" {
+		t.Fatal("expected output path, got empty")
 	}
-	if len(mock.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	if !strings.HasSuffix(result.FilePath, "-ask.md") {
+		t.Errorf("output path = %q, expected -ask.md suffix", result.FilePath)
 	}
+	// First LLM call should be the ask
 	if mock.calls[0].UserPrompt != "what is Go?" {
 		t.Errorf("UserPrompt = %q", mock.calls[0].UserPrompt)
+	}
+	// File should exist with content
+	data, err := os.ReadFile(result.FilePath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	if !strings.Contains(string(data), "answer here") {
+		t.Error("missing answer in saved file")
+	}
+	// Response should be populated
+	if result.Response != "answer here" {
+		t.Errorf("Response = %q, want %q", result.Response, "answer here")
+	}
+}
+
+func TestRunner_Ask_NoSave(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Grepai = config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+	mock := &mockProvider{response: "answer here"}
+	r := NewRunner(cfg, mock)
+
+	result, err := r.Run(context.Background(), Task{
+		Type:       TypeAsk,
+		Topic:      "what is Go?",
+		NoSave:     true,
+		NoResearch: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.FilePath != "" {
+		t.Errorf("expected empty output path with --no-save, got %q", result.FilePath)
+	}
+	if result.Response != "answer here" {
+		t.Errorf("Response = %q, want %q", result.Response, "answer here")
+	}
+	// Only 1 LLM call (no categorize call)
+	if len(mock.calls) != 1 {
+		t.Errorf("expected 1 LLM call, got %d", len(mock.calls))
+	}
+}
+
+func TestRunner_Ask_NoResearch(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Grepai = config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+	mock := &mockProvider{responses: []string{
+		"answer here",
+		`{"category": "general", "filename": "test-q"}`,
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{
+		Type:       TypeAsk,
+		Topic:      "what is Go?",
+		NoResearch: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// System prompt should NOT contain "Existing Research"
+	if strings.Contains(mock.calls[0].SystemPrompt, "Existing Research") {
+		t.Error("system prompt should not contain research context when --no-research is set")
+	}
+}
+
+func TestRunner_Ask_WithResearchContext(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	// Create a fake grepai that returns JSON pointing to a real file
+	researchDir := cfg.ResearchDir
+	subDir := filepath.Join(researchDir, "llm")
+	os.MkdirAll(subDir, 0755)
+	researchFile := filepath.Join(subDir, "agents.md")
+	os.WriteFile(researchFile, []byte("# LLM Agents\nAgents are autonomous systems."), 0644)
+
+	// Fake grepai returns JSON with relative path
+	scriptDir := t.TempDir()
+	results := fmt.Sprintf(`[{"file_path":"llm/agents.md","start_line":1,"end_line":2,"score":0.95,"content":"LLM agents"}]`)
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+
+	mock := &mockProvider{responses: []string{
+		"synthesized answer from research",
+		`{"category": "llm", "filename": "agents-ask"}`,
+	}}
+	r := NewRunner(cfg, mock)
+
+	result, err := r.Run(context.Background(), Task{Type: TypeAsk, Topic: "tell me about LLM agents"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// System prompt should contain research context
+	if !strings.Contains(mock.calls[0].SystemPrompt, "Existing Research") {
+		t.Error("system prompt should contain 'Existing Research' section")
+	}
+	if !strings.Contains(mock.calls[0].SystemPrompt, "agents.md") {
+		t.Error("system prompt should contain the research file reference")
+	}
+
+	// Should have saved
+	if result.FilePath == "" {
+		t.Fatal("expected output path")
+	}
+	if !strings.HasSuffix(result.FilePath, "-ask.md") {
+		t.Errorf("output = %q, expected -ask.md suffix", result.FilePath)
 	}
 }
 
@@ -101,18 +220,18 @@ func TestRunner_Dive(t *testing.T) {
 	}}
 	r := NewRunner(cfg, mock)
 
-	out, err := r.Run(context.Background(), Task{Type: TypeDive, Topic: "Rust Language"})
+	result, err := r.Run(context.Background(), Task{Type: TypeDive, Topic: "Rust Language"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "rust-language.md") {
-		t.Errorf("output path = %q, expected to end with rust-language.md", out)
+	if !strings.HasSuffix(result.FilePath, "rust-language.md") {
+		t.Errorf("output path = %q, expected to end with rust-language.md", result.FilePath)
 	}
-	if !strings.Contains(out, "programming") {
-		t.Errorf("output path = %q, expected to contain category 'programming'", out)
+	if !strings.Contains(result.FilePath, "programming") {
+		t.Errorf("output path = %q, expected to contain category 'programming'", result.FilePath)
 	}
 
-	data, err := os.ReadFile(out)
+	data, err := os.ReadFile(result.FilePath)
 	if err != nil {
 		t.Fatalf("reading output: %v", err)
 	}
@@ -136,15 +255,15 @@ func TestRunner_Watch(t *testing.T) {
 	}}
 	r := NewRunner(cfg, mock)
 
-	out, err := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "AI News"})
+	result, err := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "AI News"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "-watch.md") {
-		t.Errorf("output path = %q, expected to end with -watch.md", out)
+	if !strings.HasSuffix(result.FilePath, "-watch.md") {
+		t.Errorf("output path = %q, expected to end with -watch.md", result.FilePath)
 	}
 
-	data, _ := os.ReadFile(out)
+	data, _ := os.ReadFile(result.FilePath)
 	content := string(data)
 	if !strings.Contains(content, "AI News") {
 		t.Error("missing topic in header")
@@ -164,15 +283,15 @@ func TestRunner_Watch_Appends(t *testing.T) {
 	}}
 	r := NewRunner(cfg, mock)
 
-	out1, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
+	result1, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
 
-	out2, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
+	result2, _ := r.Run(context.Background(), Task{Type: TypeWatch, Topic: "test"})
 
-	if out1 != out2 {
-		t.Errorf("expected same path, got %q and %q", out1, out2)
+	if result1.FilePath != result2.FilePath {
+		t.Errorf("expected same path, got %q and %q", result1.FilePath, result2.FilePath)
 	}
 
-	data, _ := os.ReadFile(out1)
+	data, _ := os.ReadFile(result1.FilePath)
 	content := string(data)
 	if !strings.Contains(content, "update 1") {
 		t.Error("missing first update")
@@ -190,15 +309,15 @@ func TestRunner_Review(t *testing.T) {
 	}}
 	r := NewRunner(cfg, mock)
 
-	out, err := r.Run(context.Background(), Task{Type: TypeReview, Topic: "LLM Agents"})
+	result, err := r.Run(context.Background(), Task{Type: TypeReview, Topic: "LLM Agents"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasSuffix(out, "-review.md") {
-		t.Errorf("output path = %q, expected to end with -review.md", out)
+	if !strings.HasSuffix(result.FilePath, "-review.md") {
+		t.Errorf("output path = %q, expected to end with -review.md", result.FilePath)
 	}
-	if !strings.Contains(out, "llm") {
-		t.Errorf("output path = %q, expected to contain category 'llm'", out)
+	if !strings.Contains(result.FilePath, "llm") {
+		t.Errorf("output path = %q, expected to contain category 'llm'", result.FilePath)
 	}
 }
 
@@ -241,7 +360,7 @@ func TestRunner_Enrich(t *testing.T) {
 	srcFile := filepath.Join(t.TempDir(), "doc.md")
 	os.WriteFile(srcFile, []byte("original content"), 0644)
 
-	out, err := r.Run(context.Background(), Task{
+	result, err := r.Run(context.Background(), Task{
 		Type:    TypeEnrich,
 		Topic:   "test",
 		Sources: []string{srcFile},
@@ -249,11 +368,11 @@ func TestRunner_Enrich(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "doc-enriched.md") {
-		t.Errorf("output path = %q, expected to contain doc-enriched.md", out)
+	if !strings.Contains(result.FilePath, "doc-enriched.md") {
+		t.Errorf("output path = %q, expected to contain doc-enriched.md", result.FilePath)
 	}
 
-	data, _ := os.ReadFile(out)
+	data, _ := os.ReadFile(result.FilePath)
 	if !strings.Contains(string(data), "Enriched version") {
 		t.Error("missing enriched content")
 	}
@@ -275,7 +394,7 @@ func TestRunner_ProviderError(t *testing.T) {
 	mock := &mockProvider{err: fmt.Errorf("LLM down")}
 	r := NewRunner(cfg, mock)
 
-	_, err := r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test"})
+	_, err := r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test", NoSave: true, NoResearch: true})
 	if err == nil {
 		t.Fatal("expected error from provider")
 	}
@@ -291,7 +410,7 @@ func TestRunner_DefaultTools(t *testing.T) {
 		mock := &mockProvider{response: "ok"}
 		r := NewRunner(cfg, mock)
 
-		r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test"})
+		r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test", NoSave: true, NoResearch: true})
 		if len(mock.calls) != 1 {
 			t.Fatalf("expected 1 call, got %d", len(mock.calls))
 		}
@@ -306,7 +425,7 @@ func TestRunner_DefaultTools(t *testing.T) {
 		mock := &mockProvider{response: "ok"}
 		r := NewRunner(cfg, mock)
 
-		r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test"})
+		r.Run(context.Background(), Task{Type: TypeAsk, Topic: "test", NoSave: true, NoResearch: true})
 		if mock.calls[0].Tools != nil {
 			t.Error("expected tools to be nil when disabled")
 		}

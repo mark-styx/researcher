@@ -37,7 +37,7 @@ enriched version saved alongside the original.`,
 			}
 
 			runner := research.NewRunner(cfg, provider)
-			output, err := runner.Run(context.Background(), research.Task{
+			result, err := runner.Run(context.Background(), research.Task{
 				Type:    research.TypeEnrich,
 				Topic:   docPath,
 				Sources: []string{docPath},
@@ -46,7 +46,7 @@ enriched version saved alongside the original.`,
 				return fmt.Errorf("enrich failed: %w", err)
 			}
 
-			fmt.Printf("Enriched document: %s\n", output)
+			fmt.Printf("Enriched document: %s\n", result.FilePath)
 			return nil
 		},
 	}

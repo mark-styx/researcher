@@ -38,7 +38,7 @@ in the research directory.`,
 			}
 
 			runner := research.NewRunner(cfg, provider)
-			output, err := runner.Run(context.Background(), research.Task{
+			result, err := runner.Run(context.Background(), research.Task{
 				Type:  research.TypeDive,
 				Topic: topic,
 			})
@@ -46,7 +46,7 @@ in the research directory.`,
 				return fmt.Errorf("research failed: %w", err)
 			}
 
-			fmt.Printf("Research saved to: %s\n", output)
+			fmt.Printf("Research saved to: %s\n", result.FilePath)
 			return nil
 		},
 	}
