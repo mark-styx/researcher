@@ -13,6 +13,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Semantic search** — find across all research via grepai
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
+- **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
 - **Multi-backend** — supports Claude CLI and Ollama
 
 ## Installation
@@ -94,6 +95,7 @@ researcher search "entanglement"
 | `init` | Initialize config, directories, and grepai |
 | `config show` | Print current configuration |
 | `config set <key> <value>` | Update a config value |
+| `mcp` | Start MCP server (stdio transport) |
 | `version` | Print version |
 
 All commands support `--help` for detailed usage and examples.
@@ -226,6 +228,36 @@ To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) int
 ```bash
 researcher migrate --dry-run   # Preview changes
 researcher migrate             # Apply changes
+```
+
+## MCP Server
+
+The `researcher mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) server over stdio, exposing researcher's capabilities as tools that any MCP client can call.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `researcher_ask` | Ask a question with optional research context |
+| `researcher_dive` | Generate a deep research report |
+| `researcher_review` | Literature review / synthesis |
+| `researcher_search` | Semantic search across research |
+| `researcher_list` | List research files by category |
+| `researcher_read` | Read a research document |
+
+### Claude Code Configuration
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "researcher": {
+      "command": "researcher",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 ### Config Directory
