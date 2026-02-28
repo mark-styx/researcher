@@ -84,12 +84,13 @@ func TestMCPServer_ListTools(t *testing.T) {
 	}
 
 	expectedTools := map[string]bool{
-		"researcher_ask":    false,
-		"researcher_dive":   false,
-		"researcher_review": false,
-		"researcher_search": false,
-		"researcher_list":   false,
-		"researcher_read":   false,
+		"researcher_ask":     false,
+		"researcher_dive":    false,
+		"researcher_review":  false,
+		"researcher_compare": false,
+		"researcher_search":  false,
+		"researcher_list":    false,
+		"researcher_read":    false,
 	}
 
 	for _, tool := range result.Tools {
@@ -104,8 +105,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 		}
 	}
 
-	if len(result.Tools) != 6 {
-		t.Errorf("expected 6 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 7 {
+		t.Errorf("expected 7 tools, got %d", len(result.Tools))
 	}
 }
 
@@ -374,6 +375,84 @@ func TestMCPServer_Review(t *testing.T) {
 	}
 	if resp["saved_to"] == "" {
 		t.Error("expected saved_to path")
+	}
+}
+
+func TestMCPServer_Compare(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{responses: []string{
+		`{"category": "frameworks", "filename": "react-vs-vue"}`,
+		"React and Vue comparison",
+	}}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_compare",
+			Arguments: map[string]any{
+				"subject1": "React",
+				"subject2": "Vue",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling compare: %v", err)
+	}
+
+	text := extractText(t, result)
+	var resp map[string]string
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("parsing compare response: %v", err)
+	}
+
+	if resp["comparison"] != "React and Vue comparison" {
+		t.Errorf("comparison = %q, want %q", resp["comparison"], "React and Vue comparison")
+	}
+	if resp["saved_to"] == "" {
+		t.Error("expected saved_to path, got empty")
+	}
+	if !strings.Contains(resp["saved_to"], "frameworks") {
+		t.Errorf("saved_to = %q, expected to contain 'frameworks'", resp["saved_to"])
+	}
+}
+
+func TestMCPServer_Compare_WithSources(t *testing.T) {
+	cfg := testConfig(t)
+
+	// Create source files
+	src1 := filepath.Join(t.TempDir(), "doc1.md")
+	src2 := filepath.Join(t.TempDir(), "doc2.md")
+	os.WriteFile(src1, []byte("Document one content"), 0644)
+	os.WriteFile(src2, []byte("Document two content"), 0644)
+
+	mock := &mockProvider{responses: []string{
+		`{"category": "comparisons", "filename": "doc-comparison"}`,
+		"Source document comparison",
+	}}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_compare",
+			Arguments: map[string]any{
+				"subject1": "Doc1",
+				"subject2": "Doc2",
+				"sources":  src1 + "," + src2,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling compare with sources: %v", err)
+	}
+
+	text := extractText(t, result)
+	var resp map[string]string
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("parsing compare response: %v", err)
+	}
+
+	if resp["comparison"] != "Source document comparison" {
+		t.Errorf("comparison = %q", resp["comparison"])
 	}
 }
 

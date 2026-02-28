@@ -29,6 +29,7 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(askTool(), askHandler(cfg, provider))
 	s.AddTool(diveTool(), diveHandler(cfg, provider))
 	s.AddTool(reviewTool(), reviewHandler(cfg, provider))
+	s.AddTool(compareTool(), compareHandler(cfg, provider))
 	s.AddTool(searchTool(), searchHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
@@ -146,6 +147,53 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 		return toolResultJSON(map[string]string{
 			"review":   result.Response,
 			"saved_to": result.FilePath,
+		})
+	}
+}
+
+// --- researcher_compare ---
+
+func compareTool() mcp.Tool {
+	return mcp.NewTool("researcher_compare",
+		mcp.WithDescription("Side-by-side comparative analysis of two topics or two existing documents."),
+		mcp.WithString("subject1", mcp.Required(), mcp.Description("First subject/topic to compare")),
+		mcp.WithString("subject2", mcp.Required(), mcp.Description("Second subject/topic to compare")),
+		mcp.WithString("sources", mcp.Description("Comma-separated paths to two existing documents to compare instead of topics")),
+	)
+}
+
+func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		subject1, err := req.RequireString("subject1")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		subject2, err := req.RequireString("subject2")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		topic := subject1 + " vs " + subject2
+
+		var sources []string
+		if s := req.GetString("sources", ""); s != "" {
+			sources = strings.Split(s, ",")
+		}
+
+		runner := research.NewRunner(cfg, provider)
+		result, err := runner.Run(ctx, research.Task{
+			Type:    research.TypeCompare,
+			Topic:   topic,
+			Sources: sources,
+			Quiet:   true,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("compare failed: %v", err)), nil
+		}
+
+		return toolResultJSON(map[string]string{
+			"comparison": result.Response,
+			"saved_to":   result.FilePath,
 		})
 	}
 }

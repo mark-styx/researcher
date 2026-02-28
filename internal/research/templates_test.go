@@ -6,7 +6,7 @@ import (
 )
 
 func TestSystemPrompt_KnownTypes(t *testing.T) {
-	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich}
+	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich, TypeCompare}
 	for _, typ := range types {
 		t.Run(typ, func(t *testing.T) {
 			p := SystemPrompt(typ)
@@ -69,7 +69,7 @@ func TestAskSystemPrompt_WithContext(t *testing.T) {
 }
 
 func TestSystemPrompt_ContainsToolInstructions(t *testing.T) {
-	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich}
+	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich, TypeCompare}
 	for _, typ := range types {
 		t.Run(typ, func(t *testing.T) {
 			p := SystemPrompt(typ)
@@ -98,5 +98,8 @@ func TestTaskTypeConstants(t *testing.T) {
 	}
 	if TypeAsk != "ask" {
 		t.Errorf("TypeAsk = %q", TypeAsk)
+	}
+	if TypeCompare != "compare" {
+		t.Errorf("TypeCompare = %q", TypeCompare)
 	}
 }

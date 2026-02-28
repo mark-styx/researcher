@@ -5,6 +5,7 @@ const TypeWatch = "watch"
 const TypeReview = "review"
 const TypeEnrich = "enrich"
 const TypeAsk = "ask"
+const TypeCompare = "compare"
 
 type Task struct {
 	Type       string
@@ -73,6 +74,20 @@ Structure:
 Verify claims using web_search and add citations. Use web_fetch to read sources and gather supporting details.
 
 Return the complete enriched document.`,
+
+	TypeCompare: `You are a comparative analysis specialist. Produce a structured side-by-side comparison of the given subjects.
+
+Use web_search to find current, accurate information about both subjects. Use web_fetch to read detailed documentation, benchmarks, or articles.
+
+Structure your output as a well-organized markdown document with:
+- Executive overview of both subjects
+- Comparison dimensions (organized as a table where appropriate)
+- Strengths and weaknesses of each
+- Key differentiators
+- Use case recommendations (when to choose one over the other)
+- Verdict / summary recommendation
+
+Be balanced and objective. Cite real benchmarks, community data, or authoritative sources where relevant.`,
 }
 
 func SystemPrompt(taskType string) string {

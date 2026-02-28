@@ -11,8 +11,8 @@ func TestRootCommand_HasSubcommands(t *testing.T) {
 	expected := []string{
 		"version", "init", "config", "ask", "dive",
 		"list", "show", "search", "review", "enrich",
-		"watch", "daemon", "schedule", "queue", "link",
-		"migrate", "mcp",
+		"compare", "watch", "daemon", "schedule", "queue",
+		"link", "migrate", "mcp",
 	}
 
 	cmds := root.Commands()

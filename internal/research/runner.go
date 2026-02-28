@@ -37,6 +37,8 @@ func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
 		return r.runReview(ctx, task)
 	case TypeEnrich:
 		return r.runEnrich(ctx, task)
+	case TypeCompare:
+		return r.runCompare(ctx, task)
 	default:
 		return RunResult{}, fmt.Errorf("unknown task type: %q", task.Type)
 	}
@@ -286,6 +288,52 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp}, fmt.Errorf("writing enriched output: %w", err)
+	}
+
+	return RunResult{FilePath: outPath, Response: resp}, nil
+}
+
+func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return RunResult{}, err
+	}
+	filename = strings.TrimSuffix(filename, ".md") + "-comparison.md"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
+	}
+
+	var promptBuilder strings.Builder
+
+	if len(task.Sources) >= 2 {
+		promptBuilder.WriteString("Compare the following two documents:\n")
+		for i, src := range task.Sources[:2] {
+			content, err := os.ReadFile(src)
+			if err != nil {
+				return RunResult{}, fmt.Errorf("reading source %d (%s): %w", i+1, src, err)
+			}
+			promptBuilder.WriteString(fmt.Sprintf("\n\n--- Document %d: %s ---\n%s\n", i+1, filepath.Base(src), string(content)))
+		}
+	} else {
+		promptBuilder.WriteString(fmt.Sprintf("Produce a comprehensive comparative analysis of: %s", task.Topic))
+	}
+
+	resp, err := r.provider.Complete(ctx, llm.Request{
+		SystemPrompt: SystemPrompt(TypeCompare),
+		UserPrompt:   promptBuilder.String(),
+		MaxTokens:    r.cfg.Claude.MaxTokens,
+		Tools:        r.defaultTools(),
+	})
+	if err != nil {
+		return RunResult{}, err
+	}
+
+	outPath := filepath.Join(dir, filename)
+	header := fmt.Sprintf("# Comparison: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+
+	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
+		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
 	}
 
 	return RunResult{FilePath: outPath, Response: resp}, nil

@@ -403,6 +403,105 @@ func TestRunner_ProviderError(t *testing.T) {
 	}
 }
 
+func TestRunner_Compare_Topics(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{responses: []string{
+		`{"category": "frameworks", "filename": "react-vs-vue"}`, // categorize call
+		"Comparison content here", // content call
+	}}
+	r := NewRunner(cfg, mock)
+
+	result, err := r.Run(context.Background(), Task{Type: TypeCompare, Topic: "React vs Vue"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(result.FilePath, "-comparison.md") {
+		t.Errorf("output path = %q, expected -comparison.md suffix", result.FilePath)
+	}
+	if !strings.Contains(result.FilePath, "frameworks") {
+		t.Errorf("output path = %q, expected to contain category 'frameworks'", result.FilePath)
+	}
+
+	data, err := os.ReadFile(result.FilePath)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Comparison: React vs Vue") {
+		t.Error("missing topic in header")
+	}
+	if !strings.Contains(content, "Comparison content here") {
+		t.Error("missing LLM response in output")
+	}
+	if len(mock.calls) != 2 {
+		t.Errorf("expected 2 LLM calls (categorize + content), got %d", len(mock.calls))
+	}
+	// Content call prompt should mention comparative analysis
+	if !strings.Contains(mock.calls[1].UserPrompt, "comparative analysis") {
+		t.Error("expected prompt to mention 'comparative analysis'")
+	}
+}
+
+func TestRunner_Compare_Documents(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{responses: []string{
+		`{"category": "comparisons", "filename": "doc-comparison"}`, // categorize call
+		"Document comparison result", // content call
+	}}
+	r := NewRunner(cfg, mock)
+
+	// Create two temp source files
+	tmpDir := t.TempDir()
+	src1 := filepath.Join(tmpDir, "doc1.md")
+	src2 := filepath.Join(tmpDir, "doc2.md")
+	os.WriteFile(src1, []byte("Content of document one"), 0644)
+	os.WriteFile(src2, []byte("Content of document two"), 0644)
+
+	result, err := r.Run(context.Background(), Task{
+		Type:    TypeCompare,
+		Topic:   "document comparison",
+		Sources: []string{src1, src2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasSuffix(result.FilePath, "-comparison.md") {
+		t.Errorf("output path = %q, expected -comparison.md suffix", result.FilePath)
+	}
+
+	// The content call should include both documents
+	if len(mock.calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(mock.calls))
+	}
+	prompt := mock.calls[1].UserPrompt
+	if !strings.Contains(prompt, "Content of document one") {
+		t.Error("source 1 content not included in prompt")
+	}
+	if !strings.Contains(prompt, "Content of document two") {
+		t.Error("source 2 content not included in prompt")
+	}
+}
+
+func TestRunner_Compare_DocumentReadError(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{responses: []string{
+		`{"category": "test", "filename": "test"}`, // categorize call
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{
+		Type:    TypeCompare,
+		Topic:   "test",
+		Sources: []string{"/nonexistent/file1.md", "/nonexistent/file2.md"},
+	})
+	if err == nil {
+		t.Fatal("expected error when source file doesn't exist")
+	}
+	if !strings.Contains(err.Error(), "reading source") {
+		t.Errorf("error = %q, expected to mention 'reading source'", err.Error())
+	}
+}
+
 func TestRunner_DefaultTools(t *testing.T) {
 	t.Run("tools enabled", func(t *testing.T) {
 		cfg := testConfig(t)

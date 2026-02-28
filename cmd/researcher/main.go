@@ -39,6 +39,7 @@ Get started:
 	root.AddCommand(diveCmd())
 	root.AddCommand(reviewCmd())
 	root.AddCommand(enrichCmd())
+	root.AddCommand(compareCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())
