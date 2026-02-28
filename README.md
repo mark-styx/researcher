@@ -7,6 +7,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Deep research** — comprehensive structured reports with executive summaries, key concepts, state of the art, and references
 - **One-shot Q&A** — quick answers with optional web search and tool use
 - **Literature review** — synthesis from topics or source documents
+- **Comparative analysis** — side-by-side comparison of two topics or existing documents
 - **Document enrichment** — expand thin sections and add context to existing research
 - **Smart file organization** — LLM-based auto-categorization into topic directories with descriptive filenames
 - **Migration tool** — reorganize existing flat research directories into the new category structure
@@ -61,6 +62,7 @@ researcher search "entanglement"
 | `ask <question>` | One-shot Q&A, prints answer to stdout |
 | `dive <topic>` | Deep research report saved as structured markdown |
 | `review <topic>` | Literature review / synthesis, optional `--sources` |
+| `compare <topicA> <topicB>` | Side-by-side comparative analysis of two topics or documents |
 | `enrich <path>` | Expand and add context to an existing document |
 | `search <query>` | Semantic search across research via grepai |
 
@@ -152,6 +154,7 @@ Override backend and model per-command with `--backend` and `--model` flags.
 | Dive | `dive` | Comprehensive research report | `<research_dir>/<category>/<topic>.md` |
 | Review | `review` | Literature review / synthesis | `<research_dir>/<category>/<topic>-review.md` |
 | Enrich | `enrich` | Expand existing document | Enriched version alongside original |
+| Compare | `compare` | Side-by-side comparative analysis | `<research_dir>/<category>/<topic>-comparison.md` |
 | Watch | `watch` | Recurring topic monitoring | `<research_dir>/<category>/<topic>-watch.md` |
 
 ## Task Scheduling
@@ -241,6 +244,7 @@ The `researcher mcp` command starts a [Model Context Protocol](https://modelcont
 | `researcher_ask` | Ask a question with optional research context |
 | `researcher_dive` | Generate a deep research report |
 | `researcher_review` | Literature review / synthesis |
+| `researcher_compare` | Side-by-side comparative analysis |
 | `researcher_search` | Semantic search across research |
 | `researcher_list` | List research files by category |
 | `researcher_read` | Read a research document |
