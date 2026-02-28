@@ -30,6 +30,7 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(diveTool(), diveHandler(cfg, provider))
 	s.AddTool(reviewTool(), reviewHandler(cfg, provider))
 	s.AddTool(compareTool(), compareHandler(cfg, provider))
+	s.AddTool(enrichTool(), enrichHandler(cfg, provider))
 	s.AddTool(searchTool(), searchHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
@@ -194,6 +195,46 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 		return toolResultJSON(map[string]string{
 			"comparison": result.Response,
 			"saved_to":   result.FilePath,
+		})
+	}
+}
+
+// --- researcher_enrich ---
+
+func enrichTool() mcp.Tool {
+	return mcp.NewTool("researcher_enrich",
+		mcp.WithDescription("Expand and add context to an existing research document. Produces an enriched version saved alongside the original."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the document to enrich (relative to research dir, e.g. 'llm/agents.md', or absolute)")),
+	)
+}
+
+func enrichHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		docPath, err := req.RequireString("path")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		// If path is relative, resolve against research dir
+		if !filepath.IsAbs(docPath) {
+			researchDir := config.ExpandPath(cfg.ResearchDir)
+			docPath = filepath.Join(researchDir, docPath)
+		}
+
+		runner := research.NewRunner(cfg, provider)
+		result, err := runner.Run(ctx, research.Task{
+			Type:    research.TypeEnrich,
+			Topic:   docPath,
+			Sources: []string{docPath},
+			Quiet:   true,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("enrich failed: %v", err)), nil
+		}
+
+		return toolResultJSON(map[string]string{
+			"enriched": result.Response,
+			"saved_to": result.FilePath,
 		})
 	}
 }

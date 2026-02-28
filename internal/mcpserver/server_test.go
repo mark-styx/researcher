@@ -88,6 +88,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		"researcher_dive":    false,
 		"researcher_review":  false,
 		"researcher_compare": false,
+		"researcher_enrich":  false,
 		"researcher_search":  false,
 		"researcher_list":    false,
 		"researcher_read":    false,
@@ -105,8 +106,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 		}
 	}
 
-	if len(result.Tools) != 7 {
-		t.Errorf("expected 7 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 8 {
+		t.Errorf("expected 8 tools, got %d", len(result.Tools))
 	}
 }
 
@@ -453,6 +454,68 @@ func TestMCPServer_Compare_WithSources(t *testing.T) {
 
 	if resp["comparison"] != "Source document comparison" {
 		t.Errorf("comparison = %q", resp["comparison"])
+	}
+}
+
+func TestMCPServer_Enrich(t *testing.T) {
+	cfg := testConfig(t)
+
+	// Create a document to enrich
+	llmDir := filepath.Join(cfg.ResearchDir, "llm")
+	os.MkdirAll(llmDir, 0755)
+	os.WriteFile(filepath.Join(llmDir, "agents.md"), []byte("# LLM Agents\nThin content."), 0644)
+
+	mock := &mockProvider{response: "Enriched content with more depth"}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_enrich",
+			Arguments: map[string]any{
+				"path": "llm/agents.md",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling enrich: %v", err)
+	}
+
+	text := extractText(t, result)
+	var resp map[string]string
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("parsing enrich response: %v", err)
+	}
+
+	if resp["enriched"] != "Enriched content with more depth" {
+		t.Errorf("enriched = %q, want %q", resp["enriched"], "Enriched content with more depth")
+	}
+	if resp["saved_to"] == "" {
+		t.Error("expected saved_to path, got empty")
+	}
+	if !strings.Contains(resp["saved_to"], "agents-enriched.md") {
+		t.Errorf("saved_to = %q, expected to contain 'agents-enriched.md'", resp["saved_to"])
+	}
+}
+
+func TestMCPServer_Enrich_NotFound(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_enrich",
+			Arguments: map[string]any{
+				"path": "nonexistent/doc.md",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling enrich: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("expected error for missing document")
 	}
 }
 

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
+	"github.com/charmbracelet/huh"
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
 	"github.com/marklubin/researcher/internal/research"
@@ -14,21 +16,33 @@ func enrichCmd() *cobra.Command {
 	var backend, model string
 
 	cmd := &cobra.Command{
-		Use:   "enrich <path/to/doc.md>",
+		Use:   "enrich [path/to/doc.md]",
 		Short: "Expand an existing research document",
 		Long: `Expand thin sections and add missing context to an existing research document.
 Reads the document, identifies areas that need more depth, and produces an
-enriched version saved alongside the original.`,
-		Example: `  researcher enrich ./research/quantum-computing/README.md
+enriched version saved alongside the original.
+
+When called without arguments, presents an interactive file browser to select
+a document from the research directory.`,
+		Example: `  researcher enrich                                   # interactive file picker
+  researcher enrich ./research/quantum-computing/README.md
   researcher enrich report.md --backend ollama`,
 		GroupID: "research",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			docPath := args[0]
-
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
+			}
+
+			var docPath string
+			if len(args) == 1 {
+				docPath = args[0]
+			} else {
+				docPath, err = selectResearchFile(cfg)
+				if err != nil {
+					return err
+				}
 			}
 
 			provider, err := llm.NewProvider(cfg, backend, model)
@@ -54,4 +68,65 @@ enriched version saved alongside the original.`,
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	return cmd
+}
+
+// selectResearchFile presents an interactive TUI to select a research file.
+// Returns the full path to the selected file.
+func selectResearchFile(cfg *config.Config) (string, error) {
+	researchDir := config.ExpandPath(cfg.ResearchDir)
+
+	cats, err := research.ListCategories(researchDir)
+	if err != nil {
+		return "", fmt.Errorf("listing categories: %w", err)
+	}
+	if len(cats) == 0 {
+		return "", fmt.Errorf("no research categories found in %s", researchDir)
+	}
+
+	// Select category
+	catOptions := make([]huh.Option[string], len(cats))
+	for i, c := range cats {
+		catOptions[i] = huh.NewOption(c, c)
+	}
+
+	var category string
+	err = huh.NewSelect[string]().
+		Title("Select a category").
+		Options(catOptions...).
+		Value(&category).
+		Run()
+	if err != nil {
+		return "", fmt.Errorf("category selection: %w", err)
+	}
+
+	// Select file within category
+	files, err := research.ListCategoryFiles(researchDir, category)
+	if err != nil {
+		return "", fmt.Errorf("listing files in %s: %w", category, err)
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("no research files in category %q", category)
+	}
+
+	fileOptions := make([]huh.Option[string], len(files))
+	for i, f := range files {
+		label := fmt.Sprintf("%s  (%s)", f.Name, f.Modified.Format("2006-01-02"))
+		fileOptions[i] = huh.NewOption(label, f.Path)
+	}
+
+	var filePath string
+	err = huh.NewSelect[string]().
+		Title(fmt.Sprintf("Select a file from %s", category)).
+		Options(fileOptions...).
+		Value(&filePath).
+		Run()
+	if err != nil {
+		return "", fmt.Errorf("file selection: %w", err)
+	}
+
+	// Show relative path for confirmation
+	rel, _ := filepath.Rel(researchDir, filePath)
+	fmt.Printf("Selected: %s\n", rel)
+
+	return filePath, nil
 }
