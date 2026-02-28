@@ -8,7 +8,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **One-shot Q&A** — quick answers with optional web search and tool use
 - **Literature review** — synthesis from topics or source documents
 - **Comparative analysis** — side-by-side comparison of two topics or existing documents
-- **Document enrichment** — expand thin sections and add context to existing research
+- **Document enrichment** — expand thin sections and add context to existing research; interactive file picker when no path given
 - **Smart file organization** — LLM-based auto-categorization into topic directories with descriptive filenames
 - **Migration tool** — reorganize existing flat research directories into the new category structure
 - **Semantic search** — find across all research via grepai
@@ -63,7 +63,7 @@ researcher search "entanglement"
 | `dive <topic>` | Deep research report saved as structured markdown |
 | `review <topic>` | Literature review / synthesis, optional `--sources` |
 | `compare <topicA> <topicB>` | Side-by-side comparative analysis of two topics or documents |
-| `enrich <path>` | Expand and add context to an existing document |
+| `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
 
 ### Project Management
@@ -245,6 +245,7 @@ The `researcher mcp` command starts a [Model Context Protocol](https://modelcont
 | `researcher_dive` | Generate a deep research report |
 | `researcher_review` | Literature review / synthesis |
 | `researcher_compare` | Side-by-side comparative analysis |
+| `researcher_enrich` | Expand and add context to a document |
 | `researcher_search` | Semantic search across research |
 | `researcher_list` | List research files by category |
 | `researcher_read` | Read a research document |
