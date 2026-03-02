@@ -90,6 +90,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		"researcher_compare": false,
 		"researcher_enrich":  false,
 		"researcher_search":  false,
+		"researcher_context": false,
 		"researcher_list":    false,
 		"researcher_read":    false,
 	}
@@ -106,8 +107,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 		}
 	}
 
-	if len(result.Tools) != 8 {
-		t.Errorf("expected 8 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 9 {
+		t.Errorf("expected 9 tools, got %d", len(result.Tools))
 	}
 }
 
@@ -551,6 +552,115 @@ func TestMCPServer_Search(t *testing.T) {
 	}
 	if !strings.Contains(text, "0.95") {
 		t.Errorf("expected result to contain score '0.95', got %q", text)
+	}
+}
+
+func TestMCPServer_Context(t *testing.T) {
+	cfg := testConfig(t)
+	researchDir := cfg.ResearchDir
+
+	// Create research files that the fake grepai will reference
+	llmDir := filepath.Join(researchDir, "llm")
+	os.MkdirAll(llmDir, 0755)
+	os.WriteFile(filepath.Join(llmDir, "agents.md"), []byte("# LLM Agents\n\nResearch about autonomous agents."), 0644)
+
+	// Create a fake grepai that returns JSON results referencing our test file
+	scriptDir := t.TempDir()
+	results := `[{"file_path":"llm/agents.md","start_line":1,"end_line":3,"score":0.92,"content":"LLM Agents research about autonomous agents"}]`
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+
+	mock := &mockProvider{}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_context",
+			Arguments: map[string]any{
+				"topic": "autonomous agents",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling context: %v", err)
+	}
+
+	text := extractText(t, result)
+	var resp contextResult
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("parsing context response: %v", err)
+	}
+
+	if resp.Topic != "autonomous agents" {
+		t.Errorf("topic = %q, want %q", resp.Topic, "autonomous agents")
+	}
+	if resp.Count != 1 {
+		t.Errorf("count = %d, want 1", resp.Count)
+	}
+	if len(resp.Sources) != 1 {
+		t.Fatalf("sources len = %d, want 1", len(resp.Sources))
+	}
+	if resp.Sources[0].FilePath != "llm/agents.md" {
+		t.Errorf("source file_path = %q, want %q", resp.Sources[0].FilePath, "llm/agents.md")
+	}
+	if resp.Sources[0].Score != 0.92 {
+		t.Errorf("source score = %f, want 0.92", resp.Sources[0].Score)
+	}
+	if resp.Sources[0].Freshness != "current" {
+		t.Errorf("source freshness = %q, want %q", resp.Sources[0].Freshness, "current")
+	}
+	if resp.Context == "" {
+		t.Error("expected non-empty formatted context")
+	}
+	if !strings.Contains(resp.Context, "LLM Agents") {
+		t.Error("context should contain file content")
+	}
+
+	// No LLM calls should have been made
+	if len(mock.calls) != 0 {
+		t.Errorf("expected 0 LLM calls, got %d", len(mock.calls))
+	}
+}
+
+func TestMCPServer_Context_EmptyResults(t *testing.T) {
+	cfg := testConfig(t)
+
+	// Create a fake grepai that returns empty results
+	scriptDir := t.TempDir()
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\necho '[]'\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+
+	mock := &mockProvider{}
+	c := setupClient(t, cfg, mock)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "researcher_context",
+			Arguments: map[string]any{
+				"topic": "nonexistent topic xyz",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling context: %v", err)
+	}
+
+	text := extractText(t, result)
+	var resp contextResult
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("parsing context response: %v", err)
+	}
+
+	if resp.Count != 0 {
+		t.Errorf("count = %d, want 0", resp.Count)
+	}
+	if len(resp.Sources) != 0 {
+		t.Errorf("sources len = %d, want 0", len(resp.Sources))
+	}
+	if resp.Context != "" {
+		t.Errorf("context = %q, want empty", resp.Context)
 	}
 }
 

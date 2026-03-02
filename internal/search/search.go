@@ -142,6 +142,22 @@ func ReadContents(results []SearchResult, researchDir string) map[string]string 
 	return contents
 }
 
+// FreshnessLabel returns a human-readable freshness label based on how recently
+// a file was modified: "current" (<7d), "recent" (<30d), "aging" (<60d), "stale" (>60d).
+func FreshnessLabel(modTime time.Time) string {
+	age := time.Since(modTime)
+	switch {
+	case age < 7*24*time.Hour:
+		return "current"
+	case age < 30*24*time.Hour:
+		return "recent"
+	case age < 60*24*time.Hour:
+		return "aging"
+	default:
+		return "stale"
+	}
+}
+
 // FormatContext formats research contents into a context string for the LLM prompt.
 // Paths are sorted for deterministic output.
 func FormatContext(contents map[string]string) string {

@@ -32,6 +32,7 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(compareTool(), compareHandler(cfg, provider))
 	s.AddTool(enrichTool(), enrichHandler(cfg, provider))
 	s.AddTool(searchTool(), searchHandler(cfg))
+	s.AddTool(contextTool(), contextHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
 
@@ -275,6 +276,112 @@ func searchHandler(cfg *config.Config) server.ToolHandlerFunc {
 		}
 
 		return toolResultJSON(results)
+	}
+}
+
+// --- researcher_context ---
+
+type contextSource struct {
+	FilePath  string  `json:"file_path"`
+	Score     float64 `json:"score"`
+	Freshness string  `json:"freshness"`
+	Modified  string  `json:"modified"`
+	Excerpt   string  `json:"excerpt"`
+}
+
+type contextResult struct {
+	Topic   string          `json:"topic"`
+	Sources []contextSource `json:"sources"`
+	Context string          `json:"context"`
+	Count   int             `json:"count"`
+}
+
+func contextTool() mcp.Tool {
+	return mcp.NewTool("researcher_context",
+		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files and freshness metadata. Does not trigger an LLM call — purely retrieves and formats existing research."),
+		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to gather context for")),
+		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h). Default: from config or 90d")),
+		mcp.WithNumber("limit", mcp.Description("Max search results to include (default 10)")),
+	)
+}
+
+func contextHandler(cfg *config.Config) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		topic, err := req.RequireString("topic")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		maxAgeStr := req.GetString("max_age", cfg.Ask.MaxAge)
+		if maxAgeStr == "" {
+			maxAgeStr = "90d"
+		}
+		maxAge, err := search.ParseMaxAge(maxAgeStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid max_age: %v", err)), nil
+		}
+
+		limit := req.GetInt("limit", 10)
+
+		results, err := search.QueryJSON(cfg, topic, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		}
+
+		empty := contextResult{Topic: topic, Sources: []contextSource{}, Context: "", Count: 0}
+		if len(results) == 0 {
+			return toolResultJSON(empty)
+		}
+
+		researchDir := config.ExpandPath(cfg.ResearchDir)
+		fresh := search.FilterFresh(results, researchDir, maxAge)
+		if len(fresh) == 0 {
+			return toolResultJSON(empty)
+		}
+
+		contents := search.ReadContents(fresh, researchDir)
+		formatted := search.FormatContext(contents)
+
+		// Build structured source metadata
+		seen := make(map[string]bool)
+		var sources []contextSource
+		for _, r := range fresh {
+			path := r.FilePath
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(researchDir, path)
+			}
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+
+			var freshness, modified string
+			if info, err := os.Stat(path); err == nil {
+				freshness = search.FreshnessLabel(info.ModTime())
+				modified = info.ModTime().Format("2006-01-02")
+			}
+
+			// Use grepai excerpt (truncated to keep response size reasonable)
+			excerpt := r.Content
+			if len(excerpt) > 500 {
+				excerpt = excerpt[:500] + "..."
+			}
+
+			sources = append(sources, contextSource{
+				FilePath:  r.FilePath,
+				Score:     r.Score,
+				Freshness: freshness,
+				Modified:  modified,
+				Excerpt:   excerpt,
+			})
+		}
+
+		return toolResultJSON(contextResult{
+			Topic:   topic,
+			Sources: sources,
+			Context: formatted,
+			Count:   len(sources),
+		})
 	}
 }
 
