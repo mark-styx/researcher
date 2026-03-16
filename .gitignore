@@ -1,6 +1,7 @@
 # Binary
 /researcher
 /dist/
+bin/
 
 # IDE
 .idea/
@@ -12,3 +13,4 @@
 
 # Go
 vendor/
+coverage.out
