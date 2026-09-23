@@ -6,8 +6,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/scheduler"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/scheduler"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +31,7 @@ func scheduleListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List scheduled tasks",
-		Example: `  researcher schedule list`,
+		Example: `  researchguy schedule list`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -79,8 +79,8 @@ func scheduleAddCmd() *cobra.Command {
 		Long: `Add a recurring scheduled task with a cron expression. Standard 5-field
 cron format: minute hour day-of-month month day-of-week.
 Task types: dive, watch, review, enrich, ask.`,
-		Example: `  researcher schedule add --type watch --topic "AI safety" --cron "0 9 * * 1"
-  researcher schedule add --type dive --topic "LLMs" --cron "0 0 1 * *"`,
+		Example: `  researchguy schedule add --type watch --topic "AI safety" --cron "0 9 * * 1"
+  researchguy schedule add --type dive --topic "LLMs" --cron "0 0 1 * *"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if topic == "" {
 				return fmt.Errorf("--topic is required")
@@ -144,7 +144,7 @@ func scheduleRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "remove <id>",
 		Short:   "Remove a scheduled task",
-		Example: `  researcher schedule remove abc12345`,
+		Example: `  researchguy schedule remove abc12345`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]

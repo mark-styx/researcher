@@ -6,8 +6,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/graph"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +18,7 @@ func graphCmd() *cobra.Command {
 		Long: `Entities, sources, claims, funding-pattern observations, and reports
 persist as independently referenceable nodes connected by typed edges,
 instead of being re-derived or restated inside every report that touches
-them. Node structure and relationships live in ~/.researcher/tasks.db;
+them. Node structure and relationships live in ~/.researchguy/tasks.db;
 node content lives in markdown files under the research directory.`,
 		GroupID: "graph",
 	}
@@ -49,8 +49,8 @@ func graphAddNodeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-node",
 		Short: "Create a node (entity, source, claim, funding-pattern, or report)",
-		Example: `  researcher graph add-node --type entity --title "Acme Research Institute"
-  researcher graph add-node --type funding-pattern --title "Acme funds Study X" \
+		Example: `  researchguy graph add-node --type entity --title "Acme Research Institute"
+  researchguy graph add-node --type funding-pattern --title "Acme funds Study X" \
     --summary "Acme sponsored Study X, which reached conclusions aligned with Acme's stated position" \
     --path funding/acme-study-x.md`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -85,8 +85,8 @@ func graphAddEdgeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-edge",
 		Short: "Create a typed edge between two existing nodes",
-		Example: `  researcher graph add-edge --from <claim-id> --to <source-id> --type supports
-  researcher graph add-edge --from <org-id> --to <study-id> --type sponsors-research`,
+		Example: `  researchguy graph add-edge --from <claim-id> --to <source-id> --type supports
+  researchguy graph add-edge --from <org-id> --to <study-id> --type sponsors-research`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {
@@ -118,7 +118,7 @@ func graphShowCmd() *cobra.Command {
 		Use:     "show <node-id>",
 		Short:   "Show a node's details and its connected edges",
 		Args:    cobra.ExactArgs(1),
-		Example: `  researcher graph show 3f9c2e1a-...`,
+		Example: `  researchguy graph show 3f9c2e1a-...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {
@@ -185,7 +185,7 @@ func graphListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List nodes, optionally filtered by type",
-		Example: `  researcher graph list --type entity`,
+		Example: `  researchguy graph list --type entity`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {
@@ -226,8 +226,8 @@ func graphExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export the full graph as JSON (nodes + edges) for visualization",
-		Example: `  researcher graph export
-  researcher graph export --out graph.json`,
+		Example: `  researchguy graph export
+  researchguy graph export --out graph.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {

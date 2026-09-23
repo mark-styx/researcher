@@ -3,7 +3,7 @@ package llm
 import (
 	"testing"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 func defaultTestConfig() *config.Config {

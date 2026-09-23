@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/marklubin/researcher/internal/tools"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 func TestOllama_Name(t *testing.T) {

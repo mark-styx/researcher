@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 type hybridWorkerOutput struct {

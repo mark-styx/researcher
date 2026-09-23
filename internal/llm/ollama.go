@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/tools"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 // Ollama uses the Ollama HTTP API for completions.

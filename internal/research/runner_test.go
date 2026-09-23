@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
 )
 
 // mockProvider records calls and returns canned responses.

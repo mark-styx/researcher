@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/scheduler"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 
@@ -41,7 +41,7 @@ func daemonStartCmd() *cobra.Command {
 		Long: `Start the scheduler daemon in the foreground. It polls the task store
 for queued and scheduled tasks and executes them using the configured
 LLM backend. Send SIGINT or SIGTERM to stop.`,
-		Example: `  researcher daemon start`,
+		Example: `  researchguy daemon start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -105,7 +105,7 @@ func daemonStopCmd() *cobra.Command {
 		Use:     "stop",
 		Short:   "Stop the scheduler daemon",
 		Long:    `Send SIGTERM to the running scheduler daemon using the PID file.`,
-		Example: `  researcher daemon stop`,
+		Example: `  researchguy daemon stop`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -141,7 +141,7 @@ func daemonStatusCmd() *cobra.Command {
 		Use:     "status",
 		Short:   "Show daemon status",
 		Long:    `Check whether the scheduler daemon is currently running.`,
-		Example: `  researcher daemon status`,
+		Example: `  researchguy daemon status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -242,7 +242,7 @@ func pidMatchesProcess(info pidInfo) bool {
 		return strings.Contains(cmdline, filepath.Base(info.Exe))
 	}
 	// Legacy PID file fallback.
-	return strings.Contains(cmdline, "researcher")
+	return strings.Contains(cmdline, "researchguy")
 }
 
 func daemonRunning(pidPath string) (bool, int) {

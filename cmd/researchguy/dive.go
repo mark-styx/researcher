@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -26,9 +26,9 @@ in the research directory.
 By default, existing research on the topic is searched via grepai and given
 to the LLM as background before it starts. Use --no-research to skip this,
 or --max-age to control the freshness filter.`,
-		Example: `  researcher dive "quantum computing"
-  researcher dive "CRISPR gene editing" --backend ollama --model llama3
-  researcher dive "topic already covered elsewhere" --no-research`,
+		Example: `  researchguy dive "quantum computing"
+  researchguy dive "CRISPR gene editing" --backend ollama --model llama3
+  researchguy dive "topic already covered elsewhere" --no-research`,
 		GroupID: "research",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

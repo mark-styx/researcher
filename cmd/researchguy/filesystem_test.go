@@ -170,7 +170,7 @@ func TestLinkCmd_AlreadyExists(t *testing.T) {
 
 func TestInitCmd(t *testing.T) {
 	configDir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", configDir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", configDir)
 
 	// Let init create the default config. It may try grepai but handles failure gracefully.
 	out, err := runCmd(t, "init")
@@ -208,7 +208,7 @@ func TestInitCmd_AlreadyExists(t *testing.T) {
 func TestInitCmd_GrepaiEnabled(t *testing.T) {
 	configDir := t.TempDir()
 	researchDir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", configDir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", configDir)
 
 	// Write config with auto_index: true and binary: echo (which will always succeed)
 	yaml := fmt.Sprintf(`research_dir: %s

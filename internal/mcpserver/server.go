@@ -11,16 +11,16 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
-	"github.com/marklubin/researcher/internal/search"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
+	"github.com/marklubin/researchguy/internal/search"
 )
 
-// New creates an MCP server with all researcher tools registered.
+// New creates an MCP server with all researchguy tools registered.
 func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPServer {
 	s := server.NewMCPServer(
-		"Researcher",
+		"Researchguy",
 		version,
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
@@ -39,10 +39,10 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	return s
 }
 
-// --- researcher_ask ---
+// --- researchguy_ask ---
 
 func askTool() mcp.Tool {
-	return mcp.NewTool("researcher_ask",
+	return mcp.NewTool("researchguy_ask",
 		mcp.WithDescription("Ask a question, optionally informed by existing research. Returns the answer and saves it."),
 		mcp.WithString("question", mcp.Required(), mcp.Description("The question to ask")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
@@ -80,10 +80,10 @@ func askHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFun
 	}
 }
 
-// --- researcher_dive ---
+// --- researchguy_dive ---
 
 func diveTool() mcp.Tool {
-	return mcp.NewTool("researcher_dive",
+	return mcp.NewTool("researchguy_dive",
 		mcp.WithDescription("Generate a comprehensive deep-dive research report on a topic. Saves to research directory."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to research")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
@@ -117,10 +117,10 @@ func diveHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFu
 	}
 }
 
-// --- researcher_review ---
+// --- researchguy_review ---
 
 func reviewTool() mcp.Tool {
-	return mcp.NewTool("researcher_review",
+	return mcp.NewTool("researchguy_review",
 		mcp.WithDescription("Create a literature review / synthesis on a topic. Optionally provide source file paths."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to review")),
 		mcp.WithString("sources", mcp.Description("Comma-separated file paths to include as source material")),
@@ -165,10 +165,10 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 	}
 }
 
-// --- researcher_compare ---
+// --- researchguy_compare ---
 
 func compareTool() mcp.Tool {
-	return mcp.NewTool("researcher_compare",
+	return mcp.NewTool("researchguy_compare",
 		mcp.WithDescription("Side-by-side comparative analysis of two topics or two existing documents."),
 		mcp.WithString("subject1", mcp.Required(), mcp.Description("First subject/topic to compare")),
 		mcp.WithString("subject2", mcp.Required(), mcp.Description("Second subject/topic to compare")),
@@ -220,10 +220,10 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 	}
 }
 
-// --- researcher_enrich ---
+// --- researchguy_enrich ---
 
 func enrichTool() mcp.Tool {
-	return mcp.NewTool("researcher_enrich",
+	return mcp.NewTool("researchguy_enrich",
 		mcp.WithDescription("Expand and add context to an existing research document. Produces an enriched version saved alongside the original."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the document to enrich (relative to research dir, e.g. 'llm/agents.md', or absolute)")),
 	)
@@ -260,10 +260,10 @@ func enrichHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 	}
 }
 
-// --- researcher_search ---
+// --- researchguy_search ---
 
 func searchTool() mcp.Tool {
-	return mcp.NewTool("researcher_search",
+	return mcp.NewTool("researchguy_search",
 		mcp.WithDescription("Semantic search across research documents via grepai. Returns ranked results."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("The search query")),
 		mcp.WithNumber("limit", mcp.Description("Max results to return (default 10)")),
@@ -299,7 +299,7 @@ func searchHandler(cfg *config.Config) server.ToolHandlerFunc {
 	}
 }
 
-// --- researcher_context ---
+// --- researchguy_context ---
 
 type contextSource struct {
 	FilePath  string  `json:"file_path"`
@@ -317,7 +317,7 @@ type contextResult struct {
 }
 
 func contextTool() mcp.Tool {
-	return mcp.NewTool("researcher_context",
+	return mcp.NewTool("researchguy_context",
 		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files and freshness metadata. Does not trigger an LLM call — purely retrieves and formats existing research."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to gather context for")),
 		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h). Default: from config or 90d")),
@@ -405,10 +405,10 @@ func contextHandler(cfg *config.Config) server.ToolHandlerFunc {
 	}
 }
 
-// --- researcher_list ---
+// --- researchguy_list ---
 
 func listTool() mcp.Tool {
-	return mcp.NewTool("researcher_list",
+	return mcp.NewTool("researchguy_list",
 		mcp.WithDescription("List research files grouped by category."),
 		mcp.WithString("category", mcp.Description("Filter to a specific category")),
 	)
@@ -473,10 +473,10 @@ func listHandler(cfg *config.Config) server.ToolHandlerFunc {
 	}
 }
 
-// --- researcher_read ---
+// --- researchguy_read ---
 
 func readTool() mcp.Tool {
-	return mcp.NewTool("researcher_read",
+	return mcp.NewTool("researchguy_read",
 		mcp.WithDescription("Read a research document. Path is relative to the research directory (e.g. 'llm/agents.md')."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Relative path to the file (e.g. llm/agents.md)")),
 	)

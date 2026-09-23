@@ -14,7 +14,7 @@ import (
 )
 
 // testSetup creates temp config + research dirs, writes a minimal config.yaml,
-// and sets RESEARCHER_CONFIG_DIR so that config.Dir()/Load() use the temp dirs.
+// and sets RESEARCHGUY_CONFIG_DIR so that config.Dir()/Load() use the temp dirs.
 // Returns the config dir path, research dir path, and a cleanup function.
 func testSetup(t *testing.T) (configDir, researchDir string) {
 	t.Helper()
@@ -50,7 +50,7 @@ grepai:
 		t.Fatalf("writing test config: %v", err)
 	}
 
-	t.Setenv("RESEARCHER_CONFIG_DIR", configDir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", configDir)
 
 	return configDir, researchDir
 }
@@ -91,7 +91,7 @@ func ollamaServer(t *testing.T, content string) string {
 // mirroring main().
 func buildRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "researcher",
+		Use:   "researchguy",
 		Short: "Automated research workflows with LLM backends",
 	}
 

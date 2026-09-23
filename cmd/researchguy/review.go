@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -23,8 +23,8 @@ func reviewCmd() *cobra.Command {
 to include as context for the review. Existing research on the topic is also
 searched via grepai and given to the LLM as background, unless --no-research
 is set. Output is saved as markdown in the research directory.`,
-		Example: `  researcher review "machine learning optimization"
-  researcher review "transformer architectures" --sources paper1.md,paper2.md`,
+		Example: `  researchguy review "machine learning optimization"
+  researchguy review "transformer architectures" --sources paper1.md,paper2.md`,
 		GroupID: "research",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

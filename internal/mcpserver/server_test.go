@@ -10,8 +10,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
 )
 
 // mockProvider records calls and returns canned responses.
@@ -84,15 +84,15 @@ func TestMCPServer_ListTools(t *testing.T) {
 	}
 
 	expectedTools := map[string]bool{
-		"researcher_ask":     false,
-		"researcher_dive":    false,
-		"researcher_review":  false,
-		"researcher_compare": false,
-		"researcher_enrich":  false,
-		"researcher_search":  false,
-		"researcher_context": false,
-		"researcher_list":    false,
-		"researcher_read":    false,
+		"researchguy_ask":     false,
+		"researchguy_dive":    false,
+		"researchguy_review":  false,
+		"researchguy_compare": false,
+		"researchguy_enrich":  false,
+		"researchguy_search":  false,
+		"researchguy_context": false,
+		"researchguy_list":    false,
+		"researchguy_read":    false,
 	}
 
 	for _, tool := range result.Tools {
@@ -132,7 +132,7 @@ func TestMCPServer_List(t *testing.T) {
 	// List all
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_list",
+			Name:      "researchguy_list",
 			Arguments: map[string]any{},
 		},
 	})
@@ -152,7 +152,7 @@ func TestMCPServer_List(t *testing.T) {
 	// List filtered by category
 	result, err = c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_list",
+			Name:      "researchguy_list",
 			Arguments: map[string]any{"category": "llm"},
 		},
 	})
@@ -183,7 +183,7 @@ func TestMCPServer_Read(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_read",
+			Name:      "researchguy_read",
 			Arguments: map[string]any{"path": "llm/agents.md"},
 		},
 	})
@@ -207,7 +207,7 @@ func TestMCPServer_Read_DirectoryTraversal(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_read",
+			Name:      "researchguy_read",
 			Arguments: map[string]any{"path": "../../../etc/passwd"},
 		},
 	})
@@ -243,7 +243,7 @@ func TestMCPServer_Read_PrefixCollisionBlocked(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_read",
+			Name:      "researchguy_read",
 			Arguments: map[string]any{"path": rel},
 		},
 	})
@@ -262,7 +262,7 @@ func TestMCPServer_Read_NotFound(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "researcher_read",
+			Name:      "researchguy_read",
 			Arguments: map[string]any{"path": "nonexistent/file.md"},
 		},
 	})
@@ -285,7 +285,7 @@ func TestMCPServer_Ask(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_ask",
+			Name: "researchguy_ask",
 			Arguments: map[string]any{
 				"question":    "what is the meaning of life?",
 				"no_research": true,
@@ -317,7 +317,7 @@ func TestMCPServer_Ask_NoSave(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_ask",
+			Name: "researchguy_ask",
 			Arguments: map[string]any{
 				"question":    "quick question",
 				"no_research": true,
@@ -353,7 +353,7 @@ func TestMCPServer_Dive(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_dive",
+			Name: "researchguy_dive",
 			Arguments: map[string]any{
 				"topic": "Rust Language",
 			},
@@ -390,7 +390,7 @@ func TestMCPServer_Review(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_review",
+			Name: "researchguy_review",
 			Arguments: map[string]any{
 				"topic": "LLM Agents",
 			},
@@ -424,7 +424,7 @@ func TestMCPServer_Compare(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_compare",
+			Name: "researchguy_compare",
 			Arguments: map[string]any{
 				"subject1": "React",
 				"subject2": "Vue",
@@ -469,7 +469,7 @@ func TestMCPServer_Compare_WithSources(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_compare",
+			Name: "researchguy_compare",
 			Arguments: map[string]any{
 				"subject1": "Doc1",
 				"subject2": "Doc2",
@@ -505,7 +505,7 @@ func TestMCPServer_Enrich(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_enrich",
+			Name: "researchguy_enrich",
 			Arguments: map[string]any{
 				"path": "llm/agents.md",
 			},
@@ -539,7 +539,7 @@ func TestMCPServer_Enrich_NotFound(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_enrich",
+			Name: "researchguy_enrich",
 			Arguments: map[string]any{
 				"path": "nonexistent/doc.md",
 			},
@@ -569,7 +569,7 @@ func TestMCPServer_Search(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_search",
+			Name: "researchguy_search",
 			Arguments: map[string]any{
 				"query": "LLM agents",
 				"limit": 5.0,
@@ -610,7 +610,7 @@ func TestMCPServer_Context(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_context",
+			Name: "researchguy_context",
 			Arguments: map[string]any{
 				"topic": "autonomous agents",
 			},
@@ -671,7 +671,7 @@ func TestMCPServer_Context_EmptyResults(t *testing.T) {
 
 	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name: "researcher_context",
+			Name: "researchguy_context",
 			Arguments: map[string]any{
 				"topic": "nonexistent topic xyz",
 			},

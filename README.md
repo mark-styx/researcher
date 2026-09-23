@@ -1,4 +1,4 @@
-# Researcher
+# Researchguy
 
 A CLI that automates research workflows using LLM backends. Generate structured research reports, literature reviews, and enriched documents — saved as markdown and indexed for semantic search.
 
@@ -19,42 +19,42 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Multi-backend** — supports Claude CLI, Ollama, and hybrid local-worker aggregation
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
 - **Transparent critics** — hybrid backend's groundedness and narrative-vs-evidence critic passes report what they changed/flagged instead of silently rewriting
-- **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researcher graph`), instead of being re-derived per report
+- **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researchguy graph`), instead of being re-derived per report
 
 ## Installation
 
 ### Build from source
 
 ```bash
-git clone https://github.com/marklubin/researcher.git
-cd researcher
-make build      # produces ./researcher binary
+git clone https://github.com/marklubin/researchguy.git
+cd researchguy
+make build      # produces ./researchguy binary
 make install    # installs to $GOPATH/bin
 ```
 
 ### Go install
 
 ```bash
-go install github.com/marklubin/researcher/cmd/researcher@latest
+go install github.com/marklubin/researchguy/cmd/researchguy@latest
 ```
 
 ## Quick Start
 
 ```bash
 # 1. Initialize config and directories
-researcher init
+researchguy init
 
 # 2. Ask a quick question
-researcher ask "What is quantum computing?"
+researchguy ask "What is quantum computing?"
 
 # 3. Generate a full research report
-researcher dive "quantum computing"
+researchguy dive "quantum computing"
 
 # 4. List your research projects
-researcher list
+researchguy list
 
 # 5. Search across all research
-researcher search "entanglement"
+researchguy search "entanglement"
 ```
 
 ## Commands
@@ -82,7 +82,7 @@ researcher search "entanglement"
 | `graph list [--type <type>]` | List nodes, optionally filtered by type |
 | `graph export [--out <path>]` | Export the full graph as JSON for visualization |
 
-Node structure/relationships live in `~/.researcher/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
+Node structure/relationships live in `~/.researchguy/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
 
 ### Project Management
 
@@ -122,7 +122,7 @@ All commands support `--help` for detailed usage and examples.
 
 ## Configuration
 
-Config file: `~/.researcher/config.yaml` (created by `researcher init`)
+Config file: `~/.researchguy/config.yaml` (created by `researchguy init`)
 
 ```yaml
 # Where research output is saved
@@ -164,8 +164,8 @@ tools:
 scheduler:
   poll_interval: 60s
   max_concurrent: 1
-  log_file: ~/.researcher/scheduler.log
-  pid_file: ~/.researcher/scheduler.pid
+  log_file: ~/.researchguy/scheduler.log
+  pid_file: ~/.researchguy/scheduler.pid
 
 # Semantic search indexing
 grepai:
@@ -197,20 +197,20 @@ The scheduler lets you automate research tasks in the background.
 
 ```bash
 # Start the daemon
-researcher daemon start
+researchguy daemon start
 
 # Queue a one-shot task
-researcher queue add --type dive --topic "quantum computing"
+researchguy queue add --type dive --topic "quantum computing"
 
 # Schedule a recurring task (every Monday at 9am)
-researcher schedule add --type watch --topic "AI safety" --cron "0 9 * * 1"
+researchguy schedule add --type watch --topic "AI safety" --cron "0 9 * * 1"
 
 # Check what's scheduled
-researcher schedule list
-researcher queue list
+researchguy schedule list
+researchguy queue list
 
 # Check daemon status
-researcher daemon status
+researchguy daemon status
 ```
 
 Cron format: `minute hour day-of-month month day-of-week`
@@ -223,7 +223,7 @@ Uses the [Claude CLI](https://github.com/anthropics/claude-code). Ensure `claude
 
 ```bash
 claude --version
-researcher config set default_backend claude
+researchguy config set default_backend claude
 ```
 
 ### Ollama
@@ -233,13 +233,13 @@ Uses a local [Ollama](https://ollama.ai) instance:
 ```bash
 ollama serve
 ollama pull qwen3-coder-next
-researcher config set default_backend ollama
+researchguy config set default_backend ollama
 ```
 
 Override per-command:
 
 ```bash
-researcher dive "topic" --backend ollama --model llama3
+researchguy dive "topic" --backend ollama --model llama3
 ```
 
 ### Hybrid backend: modes and critics
@@ -247,7 +247,7 @@ researcher dive "topic" --backend ollama --model llama3
 The hybrid backend fans out to worker models in parallel, aggregates their drafts, then (if `enable_verification` is on) runs two critic passes before returning:
 
 ```bash
-researcher dive "topic" --backend hybrid --mode inquiry --branches 5
+researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 ```
 
 - `--mode landscape` — for tool/alternatives-comparison questions. Branches: documented alternatives, vendor claims vs. independently reported usage, competitive positioning, adoption evidence.
@@ -279,29 +279,29 @@ Research files are automatically categorized by the LLM into topic directories w
 To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
 
 ```bash
-researcher migrate --dry-run   # Preview changes
-researcher migrate             # Apply changes
+researchguy migrate --dry-run   # Preview changes
+researchguy migrate             # Apply changes
 ```
 
 ## MCP Server
 
-The `researcher mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) server over stdio, exposing researcher's capabilities as tools that any MCP client can call.
+The `researchguy mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) server over stdio, exposing researchguy's capabilities as tools that any MCP client can call.
 
 ### Tools
 
 | Tool | Description |
 |------|-------------|
-| `researcher_ask` | Ask a question with optional research context |
-| `researcher_dive` | Generate a deep research report |
-| `researcher_review` | Literature review / synthesis |
-| `researcher_compare` | Side-by-side comparative analysis |
-| `researcher_enrich` | Expand and add context to a document |
-| `researcher_search` | Raw semantic search across research (chunk results, no synthesis) |
-| `researcher_context` | Search + freshness filter + read + format into ready-to-use context |
-| `researcher_list` | List research files by category |
-| `researcher_read` | Read a research document |
+| `researchguy_ask` | Ask a question with optional research context |
+| `researchguy_dive` | Generate a deep research report |
+| `researchguy_review` | Literature review / synthesis |
+| `researchguy_compare` | Side-by-side comparative analysis |
+| `researchguy_enrich` | Expand and add context to a document |
+| `researchguy_search` | Raw semantic search across research (chunk results, no synthesis) |
+| `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
+| `researchguy_list` | List research files by category |
+| `researchguy_read` | Read a research document |
 
-`researcher_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags). `researcher_ask` additionally accepts `no_save`.
+`researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags). `researchguy_ask` additionally accepts `no_save`.
 
 ### Claude Code Configuration
 
@@ -310,8 +310,8 @@ Add to `~/.claude/settings.json`:
 ```json
 {
   "mcpServers": {
-    "researcher": {
-      "command": "researcher",
+    "researchguy": {
+      "command": "researchguy",
       "args": ["mcp"]
     }
   }
@@ -321,7 +321,7 @@ Add to `~/.claude/settings.json`:
 ### Config Directory
 
 ```
-~/.researcher/
+~/.researchguy/
   config.yaml          # Configuration
   tasks.db             # Scheduler tasks + knowledge graph (nodes/edges) tables
   scheduler.log        # Daemon log

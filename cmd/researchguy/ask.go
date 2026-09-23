@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -27,10 +27,10 @@ By default, the command:
 
 Use --no-save to skip saving, --no-research to skip the research lookup,
 or --max-age to control the freshness filter.`,
-		Example: `  researcher ask "What is quantum computing?"
-  researcher ask "Compare TCP vs UDP" --backend ollama --model llama3
-  researcher ask "What are the best open source LLMs?" --max-age 30d
-  researcher ask "Quick question" --no-save --no-research`,
+		Example: `  researchguy ask "What is quantum computing?"
+  researchguy ask "Compare TCP vs UDP" --backend ollama --model llama3
+  researchguy ask "What are the best open source LLMs?" --max-age 30d
+  researchguy ask "Quick question" --no-save --no-research`,
 		GroupID: "research",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

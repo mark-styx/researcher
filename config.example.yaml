@@ -39,8 +39,8 @@ tools:
 scheduler:
   poll_interval: 60s
   max_concurrent: 1
-  log_file: ~/.researcher/scheduler.log
-  pid_file: ~/.researcher/scheduler.pid
+  log_file: ~/.researchguy/scheduler.log
+  pid_file: ~/.researchguy/scheduler.pid
 
 # grepai
 # If this research_dir is registered as a project inside a grepai workspace

@@ -112,8 +112,8 @@ tools:
 scheduler:
   poll_interval: 60s
   max_concurrent: 1
-  log_file: ~/.researcher/scheduler.log
-  pid_file: ~/.researcher/scheduler.pid
+  log_file: ~/.researchguy/scheduler.log
+  pid_file: ~/.researchguy/scheduler.pid
 
 # grepai
 # If this research_dir is registered as a project inside a grepai workspace
@@ -132,9 +132,17 @@ ask:
 `
 
 func Dir() string {
-	if dir := os.Getenv("RESEARCHER_CONFIG_DIR"); dir != "" {
+	if dir := os.Getenv("RESEARCHGUY_CONFIG_DIR"); dir != "" {
 		return dir
 	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".researchguy")
+}
+
+// LegacyDir returns the pre-rename config directory (~/.researcher), so
+// callers can detect and surface data left behind by the old binary name
+// without moving it automatically.
+func LegacyDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".researcher")
 }
@@ -202,8 +210,8 @@ func defaults() *Config {
 		Scheduler: SchedulerConfig{
 			PollInterval:  "60s",
 			MaxConcurrent: 1,
-			LogFile:       "~/.researcher/scheduler.log",
-			PIDFile:       "~/.researcher/scheduler.pid",
+			LogFile:       "~/.researchguy/scheduler.log",
+			PIDFile:       "~/.researchguy/scheduler.pid",
 		},
 		Grepai: GrepaiConfig{
 			AutoIndex: true,

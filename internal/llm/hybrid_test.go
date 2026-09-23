@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 type stubProvider struct {

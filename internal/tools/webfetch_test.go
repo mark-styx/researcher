@@ -10,7 +10,7 @@ import (
 )
 
 func TestWebFetch_HTML(t *testing.T) {
-	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+	t.Setenv("RESEARCHGUY_ALLOW_PRIVATE_URLS", "true")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -28,7 +28,7 @@ func TestWebFetch_HTML(t *testing.T) {
 }
 
 func TestWebFetch_PlainText(t *testing.T) {
-	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+	t.Setenv("RESEARCHGUY_ALLOW_PRIVATE_URLS", "true")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -46,7 +46,7 @@ func TestWebFetch_PlainText(t *testing.T) {
 }
 
 func TestWebFetch_HTTPError(t *testing.T) {
-	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+	t.Setenv("RESEARCHGUY_ALLOW_PRIVATE_URLS", "true")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -63,7 +63,7 @@ func TestWebFetch_HTTPError(t *testing.T) {
 }
 
 func TestWebFetch_SkipsTags(t *testing.T) {
-	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+	t.Setenv("RESEARCHGUY_ALLOW_PRIVATE_URLS", "true")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

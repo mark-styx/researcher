@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 func TestQuery_MissingBinary(t *testing.T) {

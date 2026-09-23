@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/marklubin/researcher/internal/tools"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 func TestClaude_Name(t *testing.T) {

@@ -34,7 +34,7 @@ func WebFetch(ctx context.Context, targetURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Researcher/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Researchguy/1.0)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -113,7 +113,7 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 func allowPrivateURLs() bool {
-	return strings.EqualFold(os.Getenv("RESEARCHER_ALLOW_PRIVATE_URLS"), "true")
+	return strings.EqualFold(os.Getenv("RESEARCHGUY_ALLOW_PRIVATE_URLS"), "true")
 }
 
 // extractText walks an HTML document and extracts visible text.

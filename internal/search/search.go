@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 // SearchResult represents a single result from grepai --json output.

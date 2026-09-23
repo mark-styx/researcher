@@ -11,9 +11,9 @@ var Version = "dev"
 
 func main() {
 	root := &cobra.Command{
-		Use:   "researcher",
+		Use:   "researchguy",
 		Short: "Automated research workflows with LLM backends",
-		Long: `Researcher is a CLI that automates research workflows using LLM backends.
+		Long: `Researchguy is a CLI that automates research workflows using LLM backends.
 
 It can answer one-shot questions, generate comprehensive research reports,
 synthesize literature reviews, and enrich existing documents. Research output
@@ -23,9 +23,9 @@ Supports Claude and Ollama backends, recurring task scheduling via cron,
 semantic search via grepai, and web-augmented tool use.
 
 Get started:
-  researcher init          Set up config and directories
-  researcher ask "..."     Quick question
-  researcher dive "..."    Full research report`,
+  researchguy init          Set up config and directories
+  researchguy ask "..."     Quick question
+  researchguy dive "..."    Full research report`,
 	}
 
 	root.AddGroup(
@@ -67,9 +67,9 @@ func versionCmd() *cobra.Command {
 		Use:     "version",
 		Short:   "Print version",
 		GroupID: "setup",
-		Example: `  researcher version`,
+		Example: `  researchguy version`,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("researcher", Version)
+			fmt.Println("researchguy", Version)
 		},
 	}
 }

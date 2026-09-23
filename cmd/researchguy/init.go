@@ -6,18 +6,18 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func initCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize researcher config, directories, and grepai",
-		Long: `Initialize the researcher environment. Creates the config directory
-(~/.researcher), writes a default config.yaml if none exists, creates
+		Short: "Initialize researchguy config, directories, and grepai",
+		Long: `Initialize the researchguy environment. Creates the config directory
+(~/.researchguy), writes a default config.yaml if none exists, creates
 the research directory, and optionally sets up grepai indexing.`,
-		Example: `  researcher init`,
+		Example: `  researchguy init`,
 		GroupID: "setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configDir := config.Dir()
@@ -27,6 +27,12 @@ the research directory, and optionally sets up grepai indexing.`,
 
 			configPath := config.FilePath()
 			if _, err := os.Stat(configPath); os.IsNotExist(err) {
+				if legacyDir := config.LegacyDir(); legacyDir != configDir {
+					if _, lerr := os.Stat(filepath.Join(legacyDir, "config.yaml")); lerr == nil {
+						fmt.Printf("Found existing data at %s (from the pre-rename \"researcher\" binary).\n", legacyDir)
+						fmt.Printf("It has not been moved automatically. To migrate it:\n  mv %s %s\n\n", legacyDir, configDir)
+					}
+				}
 				if err := os.WriteFile(configPath, []byte(config.DefaultYAML), 0644); err != nil {
 					return fmt.Errorf("writing default config: %w", err)
 				}
@@ -78,7 +84,7 @@ the research directory, and optionally sets up grepai indexing.`,
 				}
 			}
 
-			fmt.Println("\nResearcher initialized successfully.")
+			fmt.Println("\nResearchguy initialized successfully.")
 			return nil
 		},
 	}

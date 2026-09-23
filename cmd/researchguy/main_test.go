@@ -39,8 +39,8 @@ func TestVersionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "researcher") {
-		t.Errorf("output = %q, want to contain 'researcher'", out)
+	if !strings.Contains(out, "researchguy") {
+		t.Errorf("output = %q, want to contain 'researchguy'", out)
 	}
 }
 

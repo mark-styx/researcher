@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -23,9 +23,9 @@ func compareCmd() *cobra.Command {
 
 Topic comparison: provide two topic arguments to research and compare them.
 Document comparison: use --sources to compare two existing research documents.`,
-		Example: `  researcher compare "React" "Vue"
-  researcher compare "Python" "Go" --backend ollama
-  researcher compare --sources llm/agents.md,llm/tools.md`,
+		Example: `  researchguy compare "React" "Vue"
+  researchguy compare "Python" "Go" --backend ollama
+  researchguy compare --sources llm/agents.md,llm/tools.md`,
 		GroupID: "research",
 		Args:    cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {

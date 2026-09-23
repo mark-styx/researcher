@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/search"
-	"github.com/marklubin/researcher/internal/tools"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/search"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 // Runner orchestrates research tasks.

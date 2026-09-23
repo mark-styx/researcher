@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -18,8 +18,8 @@ func showCmd() *cobra.Command {
 
 With just a category name, lists all files in that category.
 With category/file, shows details for the specific file.`,
-		Example: `  researcher show llm
-  researcher show llm/agentic-code`,
+		Example: `  researchguy show llm
+  researchguy show llm/agentic-code`,
 		GroupID: "project",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -26,9 +26,9 @@ a single README.md file. It uses the LLM to categorize each topic and moves
 the file into the appropriate category directory with a descriptive filename.
 
 Use --dry-run to preview changes without moving any files.`,
-		Example: `  researcher migrate --dry-run
-  researcher migrate
-  researcher migrate --backend ollama --model llama3`,
+		Example: `  researchguy migrate --dry-run
+  researchguy migrate
+  researchguy migrate --backend ollama --model llama3`,
 		GroupID: "project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()

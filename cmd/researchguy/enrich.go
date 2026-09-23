@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/charmbracelet/huh"
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/llm"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -24,9 +24,9 @@ enriched version saved alongside the original.
 
 When called without arguments, presents an interactive file browser to select
 a document from the research directory.`,
-		Example: `  researcher enrich                                   # interactive file picker
-  researcher enrich ./research/quantum-computing/README.md
-  researcher enrich report.md --backend ollama`,
+		Example: `  researchguy enrich                                   # interactive file picker
+  researchguy enrich ./research/quantum-computing/README.md
+  researchguy enrich report.md --backend ollama`,
 		GroupID: "research",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/scheduler"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 
@@ -17,10 +17,10 @@ func watchCmd() *cobra.Command {
 		Short: "Schedule recurring monitoring of a topic",
 		Long: `Schedule recurring monitoring of a research topic. Creates a scheduled task
 that runs on the given cron schedule. The daemon must be running to execute
-scheduled tasks (see 'researcher daemon start').`,
-		Example: `  researcher watch "AI safety developments"
-  researcher watch "quantum computing" --cron "0 9 * * 1"
-  researcher watch "LLM benchmarks" --cron "0 0 1 * *" --backend ollama`,
+scheduled tasks (see 'researchguy daemon start').`,
+		Example: `  researchguy watch "AI safety developments"
+  researchguy watch "quantum computing" --cron "0 9 * * 1"
+  researchguy watch "LLM benchmarks" --cron "0 0 1 * *" --backend ollama`,
 		GroupID: "scheduling",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +16,8 @@ func linkCmd() *cobra.Command {
 		Long: `Create a symlink from the given path to the research directory.
 Useful for making research accessible from other locations like
 your desktop or another project.`,
-		Example: `  researcher link ~/Desktop/research
-  researcher link /tmp/research-shortcut`,
+		Example: `  researchguy link ~/Desktop/research
+  researchguy link /tmp/research-shortcut`,
 		GroupID: "project",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

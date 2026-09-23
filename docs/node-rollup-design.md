@@ -32,9 +32,9 @@ reserved for low-confidence entity-resolution matches, reused here for the
 same reason: a machine-proposed change to stored knowledge that hasn't been
 confirmed yet.
 
-A human confirms via a new `researcher graph approve <id>` command: copies
+A human confirms via a new `researchguy graph approve <id>` command: copies
 `pending_summary` into `Summary`, clears `needs_review`, bumps `UpdatedAt`.
-`researcher graph list` should visibly flag nodes with `needs_review: true`
+`researchguy graph list` should visibly flag nodes with `needs_review: true`
 (e.g. a marker column) so they don't sit invisibly forever.
 
 Auto-apply without review is a plausible v2 for low-stakes node types
@@ -60,7 +60,7 @@ actually been used.
 
 Not the existing `tasks` table (cron/queue) — that models user-initiated
 research tasks, and a rollup pass isn't one. Runs as its own poll loop
-inside `researcher daemon start`, gated by a new config flag
+inside `researchguy daemon start`, gated by a new config flag
 (`graph.rollup.enabled`, default `false`) so it stays off until it's had
 real use.
 

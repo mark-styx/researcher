@@ -28,7 +28,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) ([]SearchResul
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Researcher/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Researchguy/1.0)")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

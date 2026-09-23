@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/marklubin/researcher/internal/llm"
+	"github.com/marklubin/researchguy/internal/llm"
 )
 
 // FileLocation describes where a research file should be stored.

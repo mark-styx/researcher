@@ -45,7 +45,7 @@ grepai:
 		t.Fatalf("writing test config: %v", err)
 	}
 
-	t.Setenv("RESEARCHER_CONFIG_DIR", configDir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", configDir)
 	return configDir, researchDir
 }
 

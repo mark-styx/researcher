@@ -82,26 +82,37 @@ func TestDefaultYAML_Parses(t *testing.T) {
 }
 
 func TestDir_EnvOverride(t *testing.T) {
-	t.Setenv("RESEARCHER_CONFIG_DIR", "/tmp/test-config")
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", "/tmp/test-config")
 	if got := Dir(); got != "/tmp/test-config" {
 		t.Errorf("Dir() = %q, want %q", got, "/tmp/test-config")
 	}
 }
 
 func TestDir_DefaultFallback(t *testing.T) {
-	t.Setenv("RESEARCHER_CONFIG_DIR", "")
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", "")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("cannot get home dir: %v", err)
 	}
-	want := filepath.Join(home, ".researcher")
+	want := filepath.Join(home, ".researchguy")
 	if got := Dir(); got != want {
 		t.Errorf("Dir() = %q, want %q", got, want)
 	}
 }
 
+func TestLegacyDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("cannot get home dir: %v", err)
+	}
+	want := filepath.Join(home, ".researcher")
+	if got := LegacyDir(); got != want {
+		t.Errorf("LegacyDir() = %q, want %q", got, want)
+	}
+}
+
 func TestFilePath(t *testing.T) {
-	t.Setenv("RESEARCHER_CONFIG_DIR", "/tmp/test-config")
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", "/tmp/test-config")
 	want := "/tmp/test-config/config.yaml"
 	if got := FilePath(); got != want {
 		t.Errorf("FilePath() = %q, want %q", got, want)
@@ -110,7 +121,7 @@ func TestFilePath(t *testing.T) {
 
 func TestLoad_FileNotFound(t *testing.T) {
 	// Point at an empty temp dir — no config.yaml exists
-	t.Setenv("RESEARCHER_CONFIG_DIR", t.TempDir())
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
@@ -127,7 +138,7 @@ func TestLoad_FileNotFound(t *testing.T) {
 
 func TestLoad_ValidFile(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	yaml := `research_dir: /custom/research
 default_backend: ollama
@@ -194,7 +205,7 @@ hybrid:
 
 func TestLoad_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("{{invalid yaml::"), 0644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -258,7 +269,7 @@ func TestDefaults(t *testing.T) {
 
 func TestLoad_GrepaiWorkspace(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	yaml := `grepai:
   auto_index: true

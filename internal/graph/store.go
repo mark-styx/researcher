@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -78,7 +78,7 @@ type Store struct {
 	db *sql.DB
 }
 
-// NewStore opens the shared ~/.researcher/tasks.db and ensures the graph
+// NewStore opens the shared ~/.researchguy/tasks.db and ensures the graph
 // tables exist alongside the scheduler's tables.
 func NewStore(cfg *config.Config) (*Store, error) {
 	dbPath := filepath.Join(config.Dir(), "tasks.db")

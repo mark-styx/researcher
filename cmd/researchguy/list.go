@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/research"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/research"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +16,7 @@ func listCmd() *cobra.Command {
 		Short: "List all research files grouped by category",
 		Long: `List all research files in the research directory, grouped by category.
 Shows each file's category, name, and modification date.`,
-		Example: `  researcher list`,
+		Example: `  researchguy list`,
 		GroupID: "project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()

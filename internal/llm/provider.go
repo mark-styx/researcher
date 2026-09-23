@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/tools"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 // Provider is the interface for LLM backends.

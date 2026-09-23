@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
+	"github.com/marklubin/researchguy/internal/config"
 )
 
 func TestShouldRun(t *testing.T) {
@@ -62,7 +62,7 @@ func TestShouldRun(t *testing.T) {
 
 func TestNewStore_FromConfig(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	cfg := &config.Config{
 		Scheduler: config.SchedulerConfig{
@@ -86,7 +86,7 @@ func TestNewStore_FromConfig(t *testing.T) {
 
 func TestNew_Success(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	cfg := &config.Config{
 		Scheduler: config.SchedulerConfig{
@@ -143,7 +143,7 @@ func TestStop_Idempotent(t *testing.T) {
 
 func TestRun_StopsOnSignal(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	cfg := &config.Config{
 		Scheduler: config.SchedulerConfig{
@@ -179,7 +179,7 @@ func TestRun_StopsOnSignal(t *testing.T) {
 
 func TestNew_InvalidLogPath(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	cfg := &config.Config{
 		Scheduler: config.SchedulerConfig{
@@ -198,7 +198,7 @@ func TestNew_InvalidLogPath(t *testing.T) {
 
 func TestPoll_EmptyStore(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	store := newTestStore(t)
 	s := &Scheduler{
@@ -220,7 +220,7 @@ func TestPoll_EmptyStore(t *testing.T) {
 
 func TestPoll_ScheduledNotDue(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
 
 	store := newTestStore(t)
 

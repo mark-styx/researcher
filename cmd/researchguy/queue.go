@@ -6,8 +6,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/marklubin/researcher/internal/config"
-	"github.com/marklubin/researcher/internal/scheduler"
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/scheduler"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,7 @@ func queueListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "Show pending queued tasks",
-		Example: `  researcher queue list`,
+		Example: `  researchguy queue list`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -69,8 +69,8 @@ func queueAddCmd() *cobra.Command {
 		Short: "Add a one-shot task to the queue",
 		Long: `Add a one-shot research task to the queue. Task types: dive, watch,
 review, enrich, ask. The daemon processes queued tasks in priority order.`,
-		Example: `  researcher queue add --type dive --topic "quantum computing"
-  researcher queue add --type review --topic "AI safety" --priority 10`,
+		Example: `  researchguy queue add --type dive --topic "quantum computing"
+  researchguy queue add --type review --topic "AI safety" --priority 10`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if topic == "" {
 				return fmt.Errorf("--topic is required")

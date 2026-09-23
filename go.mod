@@ -1,4 +1,4 @@
-module github.com/marklubin/researcher
+module github.com/marklubin/researchguy
 
 go 1.25.0
 
