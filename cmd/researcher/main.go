@@ -31,6 +31,7 @@ Get started:
 	root.AddGroup(
 		&cobra.Group{ID: "research", Title: "Research Commands:"},
 		&cobra.Group{ID: "project", Title: "Project Management:"},
+		&cobra.Group{ID: "graph", Title: "Knowledge Graph:"},
 		&cobra.Group{ID: "scheduling", Title: "Task Scheduling:"},
 		&cobra.Group{ID: "setup", Title: "Setup:"},
 	)
@@ -44,6 +45,7 @@ Get started:
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())
 	root.AddCommand(linkCmd())
+	root.AddCommand(graphCmd())
 	root.AddCommand(watchCmd())
 	root.AddCommand(queueCmd())
 	root.AddCommand(scheduleCmd())
