@@ -11,11 +11,15 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Document enrichment** — expand thin sections and add context to existing research; interactive file picker when no path given
 - **Smart file organization** — LLM-based auto-categorization into topic directories with descriptive filenames
 - **Migration tool** — reorganize existing flat research directories into the new category structure
-- **Semantic search** — find across all research via grepai
+- **Semantic search** — find across all research via grepai, including grepai workspace mode for shared multi-project indexes
+- **Context-aware generation** — `dive`/`review`/`compare` search existing research before generating, not just `ask`
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
 - **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
 - **Multi-backend** — supports Claude CLI, Ollama, and hybrid local-worker aggregation
+- **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
+- **Transparent critics** — hybrid backend's groundedness and narrative-vs-evidence critic passes report what they changed/flagged instead of silently rewriting
+- **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researcher graph`), instead of being re-derived per report
 
 ## Installation
 
@@ -65,6 +69,20 @@ researcher search "entanglement"
 | `compare <topicA> <topicB>` | Side-by-side comparative analysis of two topics or documents |
 | `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
+
+`dive`/`review`/`compare` accept `--no-research` (skip searching existing research for context) and `--max-age` (freshness filter, e.g. `90d`), same as `ask`. With the hybrid backend, they also accept `--mode` (`landscape`, `inquiry`) and `--branches` (effort/breadth dial) — see [Hybrid Backend](#hybrid-backend-modes-and-critics) below.
+
+### Knowledge Graph
+
+| Command | Description |
+|---------|-------------|
+| `graph add-node --type <type> --title <title>` | Create a node (`entity`, `source`, `claim`, `funding-pattern`, `report`) |
+| `graph add-edge --from <id> --to <id> --type <type>` | Create a typed edge (`funds`, `authored-by`, `supports`, `contradicts`, `sponsors-research`, `references`, `supersedes`) |
+| `graph show <id>` | Show a node's details and its connected edges |
+| `graph list [--type <type>]` | List nodes, optionally filtered by type |
+| `graph export [--out <path>]` | Export the full graph as JSON for visualization |
+
+Node structure/relationships live in `~/.researcher/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
 
 ### Project Management
 
@@ -153,6 +171,11 @@ scheduler:
 grepai:
   auto_index: true
   binary: grepai
+  # If research_dir is registered as a project inside a grepai workspace
+  # (see "grepai workspace list"), set these so search hits the workspace's
+  # shared index instead of bootstrapping a separate standalone one.
+  workspace: ""
+  project: ""
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.
@@ -219,6 +242,22 @@ Override per-command:
 researcher dive "topic" --backend ollama --model llama3
 ```
 
+### Hybrid backend: modes and critics
+
+The hybrid backend fans out to worker models in parallel, aggregates their drafts, then (if `enable_verification` is on) runs two critic passes before returning:
+
+```bash
+researcher dive "topic" --backend hybrid --mode inquiry --branches 5
+```
+
+- `--mode landscape` — for tool/alternatives-comparison questions. Branches: documented alternatives, vendor claims vs. independently reported usage, competitive positioning, adoption evidence.
+- `--mode inquiry` — for open-ended or contested claims. Branches: primary evidence, counter-evidence/disconfirming cases, funding and institutional provenance, independent replication, narrative-vs-evidence gap.
+- `--branches <n>` — how many angles to investigate, decoupled from how many worker models are configured (models are reused round-robin if `n` exceeds `worker_models` length).
+
+Both critic passes are visible in the saved output under a `## Critic Notes` section, not silently folded into the answer:
+- **Groundedness critic** — revises the draft to keep only evidence-backed claims, and reports what it removed/softened and why.
+- **Narrative-vs-evidence critic** — doesn't rewrite anything; flags claims stated as settled/consensus that aren't tied to a distinct piece of worker evidence.
+
 ## File Organization
 
 Research files are automatically categorized by the LLM into topic directories with short descriptive filenames:
@@ -257,9 +296,12 @@ The `researcher mcp` command starts a [Model Context Protocol](https://modelcont
 | `researcher_review` | Literature review / synthesis |
 | `researcher_compare` | Side-by-side comparative analysis |
 | `researcher_enrich` | Expand and add context to a document |
-| `researcher_search` | Semantic search across research |
+| `researcher_search` | Raw semantic search across research (chunk results, no synthesis) |
+| `researcher_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researcher_list` | List research files by category |
 | `researcher_read` | Read a research document |
+
+`researcher_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags). `researcher_ask` additionally accepts `no_save`.
 
 ### Claude Code Configuration
 
@@ -281,6 +323,7 @@ Add to `~/.claude/settings.json`:
 ```
 ~/.researcher/
   config.yaml          # Configuration
+  tasks.db             # Scheduler tasks + knowledge graph (nodes/edges) tables
   scheduler.log        # Daemon log
   scheduler.pid        # Daemon PID file
 ```
