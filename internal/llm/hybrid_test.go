@@ -11,13 +11,14 @@ import (
 )
 
 type stubProvider struct {
-	name    string
-	resp    string
-	err     error
-	lastReq Request
-	mu      sync.Mutex
-	calls   int
-	record  func(prompt string) // optional: called with UserPrompt on each Complete
+	name      string
+	resp      string
+	responses []string // if set, cycled per call (last one repeats); overrides resp
+	err       error
+	lastReq   Request
+	mu        sync.Mutex
+	calls     int
+	record    func(prompt string) // optional: called with UserPrompt on each Complete
 }
 
 func (s *stubProvider) Name() string { return s.name }
@@ -26,14 +27,23 @@ func (s *stubProvider) Complete(_ context.Context, req Request) (string, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReq = req
-	s.calls++
 	if s.record != nil {
 		s.record(req.UserPrompt)
 	}
 	if s.err != nil {
+		s.calls++
 		return "", s.err
 	}
-	return s.resp, nil
+	resp := s.resp
+	if len(s.responses) > 0 {
+		idx := s.calls
+		if idx >= len(s.responses) {
+			idx = len(s.responses) - 1
+		}
+		resp = s.responses[idx]
+	}
+	s.calls++
+	return resp, nil
 }
 
 func TestHybridComplete_AggregatesWorkerOutputs(t *testing.T) {
@@ -274,7 +284,12 @@ func TestHybridComplete_VerificationPass(t *testing.T) {
 		},
 	}
 	aggregator := &stubProvider{name: "claude", resp: "draft synthesis"}
-	verifier := &stubProvider{name: "claude", resp: "verified synthesis"}
+	// Call 1 = groundedness critic (no marker -> whole output is the revised text).
+	// Call 2 = narrative critic (flags nothing).
+	verifier := &stubProvider{name: "claude", responses: []string{
+		"verified synthesis",
+		"No narrative-only claims found.",
+	}}
 
 	h := &Hybrid{
 		cfg:               cfg,
@@ -301,13 +316,97 @@ func TestHybridComplete_VerificationPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp != "verified synthesis" {
-		t.Fatalf("response = %q, want %q", resp, "verified synthesis")
+	if !strings.HasPrefix(resp, "verified synthesis") {
+		t.Fatalf("response = %q, want to start with %q", resp, "verified synthesis")
 	}
-	if verifier.calls != 1 {
-		t.Fatalf("verifier calls = %d, want 1", verifier.calls)
+	if !strings.Contains(resp, "## Critic Notes") {
+		t.Errorf("response should include visible critic notes, got: %s", resp)
+	}
+	if !strings.Contains(resp, "No narrative-only claims found.") {
+		t.Errorf("response should include the narrative critic's finding, got: %s", resp)
+	}
+	if verifier.calls != 2 {
+		t.Fatalf("verifier calls = %d, want 2 (groundedness + narrative)", verifier.calls)
 	}
 	if !strings.Contains(h.Metadata(), `"verified":true`) {
 		t.Fatalf("metadata should record verified=true, got %q", h.Metadata())
+	}
+}
+
+func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
+	cfg := &config.Config{
+		Claude: config.ClaudeConfig{Model: "opus"},
+		Ollama: config.OllamaConfig{Model: "qwen3"},
+		Hybrid: config.HybridConfig{
+			EnableVerification: true,
+			VerifierBackend:    "claude",
+			VerifierModel:      "sonnet",
+		},
+	}
+	aggregator := &stubProvider{name: "claude", resp: "draft synthesis"}
+	verifier := &stubProvider{name: "claude", responses: []string{
+		"revised answer text" + "\n" + criticChangesMarker + "\n- Removed claim about X: unsupported by any worker.",
+		"No narrative-only claims found.",
+	}}
+
+	h := &Hybrid{
+		cfg:               cfg,
+		WorkerBackend:     "ollama",
+		WorkerModels:      []string{"m1"},
+		AggregatorBackend: "claude",
+		AggregatorModel:   "opus",
+		MaxParallel:       1,
+		makeProvider: func(backend, model string) (Provider, error) {
+			switch backend + "/" + model {
+			case "ollama/m1":
+				return &stubProvider{name: "m1", resp: "worker draft"}, nil
+			case "claude/opus":
+				return aggregator, nil
+			case "claude/sonnet":
+				return verifier, nil
+			default:
+				return nil, fmt.Errorf("unexpected provider %s/%s", backend, model)
+			}
+		},
+	}
+
+	resp, err := h.Complete(context.Background(), Request{UserPrompt: "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(resp, "revised answer text") {
+		t.Fatalf("response should start with the revised text (marker stripped), got: %s", resp)
+	}
+	if strings.Contains(strings.SplitN(resp, "## Critic Notes", 2)[0], criticChangesMarker) {
+		t.Error("the raw changes marker should not leak into the answer body")
+	}
+	if !strings.Contains(resp, "### Groundedness Review") {
+		t.Errorf("response should include a groundedness review section, got: %s", resp)
+	}
+	if !strings.Contains(resp, "Removed claim about X") {
+		t.Errorf("response should include the reported change, got: %s", resp)
+	}
+	if !strings.Contains(h.Metadata(), "Removed claim about X") {
+		t.Errorf("metadata should record groundedness_changes, got: %s", h.Metadata())
+	}
+}
+
+func TestSplitCriticOutput(t *testing.T) {
+	revised, changes := splitCriticOutput("answer text\n" + criticChangesMarker + "\n- change one")
+	if revised != "answer text" {
+		t.Errorf("revised = %q, want %q", revised, "answer text")
+	}
+	if changes != "- change one" {
+		t.Errorf("changes = %q, want %q", changes, "- change one")
+	}
+}
+
+func TestSplitCriticOutput_NoMarker(t *testing.T) {
+	revised, changes := splitCriticOutput("just the answer, no marker")
+	if revised != "just the answer, no marker" {
+		t.Errorf("revised = %q", revised)
+	}
+	if changes != "" {
+		t.Errorf("changes = %q, want empty when marker absent", changes)
 	}
 }

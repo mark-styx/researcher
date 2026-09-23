@@ -149,6 +149,8 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 
 	final := draft
 	verified := false
+	var groundednessChanges string
+	var narrativeFlags string
 	if h.shouldVerify() {
 		verifierBackend := h.VerifierBackend
 		if strings.TrimSpace(verifierBackend) == "" && h.cfg != nil {
@@ -164,19 +166,42 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 		verifier, verr := makeProvider(verifierBackend, verifierModel)
 		if verr == nil {
-			verifyReq := Request{
-				SystemPrompt: verificationSystemPrompt(),
+			// Groundedness critic: revises the draft to only keep claims the
+			// worker evidence supports. Unlike a plain overwrite, it must
+			// report what it changed and why — that report becomes part of
+			// the metadata and the visible critic notes, not a silent edit.
+			groundReq := Request{
+				SystemPrompt: groundednessCriticSystemPrompt(),
 				UserPrompt:   buildVerificationPrompt(req.UserPrompt, draft, results),
 				MaxTokens:    req.MaxTokens,
 			}
-			if revised, rerr := verifier.Complete(ctx, verifyReq); rerr == nil && strings.TrimSpace(revised) != "" {
-				final = revised
-				verified = true
+			if raw, rerr := verifier.Complete(ctx, groundReq); rerr == nil && strings.TrimSpace(raw) != "" {
+				revised, changes := splitCriticOutput(raw)
+				if strings.TrimSpace(revised) != "" {
+					final = revised
+					verified = true
+					groundednessChanges = changes
+				}
+			}
+
+			// Narrative-detector critic: does not rewrite the draft. It flags
+			// claims presented as settled/consensus that aren't tied to
+			// distinct evidence in the worker outputs — separating "here's
+			// what the evidence shows" from "here's what's widely repeated."
+			narrReq := Request{
+				SystemPrompt: narrativeCriticSystemPrompt(),
+				UserPrompt:   buildNarrativeCritiquePrompt(final, results),
+				MaxTokens:    req.MaxTokens,
+			}
+			if flags, nerr := verifier.Complete(ctx, narrReq); nerr == nil {
+				narrativeFlags = strings.TrimSpace(flags)
 			}
 		}
 	}
 
-	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, verified, time.Since(started)))
+	final = appendCriticNotes(final, groundednessChanges, narrativeFlags)
+
+	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, verified, groundednessChanges, narrativeFlags, time.Since(started)))
 	return final, nil
 }
 
@@ -316,8 +341,13 @@ Return:
 `, original, shard)
 }
 
-func verificationSystemPrompt() string {
-	return "You are a strict verifier. Keep only claims supported by worker evidence, fix unsupported or overstated claims, and keep the final answer concise and accurate."
+// criticChangesMarker separates a critic's revised text from its report of
+// what it changed. Parsed by splitCriticOutput; never shown to the user raw.
+const criticChangesMarker = "===CHANGES==="
+
+func groundednessCriticSystemPrompt() string {
+	return "You are a groundedness critic. Keep only claims supported by worker evidence, fix unsupported or overstated claims, and keep the final answer concise and accurate. " +
+		"Never silently edit: after the revised answer, on its own line write exactly \"" + criticChangesMarker + "\", then a bullet list of every claim you removed, softened, or flagged as unsupported, each with a one-line reason. If you changed nothing, write \"No changes.\" after the marker."
 }
 
 func buildVerificationPrompt(original, draft string, workers []hybridWorkerOutput) string {
@@ -339,6 +369,67 @@ func buildVerificationPrompt(original, draft string, workers []hybridWorkerOutpu
 	return b.String()
 }
 
+// splitCriticOutput separates a critic's revised answer from its trailing
+// change report, delimited by criticChangesMarker. If the marker is absent
+// (the model didn't follow the format), the whole output is treated as the
+// revised answer and changes is empty rather than silently dropping content.
+func splitCriticOutput(raw string) (revised, changes string) {
+	idx := strings.Index(raw, criticChangesMarker)
+	if idx == -1 {
+		return strings.TrimSpace(raw), ""
+	}
+	revised = strings.TrimSpace(raw[:idx])
+	changes = strings.TrimSpace(raw[idx+len(criticChangesMarker):])
+	return revised, changes
+}
+
+func narrativeCriticSystemPrompt() string {
+	return "You are a narrative-vs-evidence critic. Read the answer and the worker evidence it was built from. " +
+		"For every claim in the answer presented as settled fact or consensus, check whether it is tied to a specific, distinct piece of evidence in the worker outputs, or whether it is a widely-repeated claim being restated without independent support. " +
+		"List only the claims that lean narrative: quote or closely paraphrase the claim, then state in one line why it isn't distinctly evidenced. If every claim in the answer is directly evidenced, write exactly \"No narrative-only claims found.\" Be dry and concise. No prose padding, no restating the whole answer."
+}
+
+func buildNarrativeCritiquePrompt(answer string, workers []hybridWorkerOutput) string {
+	var b strings.Builder
+	b.WriteString("Answer to review:\n")
+	b.WriteString(answer)
+	b.WriteString("\n\nWorker evidence it was built from:\n")
+	for _, w := range workers {
+		if w.Err != nil || strings.TrimSpace(w.Content) == "" {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("\n[%s/%s | shard: %s]\n", w.Backend, w.Model, w.Shard))
+		b.WriteString(w.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// appendCriticNotes appends a visible "Critic Notes" section to the final
+// answer when either critic produced output, so critic findings are part of
+// the saved document rather than only sitting in metadata nobody reads.
+func appendCriticNotes(final, groundednessChanges, narrativeFlags string) string {
+	groundednessChanges = strings.TrimSpace(groundednessChanges)
+	narrativeFlags = strings.TrimSpace(narrativeFlags)
+	if groundednessChanges == "" && narrativeFlags == "" {
+		return final
+	}
+	var b strings.Builder
+	b.WriteString(final)
+	b.WriteString("\n\n---\n\n## Critic Notes\n")
+	if groundednessChanges != "" {
+		b.WriteString("\n### Groundedness Review\n\n")
+		b.WriteString(groundednessChanges)
+		b.WriteString("\n")
+	}
+	if narrativeFlags != "" {
+		b.WriteString("\n### Narrative vs. Evidence\n\n")
+		b.WriteString(narrativeFlags)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (h *Hybrid) shouldVerify() bool {
 	if h.cfg == nil {
 		return h.EnableVerification
@@ -352,7 +443,7 @@ func (h *Hybrid) setMetadata(s string) {
 	h.lastMetadata = s
 }
 
-func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, verified bool, duration time.Duration) string {
+func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, verified bool, groundednessChanges, narrativeFlags string, duration time.Duration) string {
 	type workerMeta struct {
 		Backend string `json:"backend"`
 		Model   string `json:"model"`
@@ -361,22 +452,28 @@ func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorke
 		Output  string `json:"output"`
 	}
 	meta := struct {
-		Mode              string       `json:"mode"`
-		OriginalPrompt    string       `json:"original_prompt"`
-		Shards            []string     `json:"shards"`
-		Workers           []workerMeta `json:"workers"`
-		AggregatorBackend string       `json:"aggregator_backend"`
-		AggregatorModel   string       `json:"aggregator_model"`
-		Verified          bool         `json:"verified"`
-		DurationMS        int64        `json:"duration_ms"`
+		Mode                string       `json:"mode"`
+		BranchMode          string       `json:"branch_mode,omitempty"`
+		OriginalPrompt      string       `json:"original_prompt"`
+		Shards              []string     `json:"shards"`
+		Workers             []workerMeta `json:"workers"`
+		AggregatorBackend   string       `json:"aggregator_backend"`
+		AggregatorModel     string       `json:"aggregator_model"`
+		Verified            bool         `json:"verified"`
+		GroundednessChanges string       `json:"groundedness_changes,omitempty"`
+		NarrativeFlags      string       `json:"narrative_flags,omitempty"`
+		DurationMS          int64        `json:"duration_ms"`
 	}{
-		Mode:              "hybrid",
-		OriginalPrompt:    truncateForMetadata(req.UserPrompt, 2000),
-		Shards:            shards,
-		AggregatorBackend: aggBackend,
-		AggregatorModel:   aggModel,
-		Verified:          verified,
-		DurationMS:        duration.Milliseconds(),
+		Mode:                "hybrid",
+		BranchMode:          req.Mode,
+		OriginalPrompt:      truncateForMetadata(req.UserPrompt, 2000),
+		Shards:              shards,
+		AggregatorBackend:   aggBackend,
+		AggregatorModel:     aggModel,
+		Verified:            verified,
+		GroundednessChanges: truncateForMetadata(groundednessChanges, 2000),
+		NarrativeFlags:      truncateForMetadata(narrativeFlags, 2000),
+		DurationMS:          duration.Milliseconds(),
 	}
 	for _, w := range workers {
 		m := workerMeta{
