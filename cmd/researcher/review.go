@@ -12,8 +12,9 @@ import (
 )
 
 func reviewCmd() *cobra.Command {
-	var backend, model, sources, maxAge string
+	var backend, model, sources, maxAge, mode string
 	var noResearch bool
+	var branches int
 
 	cmd := &cobra.Command{
 		Use:   "review <topic>",
@@ -46,11 +47,13 @@ is set. Output is saved as markdown in the research directory.`,
 
 			runner := research.NewRunner(cfg, provider)
 			result, err := runner.Run(context.Background(), research.Task{
-				Type:       research.TypeReview,
-				Topic:      topic,
-				Sources:    sourceFiles,
-				NoResearch: noResearch,
-				MaxAge:     maxAge,
+				Type:        research.TypeReview,
+				Topic:       topic,
+				Sources:     sourceFiles,
+				NoResearch:  noResearch,
+				MaxAge:      maxAge,
+				Mode:        mode,
+				BranchCount: branches,
 			})
 			if err != nil {
 				return fmt.Errorf("review failed: %w", err)
@@ -66,5 +69,7 @@ is set. Output is saved as markdown in the research directory.`,
 	cmd.Flags().StringVar(&sources, "sources", "", "Comma-separated source files")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
 	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
+	cmd.Flags().StringVar(&mode, "mode", "", "Epistemic branch set for the hybrid backend (landscape, inquiry)")
+	cmd.Flags().IntVar(&branches, "branches", 0, "Number of angles to investigate in parallel (hybrid backend only; 0 = backend default)")
 	return cmd
 }

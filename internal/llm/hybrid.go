@@ -67,16 +67,24 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	if parallel <= 0 {
 		parallel = 1
 	}
-	shards := planShards(req.UserPrompt, len(models))
+	branchCount := req.BranchCount
+	if branchCount <= 0 {
+		branchCount = len(models)
+	}
+	shards := planShards(req.UserPrompt, req.Mode, branchCount)
 
-	out := make(chan hybridWorkerOutput, len(models))
+	// One worker call per shard (the effort/breadth dial), cycling through
+	// the configured worker models round-robin. This decouples how many
+	// angles get investigated from how many distinct models are configured.
+	out := make(chan hybridWorkerOutput, len(shards))
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
-	for i, model := range models {
+	for i, shard := range shards {
+		model := models[i%len(models)]
 		workerReq := req
-		workerReq.UserPrompt = buildShardPrompt(req.UserPrompt, shards[i%len(shards)])
+		workerReq.UserPrompt = buildShardPrompt(req.UserPrompt, shard)
 		wg.Add(1)
-		go func(idx int, m string, wr Request) {
+		go func(idx int, m string, sh string, wr Request) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -84,7 +92,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			p, err := makeProvider(workerBackend, m)
 			if err != nil {
 				out <- hybridWorkerOutput{
-					Index: idx, Backend: workerBackend, Model: m, Shard: shards[idx%len(shards)], Err: err,
+					Index: idx, Backend: workerBackend, Model: m, Shard: sh, Err: err,
 				}
 				return
 			}
@@ -93,16 +101,16 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 				Index:   idx,
 				Backend: workerBackend,
 				Model:   m,
-				Shard:   shards[idx%len(shards)],
+				Shard:   sh,
 				Content: resp,
 				Err:     err,
 			}
-		}(i, model, workerReq)
+		}(i, model, shard, workerReq)
 	}
 	wg.Wait()
 	close(out)
 
-	results := make([]hybridWorkerOutput, len(models))
+	results := make([]hybridWorkerOutput, len(shards))
 	var success int
 	var failures []string
 	for r := range out {
@@ -249,12 +257,41 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput) stri
 	return b.String()
 }
 
-func planShards(topic string, want int) []string {
-	base := []string{
-		"core concepts and definitions",
-		"recent developments and concrete examples",
-		"tradeoffs, risks, and limitations",
-		"implementation guidance and practical recommendations",
+// defaultBranches is the general-purpose angle set used when mode is "" or unrecognized.
+var defaultBranches = []string{
+	"core concepts and definitions",
+	"recent developments and concrete examples",
+	"tradeoffs, risks, and limitations",
+	"implementation guidance and practical recommendations",
+}
+
+// branchSets holds the epistemic branch-role sets selectable via Request.Mode.
+// "landscape" is for tool/alternatives-comparison questions: dry, and treats
+// everything except vendor marketing claims as trustworthy by default.
+// "inquiry" is for open-ended or contested claims: deeper fanout with
+// mandatory counter-evidence and funding-provenance branches.
+var branchSets = map[string][]string{
+	"landscape": {
+		"documented alternatives and how people solve this without the tool/approach in question",
+		"vendor and marketing claims, kept separate from independently reported usage and outcomes",
+		"competitive positioning: strengths, weaknesses, and gaps relative to alternatives",
+		"adoption evidence: who uses this, at what scale, and what they report",
+	},
+	"inquiry": {
+		"primary evidence directly supporting the claim",
+		"counter-evidence and disconfirming or null-result cases",
+		"funding and institutional provenance of the evidence base",
+		"independent replication or corroboration outside the original source",
+		"narrative-vs-evidence gap: what's widely repeated versus what's actually substantiated",
+	},
+}
+
+// planShards picks the branch-role set for mode (falling back to
+// defaultBranches) and expands or cycles it to exactly want entries.
+func planShards(topic string, mode string, want int) []string {
+	base := defaultBranches
+	if set, ok := branchSets[mode]; ok {
+		base = set
 	}
 	if want <= 0 {
 		return base

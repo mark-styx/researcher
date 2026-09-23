@@ -25,6 +25,11 @@ type Request struct {
 	UserPrompt   string
 	MaxTokens    int
 	Tools        []tools.Tool // nil = no tools
+
+	// Mode and BranchCount only affect the hybrid backend's shard planning.
+	// Other backends ignore them.
+	Mode        string // "" (general), "landscape", or "inquiry" — selects the epistemic branch-role set
+	BranchCount int    // number of shards to plan; <= 0 defaults to len(worker models)
 }
 
 // NewProvider creates an LLM provider based on config and optional overrides.

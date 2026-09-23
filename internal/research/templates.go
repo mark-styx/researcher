@@ -8,13 +8,15 @@ const TypeAsk = "ask"
 const TypeCompare = "compare"
 
 type Task struct {
-	Type       string
-	Topic      string
-	Sources    []string // file paths for review/enrich
-	NoSave     bool     // skip saving the answer
-	NoResearch bool     // skip searching existing research
-	MaxAge     string   // override max-age for freshness filter (e.g. "30d")
-	Quiet      bool     // suppress stdout output (used by MCP server)
+	Type        string
+	Topic       string
+	Sources     []string // file paths for review/enrich
+	NoSave      bool     // skip saving the answer
+	NoResearch  bool     // skip searching existing research
+	MaxAge      string   // override max-age for freshness filter (e.g. "30d")
+	Quiet       bool     // suppress stdout output (used by MCP server)
+	Mode        string   // epistemic branch-role set for the hybrid backend: "", "landscape", or "inquiry"
+	BranchCount int      // hybrid backend effort/breadth dial; <= 0 uses the backend's default
 }
 
 // RunResult holds the output from a research task execution.

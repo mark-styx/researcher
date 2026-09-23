@@ -11,8 +11,9 @@ import (
 )
 
 func diveCmd() *cobra.Command {
-	var backend, model, maxAge string
+	var backend, model, maxAge, mode string
 	var noResearch bool
+	var branches int
 
 	cmd := &cobra.Command{
 		Use:   "dive <topic>",
@@ -45,10 +46,12 @@ or --max-age to control the freshness filter.`,
 
 			runner := research.NewRunner(cfg, provider)
 			result, err := runner.Run(context.Background(), research.Task{
-				Type:       research.TypeDive,
-				Topic:      topic,
-				NoResearch: noResearch,
-				MaxAge:     maxAge,
+				Type:        research.TypeDive,
+				Topic:       topic,
+				NoResearch:  noResearch,
+				MaxAge:      maxAge,
+				Mode:        mode,
+				BranchCount: branches,
 			})
 			if err != nil {
 				return fmt.Errorf("research failed: %w", err)
@@ -63,5 +66,7 @@ or --max-age to control the freshness filter.`,
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
 	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
+	cmd.Flags().StringVar(&mode, "mode", "", "Epistemic branch set for the hybrid backend (landscape, inquiry)")
+	cmd.Flags().IntVar(&branches, "branches", 0, "Number of angles to investigate in parallel (hybrid backend only; 0 = backend default)")
 	return cmd
 }

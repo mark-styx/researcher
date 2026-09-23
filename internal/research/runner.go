@@ -65,6 +65,8 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 		SystemPrompt: sysPrompt,
 		UserPrompt:   task.Topic,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -158,6 +160,8 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -193,6 +197,8 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -253,6 +259,8 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -287,6 +295,8 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -346,6 +356,8 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
+		Mode:         task.Mode,
+		BranchCount:  task.BranchCount,
 	})
 	if err != nil {
 		return RunResult{}, err
