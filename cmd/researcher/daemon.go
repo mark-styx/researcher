@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/llm"
@@ -43,6 +48,14 @@ LLM backend. Send SIGINT or SIGTERM to stop.`,
 				return fmt.Errorf("loading config: %w", err)
 			}
 
+			pidPath := config.ExpandPath(cfg.Scheduler.PIDFile)
+			if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
+				return fmt.Errorf("creating PID directory: %w", err)
+			}
+			if running, pid := daemonRunning(pidPath); running {
+				return fmt.Errorf("daemon already running (PID: %d)", pid)
+			}
+
 			provider, err := llm.NewProvider(cfg, "", "")
 			if err != nil {
 				return fmt.Errorf("creating LLM provider: %w", err)
@@ -54,8 +67,17 @@ LLM backend. Send SIGINT or SIGTERM to stop.`,
 			}
 
 			// Write PID file
-			pidPath := config.ExpandPath(cfg.Scheduler.PIDFile)
-			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+			exe, _ := os.Executable()
+			info := pidInfo{
+				PID:       os.Getpid(),
+				Exe:       exe,
+				StartedAt: time.Now().Unix(),
+			}
+			pidData, err := json.Marshal(info)
+			if err != nil {
+				return fmt.Errorf("encoding PID file: %w", err)
+			}
+			if err := os.WriteFile(pidPath, pidData, 0644); err != nil {
 				return fmt.Errorf("writing PID file: %w", err)
 			}
 			defer os.Remove(pidPath)
@@ -91,26 +113,24 @@ func daemonStopCmd() *cobra.Command {
 			}
 
 			pidPath := config.ExpandPath(cfg.Scheduler.PIDFile)
-			data, err := os.ReadFile(pidPath)
+			info, err := readPIDFile(pidPath)
 			if err != nil {
 				return fmt.Errorf("reading PID file (daemon not running?): %w", err)
 			}
 
-			pid, err := strconv.Atoi(string(data))
-			if err != nil {
-				return fmt.Errorf("invalid PID: %w", err)
+			proc, alive := processAlive(info.PID)
+			if !alive {
+				return fmt.Errorf("daemon not running (stale PID file)")
 			}
-
-			proc, err := os.FindProcess(pid)
-			if err != nil {
-				return fmt.Errorf("finding process: %w", err)
+			if !pidMatchesProcess(info) {
+				return fmt.Errorf("PID %d belongs to a different process", info.PID)
 			}
 
 			if err := proc.Signal(syscall.SIGTERM); err != nil {
 				return fmt.Errorf("sending signal: %w", err)
 			}
 
-			fmt.Printf("Sent SIGTERM to daemon (PID: %d)\n", pid)
+			fmt.Printf("Sent SIGTERM to daemon (PID: %d)\n", info.PID)
 			return nil
 		},
 	}
@@ -129,32 +149,112 @@ func daemonStatusCmd() *cobra.Command {
 			}
 
 			pidPath := config.ExpandPath(cfg.Scheduler.PIDFile)
-			data, err := os.ReadFile(pidPath)
+			info, err := readPIDFile(pidPath)
 			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Println("Daemon: not running")
+					return nil
+				}
+				if strings.Contains(err.Error(), "invalid PID") || strings.Contains(err.Error(), "invalid PID file") {
+					fmt.Println("Daemon: unknown (invalid PID file)")
+					return nil
+				}
 				fmt.Println("Daemon: not running")
 				return nil
 			}
 
-			pid, err := strconv.Atoi(string(data))
-			if err != nil {
-				fmt.Println("Daemon: unknown (invalid PID file)")
-				return nil
-			}
-
-			proc, err := os.FindProcess(pid)
-			if err != nil {
+			_, alive := processAlive(info.PID)
+			if !alive {
 				fmt.Println("Daemon: not running (stale PID file)")
 				return nil
 			}
 
-			// On Unix, signal 0 checks if process exists
-			if err := proc.Signal(syscall.Signal(0)); err != nil {
-				fmt.Println("Daemon: not running (stale PID file)")
+			if !pidMatchesProcess(info) {
+				fmt.Printf("Daemon: not running (PID %d belongs to another process)\n", info.PID)
 				return nil
 			}
 
-			fmt.Printf("Daemon: running (PID: %d)\n", pid)
+			fmt.Printf("Daemon: running (PID: %d)\n", info.PID)
 			return nil
 		},
 	}
+}
+
+type pidInfo struct {
+	PID       int    `json:"pid"`
+	Exe       string `json:"exe,omitempty"`
+	StartedAt int64  `json:"started_at,omitempty"`
+}
+
+func readPIDFile(path string) (pidInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pidInfo{}, err
+	}
+	raw := strings.TrimSpace(string(data))
+	if raw == "" {
+		return pidInfo{}, fmt.Errorf("empty PID file")
+	}
+	// Backward compatibility with legacy integer-only PID files.
+	if raw[0] != '{' {
+		pid, err := strconv.Atoi(raw)
+		if err != nil {
+			return pidInfo{}, fmt.Errorf("invalid PID: %w", err)
+		}
+		return pidInfo{PID: pid}, nil
+	}
+
+	var info pidInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return pidInfo{}, fmt.Errorf("invalid PID file JSON: %w", err)
+	}
+	if info.PID <= 0 {
+		return pidInfo{}, fmt.Errorf("invalid PID: %d", info.PID)
+	}
+	return info, nil
+}
+
+func processAlive(pid int) (*os.Process, bool) {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return nil, false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return nil, false
+	}
+	return proc, true
+}
+
+func processCommandLine(pid int) string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func pidMatchesProcess(info pidInfo) bool {
+	cmdline := processCommandLine(info.PID)
+	if cmdline == "" {
+		return false
+	}
+	if info.Exe != "" {
+		return strings.Contains(cmdline, filepath.Base(info.Exe))
+	}
+	// Legacy PID file fallback.
+	return strings.Contains(cmdline, "researcher")
+}
+
+func daemonRunning(pidPath string) (bool, int) {
+	info, err := readPIDFile(pidPath)
+	if err != nil {
+		return false, 0
+	}
+	if _, alive := processAlive(info.PID); !alive {
+		return false, 0
+	}
+	if !pidMatchesProcess(info) {
+		return false, 0
+	}
+	return true, info.PID
 }

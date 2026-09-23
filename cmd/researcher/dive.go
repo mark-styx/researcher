@@ -59,7 +59,7 @@ or --max-age to control the freshness filter.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
 	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")

@@ -68,7 +68,7 @@ or --max-age to control the freshness filter.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().BoolVar(&noSave, "no-save", false, "Don't save the answer to the research directory")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")

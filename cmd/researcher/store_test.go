@@ -31,6 +31,18 @@ func TestQueueAdd_MissingTopic(t *testing.T) {
 	}
 }
 
+func TestQueueAdd_InvalidType(t *testing.T) {
+	testSetup(t)
+
+	_, err := runCmd(t, "queue", "add", "--topic", "test", "--type", "invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid --type")
+	}
+	if !strings.Contains(err.Error(), "invalid --type") {
+		t.Errorf("error = %q, want to contain 'invalid --type'", err.Error())
+	}
+}
+
 func TestQueueList(t *testing.T) {
 	testSetup(t)
 
@@ -73,6 +85,18 @@ func TestScheduleAdd_MissingCron(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--cron is required") {
 		t.Errorf("error = %q, want to contain '--cron is required'", err.Error())
+	}
+}
+
+func TestScheduleAdd_InvalidCron(t *testing.T) {
+	testSetup(t)
+
+	_, err := runCmd(t, "schedule", "add", "--topic", "test", "--cron", "not-a-cron")
+	if err == nil {
+		t.Fatal("expected error for invalid --cron")
+	}
+	if !strings.Contains(err.Error(), "invalid --cron expression") {
+		t.Errorf("error = %q, want to contain 'invalid --cron expression'", err.Error())
 	}
 }
 

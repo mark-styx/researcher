@@ -138,7 +138,11 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 
 		var sources []string
 		if s := req.GetString("sources", ""); s != "" {
-			sources = strings.Split(s, ",")
+			for _, p := range strings.Split(s, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					sources = append(sources, p)
+				}
+			}
 		}
 
 		runner := research.NewRunner(cfg, provider)
@@ -189,7 +193,11 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 
 		var sources []string
 		if s := req.GetString("sources", ""); s != "" {
-			sources = strings.Split(s, ",")
+			for _, p := range strings.Split(s, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					sources = append(sources, p)
+				}
+			}
 		}
 
 		runner := research.NewRunner(cfg, provider)
@@ -491,14 +499,34 @@ func readHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 		fullPath := filepath.Join(researchDir, cleaned)
 
-		// Verify the resolved path is still within the research directory
-		absResearch, _ := filepath.Abs(researchDir)
-		absFile, _ := filepath.Abs(fullPath)
-		if !strings.HasPrefix(absFile, absResearch) {
+		// Resolve through symlinks before boundary check.
+		resolvedPath, err := filepath.EvalSymlinks(fullPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("reading file: %v", err)), nil
+		}
+
+		// Verify the resolved path is still within the research directory.
+		resolvedResearchDir, err := filepath.EvalSymlinks(researchDir)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("resolving research directory: %v", err)), nil
+		}
+		absResearch, err := filepath.Abs(resolvedResearchDir)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("resolving research directory: %v", err)), nil
+		}
+		absFile, err := filepath.Abs(resolvedPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("resolving file path: %v", err)), nil
+		}
+		rel, err := filepath.Rel(absResearch, absFile)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("resolving relative path: %v", err)), nil
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 			return mcp.NewToolResultError("path must be within the research directory"), nil
 		}
 
-		data, err := os.ReadFile(fullPath)
+		data, err := os.ReadFile(absFile)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("reading file: %v", err)), nil
 		}

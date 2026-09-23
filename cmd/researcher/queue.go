@@ -75,6 +75,9 @@ review, enrich, ask. The daemon processes queued tasks in priority order.`,
 			if topic == "" {
 				return fmt.Errorf("--topic is required")
 			}
+			if err := validateTaskType(taskType); err != nil {
+				return err
+			}
 
 			cfg, err := config.Load()
 			if err != nil {

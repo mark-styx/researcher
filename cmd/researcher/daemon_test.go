@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,9 +76,8 @@ func TestDaemonStop_StalePID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for stale PID")
 	}
-	// On macOS/Linux, sending signal to non-existent process returns error
-	if !strings.Contains(err.Error(), "signal") && !strings.Contains(err.Error(), "process") {
-		t.Errorf("error = %q, want signal/process related error", err.Error())
+	if !strings.Contains(err.Error(), "stale PID file") {
+		t.Errorf("error = %q, want stale PID file message", err.Error())
 	}
 }
 
@@ -100,9 +99,21 @@ func TestDaemonStatus_InvalidPID(t *testing.T) {
 func TestDaemonStatus_CurrentProcess(t *testing.T) {
 	configDir, _ := testSetup(t)
 
-	// Write current process PID — it should be "running"
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("getting executable: %v", err)
+	}
+	pidJSON, err := json.Marshal(map[string]any{
+		"pid": os.Getpid(),
+		"exe": exe,
+	})
+	if err != nil {
+		t.Fatalf("marshaling pid json: %v", err)
+	}
+
+	// Write current process PID with executable metadata — it should be "running".
 	pidPath := filepath.Join(configDir, "scheduler.pid")
-	os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	os.WriteFile(pidPath, pidJSON, 0644)
 
 	out, err := runCmd(t, "daemon", "status")
 	if err != nil {
@@ -110,6 +121,27 @@ func TestDaemonStatus_CurrentProcess(t *testing.T) {
 	}
 	if !strings.Contains(out, "running") {
 		t.Errorf("output missing 'running': %s", out)
+	}
+}
+
+func TestDaemonStatus_LegacyPIDOtherProcess(t *testing.T) {
+	configDir, _ := testSetup(t)
+	pidPath := filepath.Join(configDir, "scheduler.pid")
+	pidJSON, err := json.Marshal(map[string]any{
+		"pid": os.Getpid(),
+		"exe": "/definitely/not/the/current/executable",
+	})
+	if err != nil {
+		t.Fatalf("marshaling pid json: %v", err)
+	}
+	os.WriteFile(pidPath, pidJSON, 0644)
+
+	out, err := runCmd(t, "daemon", "status")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "belongs to another process") {
+		t.Errorf("expected legacy PID mismatch output, got: %s", out)
 	}
 }
 

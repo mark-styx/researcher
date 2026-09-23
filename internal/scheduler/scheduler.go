@@ -2,9 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/marklubin/researcher/internal/config"
@@ -18,7 +22,12 @@ type Scheduler struct {
 	store    *Store
 	provider llm.Provider
 	logger   *log.Logger
+	logFile  *os.File
 	stopCh   chan struct{}
+	stopOnce sync.Once
+	sem      chan struct{}
+	wg       sync.WaitGroup
+	owner    string
 }
 
 func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
@@ -28,9 +37,18 @@ func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
 	}
 
 	logFile := config.ExpandPath(cfg.Scheduler.LogFile)
+	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("creating log directory: %w", err)
+	}
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		store.Close()
 		return nil, fmt.Errorf("opening log file: %w", err)
+	}
+	maxConcurrent := cfg.Scheduler.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
 	}
 
 	return &Scheduler{
@@ -38,7 +56,10 @@ func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
 		store:    store,
 		provider: provider,
 		logger:   log.New(f, "scheduler: ", log.LstdFlags),
+		logFile:  f,
 		stopCh:   make(chan struct{}),
+		sem:      make(chan struct{}, maxConcurrent),
+		owner:    fmt.Sprintf("daemon-%d-%d", os.Getpid(), time.Now().UnixNano()),
 	}, nil
 }
 
@@ -58,40 +79,67 @@ func (s *Scheduler) Run() {
 			s.poll()
 		case <-s.stopCh:
 			s.logger.Println("Scheduler stopped")
+			s.wg.Wait()
 			s.store.Close()
+			if s.logFile != nil {
+				s.logFile.Close()
+			}
 			return
 		}
 	}
 }
 
 func (s *Scheduler) Stop() {
-	close(s.stopCh)
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
 }
 
 func (s *Scheduler) poll() {
+	remaining := s.availableSlots()
+	if remaining <= 0 {
+		return
+	}
+
 	// Check scheduled (cron) tasks first
-	scheduled, err := s.store.DueScheduled()
+	scheduled, err := s.store.ClaimDueScheduled(s.owner, 30*time.Second, remaining)
 	if err != nil {
 		s.logger.Printf("Error listing scheduled tasks: %v", err)
 	}
 
 	for _, task := range scheduled {
+		if remaining <= 0 {
+			break
+		}
 		if s.shouldRun(task) {
-			s.execute(task)
-			return // max_concurrent = 1
+			if s.dispatch(task) {
+				remaining--
+			}
+		} else {
+			_ = s.store.ReleaseLease(task.ID, s.owner)
 		}
 	}
 
-	// Check queued one-shot tasks
-	queued, err := s.store.NextQueued()
-	if err != nil {
-		s.logger.Printf("Error getting next queued task: %v", err)
-		return
-	}
+	// Fill any remaining slots with queued one-shot tasks.
+	for remaining > 0 {
+		queued, err := s.store.ClaimNextQueued(s.owner, 30*time.Second)
+		if err != nil {
+			s.logger.Printf("Error getting next queued task: %v", err)
+			return
+		}
 
-	if queued != nil {
-		s.execute(queued)
+		if queued == nil {
+			return
+		}
+		if !s.dispatch(queued) {
+			return
+		}
+		remaining--
 	}
+}
+
+func (s *Scheduler) availableSlots() int {
+	return cap(s.sem) - len(s.sem)
 }
 
 func (s *Scheduler) shouldRun(task *Task) bool {
@@ -117,13 +165,31 @@ func (s *Scheduler) shouldRun(task *Task) bool {
 	return time.Now().After(nextRun)
 }
 
-func (s *Scheduler) execute(task *Task) {
-	s.logger.Printf("Executing task %s: %s %q", task.ID[:8], task.Type, task.Topic)
+func (s *Scheduler) dispatch(task *Task) bool {
+	select {
+	case s.sem <- struct{}{}:
+	default:
+		return false
+	}
 
 	if err := s.store.UpdateStatus(task.ID, StatusRunning); err != nil {
+		<-s.sem
+		_ = s.store.ReleaseLease(task.ID, s.owner)
 		s.logger.Printf("Error updating status: %v", err)
-		return
+		return false
 	}
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer func() { <-s.sem }()
+		s.execute(task)
+	}()
+	return true
+}
+
+func (s *Scheduler) execute(task *Task) {
+	s.logger.Printf("Executing task %s: %s %q", task.ID[:8], task.Type, task.Topic)
 
 	// Determine provider: use task overrides if set
 	provider := s.provider
@@ -165,15 +231,79 @@ func (s *Scheduler) execute(task *Task) {
 	if result.FilePath != "" {
 		s.store.SetOutputDir(task.ID, result.FilePath)
 	}
+	if strings.TrimSpace(result.Metadata) != "" {
+		if err := s.store.SetMetadata(task.ID, result.Metadata); err != nil {
+			s.logger.Printf("Error updating metadata: %v", err)
+		}
+		if err := s.recordHybridChildren(task, result.Metadata); err != nil {
+			s.logger.Printf("Error recording hybrid children: %v", err)
+		}
+	}
 
 	// For recurring tasks, reset to scheduled; for one-shots, mark done
 	if task.Cron != nil {
-		s.store.UpdateStatus(task.ID, StatusScheduled)
 		now := time.Now()
+		if err := s.store.MarkScheduled(task.ID, now); err != nil {
+			s.logger.Printf("Error updating scheduled status: %v", err)
+		}
 		task.LastRunAt = &now
 	} else {
-		s.store.UpdateStatus(task.ID, StatusDone)
+		if err := s.store.UpdateStatus(task.ID, StatusDone); err != nil {
+			s.logger.Printf("Error updating done status: %v", err)
+		}
 	}
 
 	s.logger.Printf("Task %s completed: %s", task.ID[:8], result.FilePath)
+}
+
+type hybridWorkerRecord struct {
+	Backend string `json:"backend"`
+	Model   string `json:"model"`
+	Shard   string `json:"shard"`
+	Error   string `json:"error,omitempty"`
+	Output  string `json:"output"`
+}
+
+type hybridMetadata struct {
+	Mode    string               `json:"mode"`
+	Workers []hybridWorkerRecord `json:"workers"`
+}
+
+func (s *Scheduler) recordHybridChildren(parent *Task, metadata string) error {
+	var m hybridMetadata
+	if err := json.Unmarshal([]byte(metadata), &m); err != nil {
+		return nil
+	}
+	if m.Mode != "hybrid" || len(m.Workers) == 0 {
+		return nil
+	}
+
+	for _, w := range m.Workers {
+		parentID := parent.ID
+		shard := w.Shard
+		backend := w.Backend
+		model := w.Model
+		child := &Task{
+			Type:         parent.Type,
+			Topic:        parent.Topic,
+			Status:       StatusPlanned,
+			Backend:      &backend,
+			Model:        &model,
+			ParentTaskID: &parentID,
+			ShardID:      &shard,
+			CreatedAt:    time.Now(),
+		}
+		if err := s.store.Create(child); err != nil {
+			continue
+		}
+		if strings.TrimSpace(w.Output) != "" {
+			_ = s.store.SetMetadata(child.ID, w.Output)
+		}
+		if strings.TrimSpace(w.Error) != "" {
+			_ = s.store.SetError(child.ID, w.Error)
+		} else {
+			_ = s.store.UpdateStatus(child.ID, StatusDone)
+		}
+	}
+	return nil
 }

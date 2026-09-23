@@ -61,7 +61,7 @@ is set. Output is saved as markdown in the research directory.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().StringVar(&sources, "sources", "", "Comma-separated source files")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")

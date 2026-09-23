@@ -10,6 +10,8 @@ import (
 )
 
 func TestWebFetch_HTML(t *testing.T) {
+	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><body><p>Hello</p></body></html>`)
@@ -26,6 +28,8 @@ func TestWebFetch_HTML(t *testing.T) {
 }
 
 func TestWebFetch_PlainText(t *testing.T) {
+	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "raw text content")
@@ -42,6 +46,8 @@ func TestWebFetch_PlainText(t *testing.T) {
 }
 
 func TestWebFetch_HTTPError(t *testing.T) {
+	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -57,6 +63,8 @@ func TestWebFetch_HTTPError(t *testing.T) {
 }
 
 func TestWebFetch_SkipsTags(t *testing.T) {
+	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><body>
@@ -116,6 +124,26 @@ func TestExtractText(t *testing.T) {
 	// Verify no excessive blank lines (max 1 consecutive)
 	if strings.Contains(got, "\n\n\n") {
 		t.Error("excessive blank lines not collapsed")
+	}
+}
+
+func TestWebFetch_RejectsLocalhostByDefault(t *testing.T) {
+	_, err := WebFetch(context.Background(), "http://127.0.0.1:8080")
+	if err == nil {
+		t.Fatal("expected localhost/private URL rejection")
+	}
+	if !strings.Contains(err.Error(), "private or local network") && !strings.Contains(err.Error(), "localhost") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWebFetch_RejectsUnsupportedScheme(t *testing.T) {
+	_, err := WebFetch(context.Background(), "file:///etc/passwd")
+	if err == nil {
+		t.Fatal("expected scheme rejection")
+	}
+	if !strings.Contains(err.Error(), "only http/https allowed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

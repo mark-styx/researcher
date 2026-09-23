@@ -14,6 +14,11 @@ type Provider interface {
 	Name() string
 }
 
+// MetadataProvider is an optional extension that exposes last-run metadata.
+type MetadataProvider interface {
+	Metadata() string
+}
+
 // Request holds the parameters for an LLM completion.
 type Request struct {
 	SystemPrompt string
@@ -39,6 +44,7 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			Binary:       cfg.Claude.Binary,
 			Model:        model,
 			MaxBudgetUSD: cfg.Claude.MaxBudgetUSD,
+			MaxTurns:     cfg.Claude.MaxTurns,
 		}, nil
 
 	case "ollama":
@@ -54,7 +60,28 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			Executor:      tools.NewExecutor(cfg.Tools.MaxResults),
 		}, nil
 
+	case "hybrid":
+		aggregatorModel := cfg.Hybrid.AggregatorModel
+		if modelOverride != "" {
+			aggregatorModel = modelOverride
+		}
+		h := &Hybrid{
+			cfg:                cfg,
+			WorkerBackend:      cfg.Hybrid.WorkerBackend,
+			WorkerModels:       cfg.Hybrid.WorkerModels,
+			AggregatorBackend:  cfg.Hybrid.AggregatorBackend,
+			AggregatorModel:    aggregatorModel,
+			VerifierBackend:    cfg.Hybrid.VerifierBackend,
+			VerifierModel:      cfg.Hybrid.VerifierModel,
+			EnableVerification: cfg.Hybrid.EnableVerification,
+			MaxParallel:        cfg.Hybrid.MaxParallel,
+		}
+		h.makeProvider = func(backend, model string) (Provider, error) {
+			return NewProvider(cfg, backend, model)
+		}
+		return h, nil
+
 	default:
-		return nil, fmt.Errorf("unknown backend: %q (expected claude or ollama)", backend)
+		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, or hybrid)", backend)
 	}
 }

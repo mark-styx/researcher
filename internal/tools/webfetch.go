@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -22,7 +25,12 @@ func WebFetch(ctx context.Context, targetURL string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	target, err := validateTargetURL(ctx, targetURL)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", target.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
@@ -61,6 +69,51 @@ func WebFetch(ctx context.Context, targetURL string) (string, error) {
 	}
 
 	return truncate(text, maxTextBytes), nil
+}
+
+func validateTargetURL(ctx context.Context, raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported URL scheme %q (only http/https allowed)", u.Scheme)
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("URL host is required")
+	}
+
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" && !allowPrivateURLs() {
+		return nil, fmt.Errorf("refusing localhost URL")
+	}
+
+	if !allowPrivateURLs() {
+		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", u.Hostname())
+		if err != nil {
+			return nil, fmt.Errorf("resolving host %q: %w", u.Hostname(), err)
+		}
+		for _, ip := range ips {
+			if isPrivateIP(ip) {
+				return nil, fmt.Errorf("refusing private or local network target: %s", ip.String())
+			}
+		}
+	}
+
+	return u, nil
+}
+
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast()
+}
+
+func allowPrivateURLs() bool {
+	return strings.EqualFold(os.Getenv("RESEARCHER_ALLOW_PRIVATE_URLS"), "true")
 }
 
 // extractText walks an HTML document and extracts visible text.

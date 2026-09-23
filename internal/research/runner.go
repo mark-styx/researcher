@@ -69,6 +69,7 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	if !task.Quiet {
 		fmt.Println(resp)
@@ -76,16 +77,16 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 
 	// Save unless --no-save
 	if task.NoSave {
-		return RunResult{Response: resp}, nil
+		return RunResult{Response: resp, Metadata: metadata}, nil
 	}
 
 	dir, filename, err := r.categorizedPath(ctx, task.Topic)
 	if err != nil {
-		return RunResult{Response: resp}, err
+		return RunResult{Response: resp, Metadata: metadata}, err
 	}
 	filename = strings.TrimSuffix(filename, ".md") + "-ask.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("creating project dir: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("creating project dir: %w", err)
 	}
 
 	outPath := filepath.Join(dir, filename)
@@ -93,10 +94,10 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
 // gatherResearchContext searches existing research via grepai, filters by freshness,
@@ -140,6 +141,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
 	}
@@ -166,10 +168,10 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
 func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
@@ -177,6 +179,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 	// Add -watch suffix to filename
 	filename = strings.TrimSuffix(filename, ".md") + "-watch.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -212,7 +215,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	}
 	f.WriteString(entry)
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
 func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
@@ -220,6 +223,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 	// Add -review suffix to filename
 	filename = strings.TrimSuffix(filename, ".md") + "-review.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -259,10 +263,10 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
 func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
@@ -287,6 +291,7 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	// Write enriched version alongside original
 	dir := filepath.Dir(docPath)
@@ -297,10 +302,10 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), filepath.Base(docPath))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("writing enriched output: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing enriched output: %w", err)
 	}
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
 func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
@@ -308,6 +313,7 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 	filename = strings.TrimSuffix(filename, ".md") + "-comparison.md"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
@@ -350,10 +356,17 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
-		return RunResult{Response: resp}, fmt.Errorf("writing output: %w", err)
+		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
 	}
 
-	return RunResult{FilePath: outPath, Response: resp}, nil
+	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
+}
+
+func (r *Runner) providerMetadata() string {
+	if p, ok := r.provider.(llm.MetadataProvider); ok {
+		return p.Metadata()
+	}
+	return ""
 }
 
 // categorizedPath uses the LLM to determine the category directory and filename

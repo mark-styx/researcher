@@ -21,9 +21,13 @@ type mockProvider struct {
 	responses []string
 	callIdx   int
 	err       error
+	metadata  string
 }
 
 func (m *mockProvider) Name() string { return "mock" }
+func (m *mockProvider) Metadata() string {
+	return m.metadata
+}
 func (m *mockProvider) Complete(_ context.Context, req llm.Request) (string, error) {
 	m.calls = append(m.calls, req)
 	if m.err != nil {
@@ -37,6 +41,27 @@ func (m *mockProvider) Complete(_ context.Context, req llm.Request) (string, err
 		return resp, nil
 	}
 	return m.response, nil
+}
+
+func TestRunner_Ask_ProviderMetadata(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Grepai = config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+	mock := &mockProvider{response: "answer here", metadata: `{"mode":"hybrid"}`}
+	r := NewRunner(cfg, mock)
+
+	result, err := r.Run(context.Background(), Task{
+		Type:       TypeAsk,
+		Topic:      "what is Go?",
+		NoSave:     true,
+		NoResearch: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Metadata != `{"mode":"hybrid"}` {
+		t.Fatalf("Metadata = %q, want hybrid JSON", result.Metadata)
+	}
 }
 
 func testConfig(t *testing.T) *config.Config {

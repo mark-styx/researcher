@@ -64,6 +64,15 @@ func TestDefaultYAML_Parses(t *testing.T) {
 	if cfg.Ollama.Host != "http://localhost:11434" {
 		t.Errorf("Ollama.Host = %q, want %q", cfg.Ollama.Host, "http://localhost:11434")
 	}
+	if cfg.Hybrid.WorkerBackend != "ollama" {
+		t.Errorf("Hybrid.WorkerBackend = %q, want %q", cfg.Hybrid.WorkerBackend, "ollama")
+	}
+	if cfg.Hybrid.AggregatorBackend != "claude" {
+		t.Errorf("Hybrid.AggregatorBackend = %q, want %q", cfg.Hybrid.AggregatorBackend, "claude")
+	}
+	if !cfg.Hybrid.EnableVerification {
+		t.Error("Hybrid.EnableVerification should be true")
+	}
 	if cfg.Tools.MaxResults != 10 {
 		t.Errorf("Tools.MaxResults = %d, want 10", cfg.Tools.MaxResults)
 	}
@@ -130,6 +139,15 @@ ollama:
   host: http://myhost:11434
   model: llama3
   fallback_model: mistral
+hybrid:
+  worker_backend: ollama
+  worker_models: [qwen3, mistral]
+  aggregator_backend: claude
+  aggregator_model: sonnet
+  verifier_backend: claude
+  verifier_model: haiku
+  enable_verification: true
+  max_parallel: 3
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -162,6 +180,15 @@ ollama:
 	}
 	if cfg.Ollama.FallbackModel != "mistral" {
 		t.Errorf("Ollama.FallbackModel = %q, want %q", cfg.Ollama.FallbackModel, "mistral")
+	}
+	if cfg.Hybrid.AggregatorModel != "sonnet" {
+		t.Errorf("Hybrid.AggregatorModel = %q, want %q", cfg.Hybrid.AggregatorModel, "sonnet")
+	}
+	if cfg.Hybrid.MaxParallel != 3 {
+		t.Errorf("Hybrid.MaxParallel = %d, want 3", cfg.Hybrid.MaxParallel)
+	}
+	if cfg.Hybrid.VerifierModel != "haiku" {
+		t.Errorf("Hybrid.VerifierModel = %q, want %q", cfg.Hybrid.VerifierModel, "haiku")
 	}
 }
 
@@ -199,6 +226,12 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.Ollama.Host != "http://localhost:11434" {
 		t.Errorf("Ollama.Host = %q, want %q", cfg.Ollama.Host, "http://localhost:11434")
+	}
+	if cfg.Hybrid.MaxParallel != 2 {
+		t.Errorf("Hybrid.MaxParallel = %d, want 2", cfg.Hybrid.MaxParallel)
+	}
+	if cfg.Hybrid.VerifierModel != "sonnet" {
+		t.Errorf("Hybrid.VerifierModel = %q, want %q", cfg.Hybrid.VerifierModel, "sonnet")
 	}
 	if cfg.Scheduler.PollInterval != "60s" {
 		t.Errorf("Scheduler.PollInterval = %q, want %q", cfg.Scheduler.PollInterval, "60s")

@@ -21,6 +21,7 @@ type Task struct {
 type RunResult struct {
 	FilePath string // path to saved file (empty if NoSave)
 	Response string // LLM response text
+	Metadata string // optional provider metadata JSON
 }
 
 var systemPrompts = map[string]string{

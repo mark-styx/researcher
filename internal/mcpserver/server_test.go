@@ -221,6 +221,40 @@ func TestMCPServer_Read_DirectoryTraversal(t *testing.T) {
 	}
 }
 
+func TestMCPServer_Read_PrefixCollisionBlocked(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{}
+	c := setupClient(t, cfg, mock)
+
+	// "<researchDir>-outside" should not be considered inside researchDir.
+	outsideDir := cfg.ResearchDir + "-outside"
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatalf("creating outside dir: %v", err)
+	}
+	outsidePath := filepath.Join(outsideDir, "secret.md")
+	if err := os.WriteFile(outsidePath, []byte("secret"), 0644); err != nil {
+		t.Fatalf("writing outside file: %v", err)
+	}
+
+	rel, err := filepath.Rel(cfg.ResearchDir, outsidePath)
+	if err != nil {
+		t.Fatalf("computing relative path: %v", err)
+	}
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "researcher_read",
+			Arguments: map[string]any{"path": rel},
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling read: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for prefix-collision path escape")
+	}
+}
+
 func TestMCPServer_Read_NotFound(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{}

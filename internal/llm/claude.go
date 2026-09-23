@@ -14,6 +14,7 @@ type Claude struct {
 	Model        string
 	MaxTokens    int     // Deprecated: Claude CLI no longer supports --max-tokens.
 	MaxBudgetUSD float64 // Optional max spend per call (--max-budget-usd).
+	MaxTurns     int     // Max agentic turns when tools are enabled (default 50).
 }
 
 func (c *Claude) Name() string {
@@ -55,7 +56,11 @@ func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
 			for _, ct := range claudeTools {
 				args = append(args, "--allowedTools", ct)
 			}
-			args = append(args, "--max-turns", "25")
+			maxTurns := c.MaxTurns
+			if maxTurns <= 0 {
+				maxTurns = 50
+			}
+			args = append(args, "--max-turns", fmt.Sprintf("%d", maxTurns))
 		}
 	}
 

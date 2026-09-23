@@ -113,6 +113,8 @@ func TestExecute_WebFetch_MissingURL(t *testing.T) {
 }
 
 func TestExecute_WebFetch_Success(t *testing.T) {
+	t.Setenv("RESEARCHER_ALLOW_PRIVATE_URLS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "hello from test server")

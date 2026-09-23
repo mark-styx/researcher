@@ -14,6 +14,7 @@ type Config struct {
 	DefaultBackend string          `yaml:"default_backend"`
 	Claude         ClaudeConfig    `yaml:"claude"`
 	Ollama         OllamaConfig    `yaml:"ollama"`
+	Hybrid         HybridConfig    `yaml:"hybrid"`
 	Tools          ToolsConfig     `yaml:"tools"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
 	Grepai         GrepaiConfig    `yaml:"grepai"`
@@ -29,12 +30,24 @@ type ClaudeConfig struct {
 	Model        string  `yaml:"model"`
 	MaxTokens    int     `yaml:"max_tokens"`     // Deprecated: Claude CLI no longer supports --max-tokens.
 	MaxBudgetUSD float64 `yaml:"max_budget_usd"` // Optional max spend per call (--max-budget-usd).
+	MaxTurns     int     `yaml:"max_turns"`      // Max agentic turns for tool-using calls (--max-turns).
 }
 
 type OllamaConfig struct {
 	Host          string `yaml:"host"`
 	Model         string `yaml:"model"`
 	FallbackModel string `yaml:"fallback_model"`
+}
+
+type HybridConfig struct {
+	WorkerBackend      string   `yaml:"worker_backend"`
+	WorkerModels       []string `yaml:"worker_models"`
+	AggregatorBackend  string   `yaml:"aggregator_backend"`
+	AggregatorModel    string   `yaml:"aggregator_model"`
+	VerifierBackend    string   `yaml:"verifier_backend"`
+	VerifierModel      string   `yaml:"verifier_model"`
+	EnableVerification bool     `yaml:"enable_verification"`
+	MaxParallel        int      `yaml:"max_parallel"`
 }
 
 type SchedulerConfig struct {
@@ -60,7 +73,7 @@ type GrepaiConfig struct {
 const DefaultYAML = `# Research database location
 research_dir: ~/sentinel/research
 
-# Default LLM backend ("claude" or "ollama")
+# Default LLM backend ("claude", "ollama", or "hybrid")
 default_backend: claude
 
 # Claude CLI configuration
@@ -68,12 +81,26 @@ claude:
   binary: claude
   model: opus
   max_tokens: 16000
+  max_turns: 50
 
 # Ollama configuration
 ollama:
   host: http://localhost:11434
   model: qwen3-coder-next
   fallback_model: nemotron
+
+# Hybrid configuration (small local workers + aggregator model)
+hybrid:
+  worker_backend: ollama
+  worker_models:
+    - qwen3-coder-next
+    - nemotron
+  aggregator_backend: claude
+  aggregator_model: opus
+  verifier_backend: claude
+  verifier_model: sonnet
+  enable_verification: true
+  max_parallel: 2
 
 # Tool use (web search, web fetch)
 tools:
@@ -150,11 +177,22 @@ func defaults() *Config {
 			Binary:    "claude",
 			Model:     "opus",
 			MaxTokens: 16000,
+			MaxTurns:  50,
 		},
 		Ollama: OllamaConfig{
 			Host:          "http://localhost:11434",
 			Model:         "qwen3-coder-next",
 			FallbackModel: "nemotron",
+		},
+		Hybrid: HybridConfig{
+			WorkerBackend:      "ollama",
+			WorkerModels:       []string{"qwen3-coder-next", "nemotron"},
+			AggregatorBackend:  "claude",
+			AggregatorModel:    "opus",
+			VerifierBackend:    "claude",
+			VerifierModel:      "sonnet",
+			EnableVerification: true,
+			MaxParallel:        2,
 		},
 		Tools: ToolsConfig{
 			Enabled:       true,

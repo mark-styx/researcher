@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -175,6 +176,22 @@ func TestStore_SetOutputDir(t *testing.T) {
 	}
 }
 
+func TestStore_SetMetadata(t *testing.T) {
+	s := newTestStore(t)
+
+	task := &Task{Type: "dive", Topic: "test", Status: StatusQueued}
+	s.Create(task)
+
+	if err := s.SetMetadata(task.ID, `{"mode":"hybrid"}`); err != nil {
+		t.Fatalf("SetMetadata: %v", err)
+	}
+
+	got, _ := s.Get(task.ID)
+	if got.Metadata == nil || *got.Metadata != `{"mode":"hybrid"}` {
+		t.Errorf("Metadata = %v, want hybrid metadata JSON", got.Metadata)
+	}
+}
+
 func TestStore_Delete(t *testing.T) {
 	s := newTestStore(t)
 
@@ -280,6 +297,61 @@ func TestStore_DueScheduled(t *testing.T) {
 	}
 	if tasks[0].Topic != "due" {
 		t.Errorf("Topic = %q, want %q", tasks[0].Topic, "due")
+	}
+}
+
+func TestStore_ClaimNextQueued(t *testing.T) {
+	s := newTestStore(t)
+	s.Create(&Task{Type: "dive", Topic: "high", Status: StatusQueued, Priority: 10})
+	s.Create(&Task{Type: "dive", Topic: "low", Status: StatusQueued, Priority: 1})
+
+	got, err := s.ClaimNextQueued("owner-a", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextQueued: %v", err)
+	}
+	if got == nil || got.Topic != "high" {
+		t.Fatalf("claimed topic = %v, want high", got)
+	}
+	if got.LeaseOwner == nil || *got.LeaseOwner != "owner-a" {
+		t.Fatalf("lease owner = %v, want owner-a", got.LeaseOwner)
+	}
+
+	// Claimed task should not be claimable again until released/expired.
+	got2, err := s.ClaimNextQueued("owner-b", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextQueued second: %v", err)
+	}
+	if got2 == nil || got2.Topic != "low" {
+		t.Fatalf("second claimed topic = %v, want low", got2)
+	}
+}
+
+func TestStore_ClaimDueScheduledAndRelease(t *testing.T) {
+	s := newTestStore(t)
+	cron := "* * * * *"
+	s.Create(&Task{Type: "watch", Topic: "scheduled-1", Status: StatusScheduled, Cron: &cron})
+	s.Create(&Task{Type: "watch", Topic: "scheduled-2", Status: StatusScheduled, Cron: &cron})
+
+	claimed, err := s.ClaimDueScheduled("owner-a", 30*time.Second, 1)
+	if err != nil {
+		t.Fatalf("ClaimDueScheduled: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("claimed = %d, want 1", len(claimed))
+	}
+	if claimed[0].LeaseOwner == nil || *claimed[0].LeaseOwner != "owner-a" {
+		t.Fatalf("lease owner = %v, want owner-a", claimed[0].LeaseOwner)
+	}
+
+	if err := s.ReleaseLease(claimed[0].ID, "owner-a"); err != nil {
+		t.Fatalf("ReleaseLease: %v", err)
+	}
+	refetched, err := s.Get(claimed[0].ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if refetched.LeaseOwner != nil || refetched.LeaseUntil != nil {
+		t.Fatalf("expected lease cleared, got owner=%v until=%v", refetched.LeaseOwner, refetched.LeaseUntil)
 	}
 }
 

@@ -19,6 +19,16 @@ func defaultTestConfig() *config.Config {
 			Model:         "qwen3-coder-next",
 			FallbackModel: "nemotron",
 		},
+		Hybrid: config.HybridConfig{
+			WorkerBackend:      "ollama",
+			WorkerModels:       []string{"qwen3-coder-next", "nemotron"},
+			AggregatorBackend:  "claude",
+			AggregatorModel:    "opus",
+			VerifierBackend:    "claude",
+			VerifierModel:      "sonnet",
+			EnableVerification: true,
+			MaxParallel:        2,
+		},
 		Tools: config.ToolsConfig{
 			Enabled:       true,
 			MaxIterations: 20,
@@ -102,6 +112,32 @@ func TestNewProvider_OllamaModelOverride(t *testing.T) {
 	}
 	if o.Model != "custom-model" {
 		t.Errorf("Model = %q, want %q", o.Model, "custom-model")
+	}
+}
+
+func TestNewProvider_Hybrid(t *testing.T) {
+	cfg := defaultTestConfig()
+	cfg.DefaultBackend = "hybrid"
+
+	p, err := NewProvider(cfg, "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	h, ok := p.(*Hybrid)
+	if !ok {
+		t.Fatalf("expected *Hybrid, got %T", p)
+	}
+	if h.WorkerBackend != "ollama" {
+		t.Errorf("WorkerBackend = %q, want %q", h.WorkerBackend, "ollama")
+	}
+	if h.AggregatorBackend != "claude" {
+		t.Errorf("AggregatorBackend = %q, want %q", h.AggregatorBackend, "claude")
+	}
+	if h.AggregatorModel != "opus" {
+		t.Errorf("AggregatorModel = %q, want %q", h.AggregatorModel, "opus")
+	}
+	if !h.EnableVerification {
+		t.Error("EnableVerification should be true")
 	}
 }
 

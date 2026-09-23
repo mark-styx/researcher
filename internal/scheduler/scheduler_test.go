@@ -132,6 +132,15 @@ func TestStop_ClosesChannel(t *testing.T) {
 	}
 }
 
+func TestStop_Idempotent(t *testing.T) {
+	s := &Scheduler{
+		logger: log.New(io.Discard, "", 0),
+		stopCh: make(chan struct{}),
+	}
+	s.Stop()
+	s.Stop() // should not panic
+}
+
 func TestRun_StopsOnSignal(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
@@ -202,6 +211,7 @@ func TestPoll_EmptyStore(t *testing.T) {
 		store:  store,
 		logger: log.New(io.Discard, "", 0),
 		stopCh: make(chan struct{}),
+		sem:    make(chan struct{}, 1),
 	}
 
 	// poll should run without error on empty store
@@ -236,6 +246,7 @@ func TestPoll_ScheduledNotDue(t *testing.T) {
 		store:  store,
 		logger: log.New(io.Discard, "", 0),
 		stopCh: make(chan struct{}),
+		sem:    make(chan struct{}, 1),
 	}
 
 	// poll should check the scheduled task, find it not due, and check queued (empty)
@@ -244,7 +255,7 @@ func TestPoll_ScheduledNotDue(t *testing.T) {
 
 func TestStatusConstants(t *testing.T) {
 	// Verify status constants are distinct non-empty strings
-	statuses := []string{StatusQueued, StatusScheduled, StatusRunning, StatusDone, StatusFailed}
+	statuses := []string{StatusQueued, StatusScheduled, StatusPlanned, StatusRunning, StatusDone, StatusFailed}
 	seen := make(map[string]bool)
 	for _, s := range statuses {
 		if s == "" {

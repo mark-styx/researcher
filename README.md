@@ -15,7 +15,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
 - **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
-- **Multi-backend** — supports Claude CLI and Ollama
+- **Multi-backend** — supports Claude CLI, Ollama, and hybrid local-worker aggregation
 
 ## Installation
 
@@ -110,7 +110,7 @@ Config file: `~/.researcher/config.yaml` (created by `researcher init`)
 # Where research output is saved
 research_dir: ~/sentinel/research
 
-# LLM backend: "claude" or "ollama"
+# LLM backend: "claude", "ollama", or "hybrid"
 default_backend: claude
 
 # Claude CLI settings
@@ -124,6 +124,17 @@ ollama:
   host: http://localhost:11434
   model: qwen3-coder-next
   fallback_model: nemotron
+
+# Hybrid settings (fan-out to local models, then aggregate)
+hybrid:
+  worker_backend: ollama
+  worker_models: [qwen3-coder-next, nemotron]
+  aggregator_backend: claude
+  aggregator_model: opus
+  verifier_backend: claude
+  verifier_model: sonnet
+  enable_verification: true
+  max_parallel: 2
 
 # Web search and tool use
 tools:

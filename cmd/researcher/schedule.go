@@ -8,6 +8,7 @@ import (
 
 	"github.com/marklubin/researcher/internal/config"
 	"github.com/marklubin/researcher/internal/scheduler"
+	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -69,7 +70,7 @@ func scheduleListCmd() *cobra.Command {
 }
 
 func scheduleAddCmd() *cobra.Command {
-	var taskType, topic, cron, backend, model string
+	var taskType, topic, cronExpr, backend, model string
 	var priority int
 
 	cmd := &cobra.Command{
@@ -84,8 +85,15 @@ Task types: dive, watch, review, enrich, ask.`,
 			if topic == "" {
 				return fmt.Errorf("--topic is required")
 			}
-			if cron == "" {
+			if cronExpr == "" {
 				return fmt.Errorf("--cron is required")
+			}
+			if err := validateTaskType(taskType); err != nil {
+				return err
+			}
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			if _, err := parser.Parse(cronExpr); err != nil {
+				return fmt.Errorf("invalid --cron expression %q: %w", cronExpr, err)
 			}
 
 			cfg, err := config.Load()
@@ -103,7 +111,7 @@ Task types: dive, watch, review, enrich, ask.`,
 				Type:      taskType,
 				Topic:     topic,
 				Status:    scheduler.StatusScheduled,
-				Cron:      &cron,
+				Cron:      &cronExpr,
 				Priority:  priority,
 				CreatedAt: time.Now(),
 			}
@@ -118,14 +126,14 @@ Task types: dive, watch, review, enrich, ask.`,
 				return fmt.Errorf("creating task: %w", err)
 			}
 
-			fmt.Printf("Scheduled task %s: %s %q (cron: %s)\n", task.ID[:8], taskType, topic, cron)
+			fmt.Printf("Scheduled task %s: %s %q (cron: %s)\n", task.ID[:8], taskType, topic, cronExpr)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&taskType, "type", "watch", "Task type (dive, watch, review, enrich, ask)")
 	cmd.Flags().StringVar(&topic, "topic", "", "Research topic")
-	cmd.Flags().StringVar(&cron, "cron", "", "Cron expression")
+	cmd.Flags().StringVar(&cronExpr, "cron", "", "Cron expression")
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend override")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().IntVar(&priority, "priority", 0, "Task priority (higher = sooner)")

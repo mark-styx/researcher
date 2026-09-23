@@ -1,7 +1,7 @@
 # Research database location
 research_dir: ~/sentinel/research
 
-# Default LLM backend ("claude" or "ollama")
+# Default LLM backend ("claude", "ollama", or "hybrid")
 default_backend: claude
 
 # Claude CLI configuration
@@ -15,6 +15,19 @@ ollama:
   host: http://localhost:11434
   model: qwen3-coder-next
   fallback_model: nemotron
+
+# Hybrid configuration (small local workers + aggregator model)
+hybrid:
+  worker_backend: ollama
+  worker_models:
+    - qwen3-coder-next
+    - nemotron
+  aggregator_backend: claude
+  aggregator_model: opus
+  verifier_backend: claude
+  verifier_model: sonnet
+  enable_verification: true
+  max_parallel: 2
 
 # Tool use (web search, web fetch)
 tools:

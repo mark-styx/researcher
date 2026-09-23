@@ -65,7 +65,7 @@ a document from the research directory.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	return cmd
 }
