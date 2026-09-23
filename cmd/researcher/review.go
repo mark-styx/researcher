@@ -12,14 +12,16 @@ import (
 )
 
 func reviewCmd() *cobra.Command {
-	var backend, model, sources string
+	var backend, model, sources, maxAge string
+	var noResearch bool
 
 	cmd := &cobra.Command{
 		Use:   "review <topic>",
 		Short: "Literature review / synthesis on a topic",
 		Long: `Synthesize a literature review on a topic. Optionally provide source files
-to include as context for the review. Output is saved as markdown in the
-research directory.`,
+to include as context for the review. Existing research on the topic is also
+searched via grepai and given to the LLM as background, unless --no-research
+is set. Output is saved as markdown in the research directory.`,
 		Example: `  researcher review "machine learning optimization"
   researcher review "transformer architectures" --sources paper1.md,paper2.md`,
 		GroupID: "research",
@@ -44,9 +46,11 @@ research directory.`,
 
 			runner := research.NewRunner(cfg, provider)
 			result, err := runner.Run(context.Background(), research.Task{
-				Type:    research.TypeReview,
-				Topic:   topic,
-				Sources: sourceFiles,
+				Type:       research.TypeReview,
+				Topic:      topic,
+				Sources:    sourceFiles,
+				NoResearch: noResearch,
+				MaxAge:     maxAge,
 			})
 			if err != nil {
 				return fmt.Errorf("review failed: %w", err)
@@ -60,5 +64,7 @@ research directory.`,
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().StringVar(&sources, "sources", "", "Comma-separated source files")
+	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
 	return cmd
 }

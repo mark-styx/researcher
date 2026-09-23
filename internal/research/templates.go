@@ -90,13 +90,26 @@ Structure your output as a well-organized markdown document with:
 Be balanced and objective. Cite real benchmarks, community data, or authoritative sources where relevant.`,
 }
 
-func SystemPrompt(taskType string) string {
-	if p, ok := systemPrompts[taskType]; ok {
-		return p
-	}
-	return `You are a knowledgeable research assistant. Provide clear, accurate, and well-structured answers.
+// SystemPrompt returns the system prompt for a task type. If researchContext
+// is non-empty, it's appended as a background section the LLM should draw on
+// and extend, rather than re-deriving from scratch via web search alone.
+func SystemPrompt(taskType string, researchContext string) string {
+	base, ok := systemPrompts[taskType]
+	if !ok {
+		base = `You are a knowledgeable research assistant. Provide clear, accurate, and well-structured answers.
 
 Use web_search when you need current information beyond your training data. Use web_fetch to read articles or documentation at specific URLs.`
+	}
+	if researchContext == "" {
+		return base
+	}
+	return base + `
+
+## Existing Research
+
+` + researchContext + `
+
+Treat the existing research above as background you already have, not a source to re-derive. Reference it directly where relevant, flag anywhere it looks stale or incomplete, and use web_search/web_fetch to fill gaps or verify claims it doesn't cover.`
 }
 
 // AskSystemPrompt returns a system prompt for the ask command.

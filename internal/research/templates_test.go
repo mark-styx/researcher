@@ -9,7 +9,7 @@ func TestSystemPrompt_KnownTypes(t *testing.T) {
 	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich, TypeCompare}
 	for _, typ := range types {
 		t.Run(typ, func(t *testing.T) {
-			p := SystemPrompt(typ)
+			p := SystemPrompt(typ, "")
 			if p == "" {
 				t.Error("expected non-empty prompt")
 			}
@@ -21,7 +21,7 @@ func TestSystemPrompt_KnownTypes(t *testing.T) {
 }
 
 func TestSystemPrompt_Ask(t *testing.T) {
-	p := SystemPrompt(TypeAsk)
+	p := SystemPrompt(TypeAsk, "")
 	if p == "" {
 		t.Error("expected non-empty prompt")
 	}
@@ -32,9 +32,27 @@ func TestSystemPrompt_Ask(t *testing.T) {
 }
 
 func TestSystemPrompt_Unknown(t *testing.T) {
-	p := SystemPrompt("bogus")
+	p := SystemPrompt("bogus", "")
 	if !strings.Contains(p, "knowledgeable research assistant") {
 		t.Error("expected fallback prompt for unknown type")
+	}
+}
+
+func TestSystemPrompt_WithResearchContext(t *testing.T) {
+	ctx := "--- Source: agents.md ---\nSome research about agents\n"
+	p := SystemPrompt(TypeDive, ctx)
+	if !strings.Contains(p, "Existing Research") {
+		t.Error("expected 'Existing Research' section when context is non-empty")
+	}
+	if !strings.Contains(p, "agents.md") {
+		t.Error("expected research context to be included")
+	}
+}
+
+func TestSystemPrompt_NoResearchContext(t *testing.T) {
+	p := SystemPrompt(TypeDive, "")
+	if strings.Contains(p, "Existing Research") {
+		t.Error("should not contain 'Existing Research' section when context is empty")
 	}
 }
 
@@ -72,7 +90,7 @@ func TestSystemPrompt_ContainsToolInstructions(t *testing.T) {
 	types := []string{TypeDive, TypeWatch, TypeReview, TypeEnrich, TypeCompare}
 	for _, typ := range types {
 		t.Run(typ, func(t *testing.T) {
-			p := SystemPrompt(typ)
+			p := SystemPrompt(typ, "")
 			if !strings.Contains(p, "web_search") {
 				t.Error("expected prompt to mention web_search")
 			}

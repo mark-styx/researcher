@@ -12,7 +12,8 @@ import (
 )
 
 func compareCmd() *cobra.Command {
-	var backend, model, sources string
+	var backend, model, sources, maxAge string
+	var noResearch bool
 
 	cmd := &cobra.Command{
 		Use:   "compare <topicA> <topicB>",
@@ -56,9 +57,11 @@ Document comparison: use --sources to compare two existing research documents.`,
 
 			runner := research.NewRunner(cfg, provider)
 			result, err := runner.Run(context.Background(), research.Task{
-				Type:    research.TypeCompare,
-				Topic:   topic,
-				Sources: sourceFiles,
+				Type:       research.TypeCompare,
+				Topic:      topic,
+				Sources:    sourceFiles,
+				NoResearch: noResearch,
+				MaxAge:     maxAge,
 			})
 			if err != nil {
 				return fmt.Errorf("compare failed: %w", err)
@@ -72,5 +75,7 @@ Document comparison: use --sources to compare two existing research documents.`,
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().StringVar(&sources, "sources", "", "Comma-separated paths to two documents to compare")
+	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
 	return cmd
 }

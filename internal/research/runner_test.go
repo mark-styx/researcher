@@ -247,11 +247,61 @@ func TestRunner_Dive(t *testing.T) {
 	}
 }
 
+func TestRunner_Dive_WithResearchContext(t *testing.T) {
+	cfg := testConfig(t)
+
+	researchDir := cfg.ResearchDir
+	subDir := filepath.Join(researchDir, "rust")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(subDir, "notes.md"), []byte("# Rust notes\nOwnership and borrowing."), 0644)
+
+	scriptDir := t.TempDir()
+	results := `[{"file_path":"rust/notes.md","start_line":1,"end_line":2,"score":0.9,"content":"Rust notes"}]`
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	mock := &mockProvider{responses: []string{
+		`{"category": "programming", "filename": "rust-language"}`,
+		"Deep dive content",
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{Type: TypeDive, Topic: "Rust Language"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(mock.calls[1].SystemPrompt, "Existing Research") {
+		t.Error("dive system prompt should contain 'Existing Research' section")
+	}
+	if !strings.Contains(mock.calls[1].SystemPrompt, "notes.md") {
+		t.Error("dive system prompt should reference the existing research file")
+	}
+}
+
+func TestRunner_Dive_NoResearch(t *testing.T) {
+	cfg := testConfig(t)
+	mock := &mockProvider{responses: []string{
+		`{"category": "programming", "filename": "rust-language"}`,
+		"Deep dive content",
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{Type: TypeDive, Topic: "Rust Language", NoResearch: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(mock.calls[1].SystemPrompt, "Existing Research") {
+		t.Error("dive system prompt should not contain research context when --no-research is set")
+	}
+}
+
 func TestRunner_Watch(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "llm", "filename": "ai-news"}`, // categorize call
-		"Latest updates",                               // content call
+		"Latest updates", // content call
 	}}
 	r := NewRunner(cfg, mock)
 
@@ -277,9 +327,9 @@ func TestRunner_Watch_Appends(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "general", "filename": "test-topic"}`, // categorize call 1
-		"update 1",                                           // content call 1
+		"update 1", // content call 1
 		`{"category": "general", "filename": "test-topic"}`, // categorize call 2
-		"update 2",                                           // content call 2
+		"update 2", // content call 2
 	}}
 	r := NewRunner(cfg, mock)
 
@@ -305,7 +355,7 @@ func TestRunner_Review(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "llm", "filename": "llm-agents"}`, // categorize call
-		"Synthesis content",                               // content call
+		"Synthesis content",                             // content call
 	}}
 	r := NewRunner(cfg, mock)
 
@@ -325,7 +375,7 @@ func TestRunner_Review_WithSources(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "general", "filename": "test-review"}`, // categorize call
-		"Combined review",                                     // content call
+		"Combined review", // content call
 	}}
 	r := NewRunner(cfg, mock)
 
@@ -348,6 +398,108 @@ func TestRunner_Review_WithSources(t *testing.T) {
 	// The content call is the second one (index 1)
 	if !strings.Contains(mock.calls[1].UserPrompt, "source document content") {
 		t.Error("source content not included in prompt")
+	}
+}
+
+func TestRunner_Review_WithResearchContext(t *testing.T) {
+	cfg := testConfig(t)
+
+	researchDir := cfg.ResearchDir
+	subDir := filepath.Join(researchDir, "llm")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(subDir, "agents.md"), []byte("# Agents\nBackground on agents."), 0644)
+
+	scriptDir := t.TempDir()
+	results := `[{"file_path":"llm/agents.md","start_line":1,"end_line":2,"score":0.9,"content":"Agents"}]`
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	mock := &mockProvider{responses: []string{
+		`{"category": "llm", "filename": "llm-agents"}`,
+		"Synthesis content",
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{Type: TypeReview, Topic: "LLM Agents"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(mock.calls[1].SystemPrompt, "Existing Research") {
+		t.Error("review system prompt should contain 'Existing Research' section")
+	}
+}
+
+func TestRunner_Compare_Topics_WithResearchContext(t *testing.T) {
+	cfg := testConfig(t)
+
+	researchDir := cfg.ResearchDir
+	subDir := filepath.Join(researchDir, "frameworks")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(subDir, "notes.md"), []byte("# Frameworks\nReact vs Vue notes."), 0644)
+
+	scriptDir := t.TempDir()
+	results := `[{"file_path":"frameworks/notes.md","start_line":1,"end_line":2,"score":0.9,"content":"Frameworks"}]`
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	mock := &mockProvider{responses: []string{
+		`{"category": "frameworks", "filename": "react-vs-vue"}`,
+		"Comparison content here",
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{Type: TypeCompare, Topic: "React vs Vue"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(mock.calls[1].SystemPrompt, "Existing Research") {
+		t.Error("compare system prompt should contain 'Existing Research' section")
+	}
+}
+
+func TestRunner_Compare_Documents_SkipsResearchContext(t *testing.T) {
+	cfg := testConfig(t)
+
+	// If gatherResearchContext ran with the "document comparison" placeholder
+	// topic, this fake grepai would still return a fresh hit — proving the
+	// document-comparison path must skip the search entirely, not just
+	// happen to find nothing.
+	researchDir := cfg.ResearchDir
+	os.MkdirAll(filepath.Join(researchDir, "misc"), 0755)
+	os.WriteFile(filepath.Join(researchDir, "misc", "unrelated.md"), []byte("unrelated"), 0644)
+	scriptDir := t.TempDir()
+	results := `[{"file_path":"misc/unrelated.md","start_line":1,"end_line":1,"score":0.9,"content":"unrelated"}]`
+	script := filepath.Join(scriptDir, "fake-grepai")
+	os.WriteFile(script, []byte("#!/bin/sh\ncat <<'JSONEOF'\n"+results+"\nJSONEOF\n"), 0755)
+	cfg.Grepai = config.GrepaiConfig{Binary: script}
+	cfg.Ask = config.AskConfig{MaxAge: "90d"}
+
+	tmpDir := t.TempDir()
+	src1 := filepath.Join(tmpDir, "doc1.md")
+	src2 := filepath.Join(tmpDir, "doc2.md")
+	os.WriteFile(src1, []byte("Content of document one"), 0644)
+	os.WriteFile(src2, []byte("Content of document two"), 0644)
+
+	mock := &mockProvider{responses: []string{
+		`{"category": "comparisons", "filename": "doc-comparison"}`,
+		"Document comparison result",
+	}}
+	r := NewRunner(cfg, mock)
+
+	_, err := r.Run(context.Background(), Task{
+		Type:    TypeCompare,
+		Topic:   "document comparison",
+		Sources: []string{src1, src2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(mock.calls[1].SystemPrompt, "Existing Research") {
+		t.Error("document-comparison mode should not gather research context from the placeholder topic")
 	}
 }
 
@@ -407,7 +559,7 @@ func TestRunner_Compare_Topics(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "frameworks", "filename": "react-vs-vue"}`, // categorize call
-		"Comparison content here", // content call
+		"Comparison content here",                                // content call
 	}}
 	r := NewRunner(cfg, mock)
 
@@ -446,7 +598,7 @@ func TestRunner_Compare_Documents(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{responses: []string{
 		`{"category": "comparisons", "filename": "doc-comparison"}`, // categorize call
-		"Document comparison result", // content call
+		"Document comparison result",                                // content call
 	}}
 	r := NewRunner(cfg, mock)
 

@@ -11,7 +11,8 @@ import (
 )
 
 func diveCmd() *cobra.Command {
-	var backend, model string
+	var backend, model, maxAge string
+	var noResearch bool
 
 	cmd := &cobra.Command{
 		Use:   "dive <topic>",
@@ -19,9 +20,14 @@ func diveCmd() *cobra.Command {
 		Long: `Generate a comprehensive research report on any topic. The report includes
 an executive summary, key concepts, current state of the art, major players,
 challenges, future directions, and references. Output is saved as markdown
-in the research directory.`,
+in the research directory.
+
+By default, existing research on the topic is searched via grepai and given
+to the LLM as background before it starts. Use --no-research to skip this,
+or --max-age to control the freshness filter.`,
 		Example: `  researcher dive "quantum computing"
-  researcher dive "CRISPR gene editing" --backend ollama --model llama3`,
+  researcher dive "CRISPR gene editing" --backend ollama --model llama3
+  researcher dive "topic already covered elsewhere" --no-research`,
 		GroupID: "research",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,8 +45,10 @@ in the research directory.`,
 
 			runner := research.NewRunner(cfg, provider)
 			result, err := runner.Run(context.Background(), research.Task{
-				Type:  research.TypeDive,
-				Topic: topic,
+				Type:       research.TypeDive,
+				Topic:      topic,
+				NoResearch: noResearch,
+				MaxAge:     maxAge,
 			})
 			if err != nil {
 				return fmt.Errorf("research failed: %w", err)
@@ -53,5 +61,7 @@ in the research directory.`,
 
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
+	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
 	return cmd
 }

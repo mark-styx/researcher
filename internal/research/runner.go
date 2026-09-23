@@ -146,8 +146,13 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 
 	prompt := fmt.Sprintf("Produce a comprehensive deep-dive research report on: %s", task.Topic)
 
+	researchContext := ""
+	if !task.NoResearch {
+		researchContext = r.gatherResearchContext(task)
+	}
+
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeDive),
+		SystemPrompt: SystemPrompt(TypeDive, researchContext),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
@@ -181,7 +186,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
 
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeWatch),
+		SystemPrompt: SystemPrompt(TypeWatch, ""),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
@@ -234,8 +239,13 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 		promptBuilder.WriteString(fmt.Sprintf("\n\n--- Source: %s ---\n%s\n", filepath.Base(src), string(content)))
 	}
 
+	researchContext := ""
+	if !task.NoResearch {
+		researchContext = r.gatherResearchContext(task)
+	}
+
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeReview),
+		SystemPrompt: SystemPrompt(TypeReview, researchContext),
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
@@ -269,7 +279,7 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 	prompt := fmt.Sprintf("Enrich and expand the following research document:\n\n%s", string(content))
 
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeEnrich),
+		SystemPrompt: SystemPrompt(TypeEnrich, ""),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
@@ -318,8 +328,15 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 		promptBuilder.WriteString(fmt.Sprintf("Produce a comprehensive comparative analysis of: %s", task.Topic))
 	}
 
+	// In document-comparison mode (--sources) task.Topic is a placeholder
+	// ("document comparison"), not a real query, so skip the context search.
+	researchContext := ""
+	if !task.NoResearch && len(task.Sources) < 2 {
+		researchContext = r.gatherResearchContext(task)
+	}
+
 	resp, err := r.provider.Complete(ctx, llm.Request{
-		SystemPrompt: SystemPrompt(TypeCompare),
+		SystemPrompt: SystemPrompt(TypeCompare, researchContext),
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),

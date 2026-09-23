@@ -86,6 +86,8 @@ func diveTool() mcp.Tool {
 	return mcp.NewTool("researcher_dive",
 		mcp.WithDescription("Generate a comprehensive deep-dive research report on a topic. Saves to research directory."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to research")),
+		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
 	)
 }
 
@@ -98,9 +100,11 @@ func diveHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFu
 
 		runner := research.NewRunner(cfg, provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:  research.TypeDive,
-			Topic: topic,
-			Quiet: true,
+			Type:       research.TypeDive,
+			Topic:      topic,
+			Quiet:      true,
+			NoResearch: req.GetBool("no_research", false),
+			MaxAge:     req.GetString("max_age", ""),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("dive failed: %v", err)), nil
@@ -120,6 +124,8 @@ func reviewTool() mcp.Tool {
 		mcp.WithDescription("Create a literature review / synthesis on a topic. Optionally provide source file paths."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to review")),
 		mcp.WithString("sources", mcp.Description("Comma-separated file paths to include as source material")),
+		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
 	)
 }
 
@@ -137,10 +143,12 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 
 		runner := research.NewRunner(cfg, provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:    research.TypeReview,
-			Topic:   topic,
-			Sources: sources,
-			Quiet:   true,
+			Type:       research.TypeReview,
+			Topic:      topic,
+			Sources:    sources,
+			Quiet:      true,
+			NoResearch: req.GetBool("no_research", false),
+			MaxAge:     req.GetString("max_age", ""),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("review failed: %v", err)), nil
@@ -161,6 +169,8 @@ func compareTool() mcp.Tool {
 		mcp.WithString("subject1", mcp.Required(), mcp.Description("First subject/topic to compare")),
 		mcp.WithString("subject2", mcp.Required(), mcp.Description("Second subject/topic to compare")),
 		mcp.WithString("sources", mcp.Description("Comma-separated paths to two existing documents to compare instead of topics")),
+		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
 	)
 }
 
@@ -184,10 +194,12 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 
 		runner := research.NewRunner(cfg, provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:    research.TypeCompare,
-			Topic:   topic,
-			Sources: sources,
-			Quiet:   true,
+			Type:       research.TypeCompare,
+			Topic:      topic,
+			Sources:    sources,
+			Quiet:      true,
+			NoResearch: req.GetBool("no_research", false),
+			MaxAge:     req.GetString("max_age", ""),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("compare failed: %v", err)), nil
