@@ -47,7 +47,14 @@ the research directory, and optionally sets up grepai indexing.`,
 			fmt.Println("Research dir:", researchDir)
 
 			// Set up grepai if auto_index is enabled
-			if cfg.Grepai.AutoIndex {
+			if cfg.Grepai.Workspace != "" {
+				// research_dir is registered as a project inside a grepai workspace.
+				// The workspace's own daemon indexes it; bootstrapping a standalone
+				// GOB index or a second background watcher here would create a
+				// duplicate index that search never queries (search always passes
+				// --workspace once configured).
+				fmt.Printf("Grepai workspace mode: %s/%s. Skipping standalone init and watcher.\n", cfg.Grepai.Workspace, cfg.Grepai.Project)
+			} else if cfg.Grepai.AutoIndex {
 				grepaiDir := filepath.Join(researchDir, ".grepai")
 				if _, err := os.Stat(grepaiDir); os.IsNotExist(err) {
 					fmt.Println("Initializing grepai index...")

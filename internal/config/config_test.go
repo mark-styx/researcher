@@ -215,4 +215,36 @@ func TestDefaults(t *testing.T) {
 	if cfg.Grepai.Binary != "grepai" {
 		t.Errorf("Grepai.Binary = %q, want %q", cfg.Grepai.Binary, "grepai")
 	}
+	if cfg.Grepai.Workspace != "" {
+		t.Errorf("Grepai.Workspace = %q, want empty default", cfg.Grepai.Workspace)
+	}
+	if cfg.Grepai.Project != "" {
+		t.Errorf("Grepai.Project = %q, want empty default", cfg.Grepai.Project)
+	}
+}
+
+func TestLoad_GrepaiWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHER_CONFIG_DIR", dir)
+
+	yaml := `grepai:
+  auto_index: true
+  binary: grepai
+  workspace: sentinel-personal
+  project: research
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.Grepai.Workspace != "sentinel-personal" {
+		t.Errorf("Grepai.Workspace = %q, want %q", cfg.Grepai.Workspace, "sentinel-personal")
+	}
+	if cfg.Grepai.Project != "research" {
+		t.Errorf("Grepai.Project = %q, want %q", cfg.Grepai.Project, "research")
+	}
 }

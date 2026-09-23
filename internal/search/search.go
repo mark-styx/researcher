@@ -28,7 +28,7 @@ type SearchResult struct {
 func Query(cfg *config.Config, query string, limit int) (string, error) {
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
-	args := []string{"search", query, "--limit", strconv.Itoa(limit)}
+	args := append([]string{"search", query, "--limit", strconv.Itoa(limit)}, workspaceArgs(cfg)...)
 	cmd := exec.Command(cfg.Grepai.Binary, args...)
 	cmd.Dir = researchDir
 
@@ -47,7 +47,7 @@ func Query(cfg *config.Config, query string, limit int) (string, error) {
 func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, error) {
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
-	args := []string{"search", query, "--limit", strconv.Itoa(limit), "--json"}
+	args := append([]string{"search", query, "--limit", strconv.Itoa(limit), "--json"}, workspaceArgs(cfg)...)
 	cmd := exec.Command(cfg.Grepai.Binary, args...)
 	cmd.Dir = researchDir
 
@@ -65,6 +65,20 @@ func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, err
 	}
 
 	return results, nil
+}
+
+// workspaceArgs returns the --workspace/--project flags for a grepai search
+// invocation when the research dir is registered inside a grepai workspace.
+// Returns nil for plain (non-workspace) grepai projects.
+func workspaceArgs(cfg *config.Config) []string {
+	if cfg.Grepai.Workspace == "" {
+		return nil
+	}
+	args := []string{"--workspace", cfg.Grepai.Workspace}
+	if cfg.Grepai.Project != "" {
+		args = append(args, "--project", cfg.Grepai.Project)
+	}
+	return args
 }
 
 // ParseMaxAge parses a duration string like "90d", "2w", "24h" into time.Duration.

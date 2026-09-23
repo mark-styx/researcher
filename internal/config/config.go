@@ -53,6 +53,8 @@ type ToolsConfig struct {
 type GrepaiConfig struct {
 	AutoIndex bool   `yaml:"auto_index"`
 	Binary    string `yaml:"binary"`
+	Workspace string `yaml:"workspace"`
+	Project   string `yaml:"project"`
 }
 
 const DefaultYAML = `# Research database location
@@ -87,9 +89,15 @@ scheduler:
   pid_file: ~/.researcher/scheduler.pid
 
 # grepai
+# If this research_dir is registered as a project inside a grepai workspace
+# (see "grepai workspace list"), set workspace/project so search hits the
+# workspace's shared index instead of a standalone local one. Leave both
+# blank for a plain, non-workspace grepai project.
 grepai:
   auto_index: true
   binary: grepai
+  workspace: ""
+  project: ""
 
 # ask command
 ask:

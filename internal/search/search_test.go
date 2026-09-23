@@ -65,6 +65,59 @@ func TestQuery_WithEchoBinary(t *testing.T) {
 	}
 }
 
+func TestQuery_WorkspaceArgs(t *testing.T) {
+	dir := t.TempDir()
+
+	script := filepath.Join(dir, "fake-grepai")
+	err := os.WriteFile(script, []byte("#!/bin/sh\necho \"args: $*\"\n"), 0755)
+	if err != nil {
+		t.Fatalf("writing script: %v", err)
+	}
+
+	cfg := &config.Config{
+		ResearchDir: dir,
+		Grepai: config.GrepaiConfig{
+			Binary:    script,
+			Workspace: "sentinel-personal",
+			Project:   "research",
+		},
+	}
+
+	out, err := Query(cfg, "my query", 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "--workspace sentinel-personal") {
+		t.Errorf("output = %q, expected to contain '--workspace sentinel-personal'", out)
+	}
+	if !strings.Contains(out, "--project research") {
+		t.Errorf("output = %q, expected to contain '--project research'", out)
+	}
+}
+
+func TestQuery_NoWorkspaceArgs(t *testing.T) {
+	dir := t.TempDir()
+
+	script := filepath.Join(dir, "fake-grepai")
+	err := os.WriteFile(script, []byte("#!/bin/sh\necho \"args: $*\"\n"), 0755)
+	if err != nil {
+		t.Fatalf("writing script: %v", err)
+	}
+
+	cfg := &config.Config{
+		ResearchDir: dir,
+		Grepai:      config.GrepaiConfig{Binary: script},
+	}
+
+	out, err := Query(cfg, "my query", 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(out, "--workspace") {
+		t.Errorf("output = %q, expected no --workspace flag when unset", out)
+	}
+}
+
 func TestQueryJSON(t *testing.T) {
 	dir := t.TempDir()
 	researchDir := t.TempDir()
