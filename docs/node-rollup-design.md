@@ -1,11 +1,16 @@
-# Node rollup: design (not yet built)
+# Node rollup: design (built)
 
-Phase 5 of the researchguy plan. Gives the currently-dormant scheduler a job:
-periodically re-summarize graph nodes whose linked content has changed,
-instead of leaving `Summary` stuck at whatever it was when the node was
-created. Deferred to a design pass before implementation because it's an
-LLM writing to stored knowledge on a timer, not a bounded one-shot command
-like everything else built so far.
+Phase 5 of the researchguy plan. Gives the scheduler a job: periodically
+re-summarize graph nodes whose linked content has changed, instead of
+leaving `Summary` stuck at whatever it was when the node was created.
+Deferred to a design pass before implementation because it's an LLM writing
+to stored knowledge on a timer, not a bounded one-shot command like
+everything else built so far.
+
+Implemented as designed below: `graph.Store.ListStale` (`internal/graph/store.go`),
+the `internal/rollup` package (poll pass + type-specific resummarization
+prompt), the `graph.rollup` config section, and `researchguy graph approve`.
+Off by default (`graph.rollup.enabled: false`) until it's had real use.
 
 ## Trigger condition
 

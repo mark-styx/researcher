@@ -52,3 +52,11 @@ grepai:
   binary: grepai
   workspace: ""
   project: ""
+
+# Knowledge graph rollup: periodically re-summarizes nodes whose linked file
+# changed since it was last summarized. Off by default — proposals require
+# "researchguy graph approve", never a silent overwrite.
+graph:
+  rollup:
+    enabled: false
+    max_per_cycle: 5

@@ -81,8 +81,17 @@ researchguy search "entanglement"
 | `graph show <id>` | Show a node's details and its connected edges |
 | `graph list [--type <type>]` | List nodes, optionally filtered by type |
 | `graph export [--out <path>]` | Export the full graph as JSON for visualization |
+| `graph approve <id>` | Approve a pending rollup resummarization (see below) |
 
 Node structure/relationships live in `~/.researchguy/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
+
+### Node rollup (keeping summaries fresh)
+
+A node's `Summary` is set at creation time and otherwise static. With `graph.rollup.enabled: true` in config, `researchguy daemon start` also polls for nodes whose linked file has changed since it was last summarized (mtime-based) and re-summarizes them with the LLM — capped at `graph.rollup.max_per_cycle` per poll so one tick can't burn through LLM budget resummarizing everything at once.
+
+Rollup never overwrites `Summary` directly: a proposal is written to the node's metadata and the node is flagged `REVIEW` in `graph list`/`graph show`. Run `researchguy graph approve <id>` to accept it. Nodes whose linked file has disappeared are flagged `ORPHANED` instead (and left alone — no LLM call, nothing to resummarize from).
+
+Off by default until it's had real use.
 
 ### Project Management
 
@@ -176,6 +185,12 @@ grepai:
   # shared index instead of bootstrapping a separate standalone one.
   workspace: ""
   project: ""
+
+# Knowledge graph rollup (off by default)
+graph:
+  rollup:
+    enabled: false
+    max_per_cycle: 5
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.

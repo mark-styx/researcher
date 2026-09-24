@@ -5,6 +5,9 @@ markdown research reports via LLM backends (claude, ollama, hybrid), stores
 them under `research_dir`, and indexes them via grepai. Structured
 relationships (entities, sources, claims, funding-pattern observations,
 reports) live as nodes/edges in `~/.researchguy/tasks.db` (`internal/graph`).
+With `graph.rollup.enabled: true`, `researchguy daemon start` also
+periodically re-summarizes nodes whose linked file changed (`internal/rollup`)
+— proposals go to `graph approve`, never a silent overwrite. Off by default.
 
 ## Before generating new research on a topic
 
