@@ -79,6 +79,12 @@ func TestDefaultYAML_Parses(t *testing.T) {
 	if cfg.Tools.MaxIterations != 20 {
 		t.Errorf("Tools.MaxIterations = %d, want 20", cfg.Tools.MaxIterations)
 	}
+	if cfg.Graph.Rollup.Enabled {
+		t.Error("expected Graph.Rollup.Enabled = false by default")
+	}
+	if cfg.Graph.Rollup.MaxPerCycle != 5 {
+		t.Errorf("Graph.Rollup.MaxPerCycle = %d, want 5", cfg.Graph.Rollup.MaxPerCycle)
+	}
 }
 
 func TestDir_EnvOverride(t *testing.T) {

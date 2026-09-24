@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/marklubin/researchguy/internal/config"
@@ -28,7 +29,22 @@ node content lives in markdown files under the research directory.`,
 	cmd.AddCommand(graphShowCmd())
 	cmd.AddCommand(graphListCmd())
 	cmd.AddCommand(graphExportCmd())
+	cmd.AddCommand(graphApproveCmd())
 	return cmd
+}
+
+// nodeFlags renders a node's rollup-related metadata flags for display in
+// "graph list"/"graph show": REVIEW for a pending rollup resummarization,
+// ORPHANED for a node whose linked file no longer exists.
+func nodeFlags(n *graph.Node) string {
+	var flags []string
+	if needsReview, _ := n.Metadata["needs_review"].(bool); needsReview {
+		flags = append(flags, "REVIEW")
+	}
+	if orphaned, _ := n.Metadata["orphaned"].(bool); orphaned {
+		flags = append(flags, "ORPHANED")
+	}
+	return strings.Join(flags, ",")
 }
 
 func openGraphStore() (*config.Config, *graph.Store, error) {
@@ -143,6 +159,17 @@ func graphShowCmd() *cobra.Command {
 			}
 			fmt.Printf("Updated: %s\n", n.UpdatedAt.Format("2006-01-02 15:04"))
 
+			if orphaned, _ := n.Metadata["orphaned"].(bool); orphaned {
+				fmt.Printf("\n[ORPHANED] Linked file %q no longer exists.\n", n.Path)
+			}
+			if needsReview, _ := n.Metadata["needs_review"].(bool); needsReview {
+				fmt.Println("\n[PENDING REVIEW] Rollup proposed an updated summary:")
+				if pending, ok := n.Metadata["pending_summary"].(string); ok {
+					fmt.Printf("  %s\n", pending)
+				}
+				fmt.Printf("  Run: researchguy graph approve %s\n", n.ID)
+			}
+
 			out, err := store.ListEdges(graph.EdgeFilter{FromID: id})
 			if err != nil {
 				return fmt.Errorf("listing outgoing edges: %w", err)
@@ -199,10 +226,10 @@ func graphListCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tTYPE\tTITLE\tUPDATED")
+			fmt.Fprintln(w, "ID\tTYPE\tTITLE\tUPDATED\tFLAGS")
 			for _, n := range nodes {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					n.ID[:8], n.Type, n.Title, n.UpdatedAt.Format("2006-01-02"))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					n.ID[:8], n.Type, n.Title, n.UpdatedAt.Format("2006-01-02"), nodeFlags(n))
 			}
 			w.Flush()
 			return nil
@@ -263,4 +290,46 @@ func graphExportCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&outPath, "out", "", "Write JSON to this path instead of stdout")
 	return cmd
+}
+
+func graphApproveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "approve <node-id>",
+		Short: "Approve a pending rollup resummarization",
+		Long: `The background rollup pass (see "researchguy daemon start" and the
+graph.rollup config section) never overwrites a node's Summary directly.
+Instead it writes a proposed resummarization to the node's metadata and
+flags it REVIEW. "graph approve" copies that proposal into Summary, clears
+the flag, and bumps updated_at. Use "graph show <id>" first to see what
+changed.`,
+		Args:    cobra.ExactArgs(1),
+		Example: `  researchguy graph approve 3f9c2e1a-...`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, store, err := openGraphStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			id := args[0]
+			n, err := store.GetNode(id)
+			if err != nil {
+				return fmt.Errorf("node not found: %w", err)
+			}
+
+			pending, _ := n.Metadata["pending_summary"].(string)
+			if pending == "" {
+				return fmt.Errorf("node %s has no pending_summary to approve", id)
+			}
+
+			n.Summary = pending
+			delete(n.Metadata, "pending_summary")
+			delete(n.Metadata, "needs_review")
+			if err := store.UpdateNode(n); err != nil {
+				return fmt.Errorf("approving node: %w", err)
+			}
+			fmt.Printf("Approved: %s\n", n.ID)
+			return nil
+		},
+	}
 }

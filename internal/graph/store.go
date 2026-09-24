@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -222,6 +223,50 @@ func (s *Store) ListNodes(typeFilter string) ([]*Node, error) {
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// ListStale scans nodes that have a Path and classifies each against
+// researchDir: a node whose linked file's mtime is newer than the node's
+// UpdatedAt is stale (new information arrived since the last summary); a
+// node whose linked file no longer exists is orphaned. Thin nodes (empty
+// Path) are excluded from both — they have nothing to re-summarize from.
+// Nodes already flagged orphaned are skipped: there's nothing to resummarize
+// until the file reappears, at which point a fresh mtime makes it stale again.
+func (s *Store) ListStale(researchDir string) (stale, orphaned []*Node, err error) {
+	rows, err := s.db.Query(`SELECT id, type, title, path, summary, created_at, updated_at, metadata FROM nodes WHERE path IS NOT NULL AND path != ''`)
+	if err != nil {
+		return nil, nil, err
+	}
+	var candidates []*Node
+	for rows.Next() {
+		n, serr := scanNodeRows(rows)
+		if serr != nil {
+			rows.Close()
+			return nil, nil, serr
+		}
+		candidates = append(candidates, n)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	rows.Close()
+
+	for _, n := range candidates {
+		alreadyOrphaned, _ := n.Metadata["orphaned"].(bool)
+
+		info, statErr := os.Stat(filepath.Join(researchDir, n.Path))
+		if statErr != nil {
+			if !alreadyOrphaned {
+				orphaned = append(orphaned, n)
+			}
+			continue
+		}
+		if info.ModTime().After(n.UpdatedAt) {
+			stale = append(stale, n)
+		}
+	}
+	return stale, orphaned, nil
 }
 
 // CreateEdge assigns an ID and timestamp if unset, validates Type and that

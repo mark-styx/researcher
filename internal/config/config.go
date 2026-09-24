@@ -19,6 +19,19 @@ type Config struct {
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
 	Grepai         GrepaiConfig    `yaml:"grepai"`
 	Ask            AskConfig       `yaml:"ask"`
+	Graph          GraphConfig     `yaml:"graph"`
+}
+
+type GraphConfig struct {
+	Rollup GraphRollupConfig `yaml:"rollup"`
+}
+
+// GraphRollupConfig gates the background pass that re-summarizes graph nodes
+// whose linked file has changed since they were last summarized. Off by
+// default until it's had real use (see docs/node-rollup-design.md).
+type GraphRollupConfig struct {
+	Enabled     bool `yaml:"enabled"`
+	MaxPerCycle int  `yaml:"max_per_cycle"`
 }
 
 type AskConfig struct {
@@ -129,6 +142,15 @@ grepai:
 # ask command
 ask:
   max_age: 90d
+
+# Knowledge graph rollup (off by default): periodically re-summarizes nodes
+# whose linked file changed since it was last summarized. Proposals are
+# written to a pending_summary field for review, not applied automatically —
+# see "researchguy graph approve".
+graph:
+  rollup:
+    enabled: false
+    max_per_cycle: 5
 `
 
 func Dir() string {
@@ -219,6 +241,12 @@ func defaults() *Config {
 		},
 		Ask: AskConfig{
 			MaxAge: "90d",
+		},
+		Graph: GraphConfig{
+			Rollup: GraphRollupConfig{
+				Enabled:     false,
+				MaxPerCycle: 5,
+			},
 		},
 	}
 }

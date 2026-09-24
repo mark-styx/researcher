@@ -12,22 +12,26 @@ import (
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/graph"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/research"
+	"github.com/marklubin/researchguy/internal/rollup"
 	"github.com/robfig/cron/v3"
 )
 
 type Scheduler struct {
-	cfg      *config.Config
-	store    *Store
-	provider llm.Provider
-	logger   *log.Logger
-	logFile  *os.File
-	stopCh   chan struct{}
-	stopOnce sync.Once
-	sem      chan struct{}
-	wg       sync.WaitGroup
-	owner    string
+	cfg        *config.Config
+	store      *Store
+	provider   llm.Provider
+	logger     *log.Logger
+	logFile    *os.File
+	stopCh     chan struct{}
+	stopOnce   sync.Once
+	sem        chan struct{}
+	wg         sync.WaitGroup
+	owner      string
+	graphStore *graph.Store   // nil unless graph.rollup.enabled
+	rollup     *rollup.Rollup // nil unless graph.rollup.enabled
 }
 
 func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
@@ -51,16 +55,31 @@ func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
 		maxConcurrent = 1
 	}
 
-	return &Scheduler{
+	logger := log.New(f, "scheduler: ", log.LstdFlags)
+
+	s := &Scheduler{
 		cfg:      cfg,
 		store:    store,
 		provider: provider,
-		logger:   log.New(f, "scheduler: ", log.LstdFlags),
+		logger:   logger,
 		logFile:  f,
 		stopCh:   make(chan struct{}),
 		sem:      make(chan struct{}, maxConcurrent),
 		owner:    fmt.Sprintf("daemon-%d-%d", os.Getpid(), time.Now().UnixNano()),
-	}, nil
+	}
+
+	if cfg.Graph.Rollup.Enabled {
+		gs, err := graph.NewStore(cfg)
+		if err != nil {
+			store.Close()
+			f.Close()
+			return nil, fmt.Errorf("opening graph store for rollup: %w", err)
+		}
+		s.graphStore = gs
+		s.rollup = rollup.New(cfg, gs, provider, logger)
+	}
+
+	return s, nil
 }
 
 func (s *Scheduler) Run() {
@@ -73,14 +92,30 @@ func (s *Scheduler) Run() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// rollupCh stays nil (never selected) when rollup is disabled.
+	var rollupCh <-chan time.Time
+	if s.rollup != nil {
+		rollupTicker := time.NewTicker(interval)
+		defer rollupTicker.Stop()
+		rollupCh = rollupTicker.C
+		s.logger.Println("Graph rollup enabled")
+	}
+
 	for {
 		select {
 		case <-ticker.C:
 			s.poll()
+		case <-rollupCh:
+			if err := s.rollup.Run(context.Background()); err != nil {
+				s.logger.Printf("Rollup pass error: %v", err)
+			}
 		case <-s.stopCh:
 			s.logger.Println("Scheduler stopped")
 			s.wg.Wait()
 			s.store.Close()
+			if s.graphStore != nil {
+				s.graphStore.Close()
+			}
 			if s.logFile != nil {
 				s.logFile.Close()
 			}

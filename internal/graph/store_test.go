@@ -2,9 +2,11 @@ package graph
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -258,6 +260,111 @@ func TestListEdges_Filters(t *testing.T) {
 	}
 	if len(fundsOnly) != 1 {
 		t.Fatalf("fundsOnly len = %d, want 1", len(fundsOnly))
+	}
+}
+
+func TestListStale_FileNewerThanUpdatedAt(t *testing.T) {
+	s := newTestStore(t)
+	researchDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(researchDir, "topic.md"), []byte("v1"), 0644); err != nil {
+		t.Fatalf("writing fixture file: %v", err)
+	}
+	n := &Node{Type: NodeReport, Title: "Topic", Path: "topic.md"}
+	must(t, s.CreateNode(n))
+
+	// Simulate new information arriving after the node was last summarized.
+	future := n.UpdatedAt.Add(1 * time.Hour)
+	if err := os.Chtimes(filepath.Join(researchDir, "topic.md"), future, future); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	stale, orphaned, err := s.ListStale(researchDir)
+	if err != nil {
+		t.Fatalf("ListStale: %v", err)
+	}
+	if len(orphaned) != 0 {
+		t.Fatalf("orphaned = %d, want 0", len(orphaned))
+	}
+	if len(stale) != 1 || stale[0].ID != n.ID {
+		t.Fatalf("stale = %v, want [%s]", stale, n.ID)
+	}
+}
+
+func TestListStale_UnchangedFileNotStale(t *testing.T) {
+	s := newTestStore(t)
+	researchDir := t.TempDir()
+
+	path := filepath.Join(researchDir, "topic.md")
+	if err := os.WriteFile(path, []byte("v1"), 0644); err != nil {
+		t.Fatalf("writing fixture file: %v", err)
+	}
+	n := &Node{Type: NodeReport, Title: "Topic", Path: "topic.md"}
+	must(t, s.CreateNode(n))
+
+	// File mtime predates the node's UpdatedAt (the common case: node
+	// created after the file it describes) — not stale.
+	past := n.UpdatedAt.Add(-1 * time.Hour)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	stale, _, err := s.ListStale(researchDir)
+	if err != nil {
+		t.Fatalf("ListStale: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("stale = %v, want none", stale)
+	}
+}
+
+func TestListStale_MissingFileIsOrphaned(t *testing.T) {
+	s := newTestStore(t)
+	researchDir := t.TempDir()
+
+	n := &Node{Type: NodeReport, Title: "Gone", Path: "missing.md"}
+	must(t, s.CreateNode(n))
+
+	stale, orphaned, err := s.ListStale(researchDir)
+	if err != nil {
+		t.Fatalf("ListStale: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("stale = %v, want none", stale)
+	}
+	if len(orphaned) != 1 || orphaned[0].ID != n.ID {
+		t.Fatalf("orphaned = %v, want [%s]", orphaned, n.ID)
+	}
+}
+
+func TestListStale_AlreadyOrphanedIsSkipped(t *testing.T) {
+	s := newTestStore(t)
+	researchDir := t.TempDir()
+
+	n := &Node{Type: NodeReport, Title: "Gone", Path: "missing.md", Metadata: map[string]any{"orphaned": true}}
+	must(t, s.CreateNode(n))
+
+	_, orphaned, err := s.ListStale(researchDir)
+	if err != nil {
+		t.Fatalf("ListStale: %v", err)
+	}
+	if len(orphaned) != 0 {
+		t.Fatalf("orphaned = %v, want none (already flagged)", orphaned)
+	}
+}
+
+func TestListStale_ThinNodesExcluded(t *testing.T) {
+	s := newTestStore(t)
+	researchDir := t.TempDir()
+
+	must(t, s.CreateNode(&Node{Type: NodeReport, Title: "Thin, no path"}))
+
+	stale, orphaned, err := s.ListStale(researchDir)
+	if err != nil {
+		t.Fatalf("ListStale: %v", err)
+	}
+	if len(stale) != 0 || len(orphaned) != 0 {
+		t.Fatalf("stale = %v, orphaned = %v, want both empty", stale, orphaned)
 	}
 }
 
