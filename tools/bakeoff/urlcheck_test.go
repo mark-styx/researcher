@@ -29,6 +29,16 @@ func newCheckServer(t *testing.T, hits *atomic.Int32) *httptest.Server {
 	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ok", http.StatusMovedPermanently)
 	})
+	mux.HandleFunc("/moved/deep/page", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(200)
+	})
 	mux.HandleFunc("/gone", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) })
 	mux.HandleFunc("/forbidden", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) })
 	mux.HandleFunc("/ratelimited", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) })
@@ -54,15 +64,16 @@ func TestCheckURLClasses(t *testing.T) {
 	srv := newCheckServer(t, &hits)
 	client := NewCheckClient(100 * time.Millisecond)
 	cases := map[string]string{
-		"/ok":          ClassOK,
-		"/nohead":      ClassOK,
-		"/redirect":    ClassOK,
-		"/ua":          ClassOK,
-		"/gone":        ClassDead,
-		"/forbidden":   ClassBlocked,
-		"/ratelimited": ClassBlocked,
-		"/broken":      ClassError,
-		"/slow":        ClassError,
+		"/ok":              ClassOK,
+		"/nohead":          ClassOK,
+		"/redirect":        ClassOK,
+		"/moved/deep/page": ClassHome,
+		"/ua":              ClassOK,
+		"/gone":            ClassDead,
+		"/forbidden":       ClassBlocked,
+		"/ratelimited":     ClassBlocked,
+		"/broken":          ClassError,
+		"/slow":            ClassError,
 	}
 	for path, want := range cases {
 		r := CheckURL(context.Background(), client, srv.URL+path)
@@ -128,5 +139,23 @@ func TestCacheRoundTrip(t *testing.T) {
 	out, err := LoadCache(path)
 	if err != nil || out["https://a"].Status != 200 {
 		t.Fatalf("round trip: %v, %v", out, err)
+	}
+}
+
+func TestRedirectedHome(t *testing.T) {
+	cases := []struct {
+		raw, final string
+		want       bool
+	}{
+		{"https://a.example/article/1", "https://a.example/", true},
+		{"https://a.example/article/1", "https://a.example/?ref=x", false},
+		{"https://a.example/article/1", "https://a.example/article/1/", false},
+		{"https://a.example/", "https://a.example/", false},
+		{"https://a.example/x", "::bad", false},
+	}
+	for _, c := range cases {
+		if got := redirectedHome(c.raw, c.final); got != c.want {
+			t.Errorf("redirectedHome(%q, %q) = %v, want %v", c.raw, c.final, got, c.want)
+		}
 	}
 }

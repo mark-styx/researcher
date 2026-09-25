@@ -7,8 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +20,7 @@ const (
 	ClassOK      = "ok"      // final response 2xx/3xx
 	ClassBlocked = "blocked" // 401/403/429/999: exists but refuses automated clients
 	ClassDead    = "dead"    // 404/410 or the host does not resolve
+	ClassHome    = "home"    // redirected to the site's home page: likely a removed page
 	ClassError   = "error"   // anything else: 5xx, timeouts, TLS, resets
 )
 
@@ -25,6 +28,7 @@ const (
 type CheckResult struct {
 	URL    string `json:"url"`
 	Status int    `json:"status,omitempty"`
+	Final  string `json:"final,omitempty"` // URL after redirects, when it differs
 	Class  string `json:"class"`
 	Err    string `json:"err,omitempty"`
 }
@@ -36,27 +40,46 @@ const checkUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit
 // CheckURL tries HEAD, then falls back to GET when HEAD errors or returns
 // 4xx/5xx (many servers mishandle HEAD).
 func CheckURL(ctx context.Context, client *http.Client, raw string) CheckResult {
-	status, err := fetchStatus(ctx, client, http.MethodHead, raw)
+	status, final, err := fetchStatus(ctx, client, http.MethodHead, raw)
 	if err != nil || status >= 400 {
-		status, err = fetchStatus(ctx, client, http.MethodGet, raw)
+		status, final, err = fetchStatus(ctx, client, http.MethodGet, raw)
 	}
-	return classify(raw, status, err)
+	r := classify(raw, status, err)
+	if final != "" && final != raw {
+		r.Final = final
+		if r.Class == ClassOK && redirectedHome(raw, final) {
+			r.Class = ClassHome
+		}
+	}
+	return r
 }
 
-func fetchStatus(ctx context.Context, client *http.Client, method, raw string) (int, error) {
+// redirectedHome reports whether a deep link ended up at a site root.
+func redirectedHome(raw, final string) bool {
+	from, err1 := url.Parse(raw)
+	to, err2 := url.Parse(final)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	deep := strings.Trim(from.Path, "/") != ""
+	root := strings.Trim(to.Path, "/") == "" && to.RawQuery == ""
+	return deep && root
+}
+
+func fetchStatus(ctx context.Context, client *http.Client, method, raw string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, method, raw, nil)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req.Header.Set("User-Agent", checkUserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/pdf,*/*;q=0.8")
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 	_, _ = io.CopyN(io.Discard, resp.Body, 64<<10)
-	return resp.StatusCode, nil
+	return resp.StatusCode, resp.Request.URL.String(), nil
 }
 
 func classify(raw string, status int, err error) CheckResult {
@@ -157,7 +180,7 @@ func SaveCache(path string, m map[string]CheckResult) error {
 
 // ClassCounts tallies results by class for the given URLs.
 func ClassCounts(urls []string, results map[string]CheckResult) map[string]int {
-	out := map[string]int{ClassOK: 0, ClassBlocked: 0, ClassDead: 0, ClassError: 0}
+	out := map[string]int{ClassOK: 0, ClassHome: 0, ClassBlocked: 0, ClassDead: 0, ClassError: 0}
 	for _, u := range urls {
 		if r, ok := results[u]; ok {
 			out[r.Class]++

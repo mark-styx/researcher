@@ -268,14 +268,14 @@ func checkHeader(checked bool) string {
 	if !checked {
 		return ""
 	}
-	return " URLs ok | Bot-blocked | Dead | Other errors | Resolution rate |"
+	return " URLs ok | Redirected home | Bot-blocked | Dead | Other errors | Resolution rate |"
 }
 
 func checkRule(checked bool) string {
 	if !checked {
 		return ""
 	}
-	return "---|---|---|---|---|"
+	return "---|---|---|---|---|---|"
 }
 
 // checkCells formats per-URL-occurrence check counts. Per-arm counts sum the
@@ -284,12 +284,12 @@ func checkCells(checked bool, c map[string]int) string {
 	if !checked {
 		return ""
 	}
-	total := c[ClassOK] + c[ClassBlocked] + c[ClassDead] + c[ClassError]
+	total := c[ClassOK] + c[ClassHome] + c[ClassBlocked] + c[ClassDead] + c[ClassError]
 	rate := 0.0
 	if total > 0 {
 		rate = float64(c[ClassOK]) / float64(total) * 100
 	}
-	return fmt.Sprintf(" %d | %d | %d | %d | %.0f%% |", c[ClassOK], c[ClassBlocked], c[ClassDead], c[ClassError], rate)
+	return fmt.Sprintf(" %d | %d | %d | %d | %d | %.0f%% |", c[ClassOK], c[ClassHome], c[ClassBlocked], c[ClassDead], c[ClassError], rate)
 }
 
 func formatFlags(m map[string]int) string {
