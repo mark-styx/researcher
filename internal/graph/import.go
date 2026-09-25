@@ -164,6 +164,10 @@ func (s *Store) ImportSources(book BookRef, entries []SourceEntry) (ImportStats,
 		}
 	}()
 
+	if err := adoptUnkeyedSources(ctx, conn); err != nil {
+		return stats, fmt.Errorf("adopting existing source nodes: %w", err)
+	}
+
 	report, created, err := findOrCreateByKey(ctx, conn, BookKey(book.Slug), func() *Node {
 		title := book.Title
 		if title == "" {
@@ -233,6 +237,45 @@ func (s *Store) ImportSources(book BookRef, entries []SourceEntry) (ImportStats,
 	}
 	committed = true
 	return stats, nil
+}
+
+// adoptUnkeyedSources registers URL keys for source nodes created without
+// one (e.g. by `graph add-node`), so an import reuses them instead of making
+// duplicates. Nodes with no usable metadata.url, or whose key another node
+// already holds, are left alone.
+func adoptUnkeyedSources(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(ctx,
+		`SELECT id, metadata FROM nodes WHERE type = ? AND id NOT IN (SELECT node_id FROM node_keys) ORDER BY created_at`, NodeSource)
+	if err != nil {
+		return err
+	}
+	type pending struct{ id, key string }
+	var todo []pending
+	for rows.Next() {
+		var id string
+		var metaJSON sql.NullString
+		if err := rows.Scan(&id, &metaJSON); err != nil {
+			rows.Close()
+			return err
+		}
+		meta, err := unmarshalMetadata(metaJSON)
+		if err != nil {
+			continue
+		}
+		raw, _ := meta["url"].(string)
+		if key, err := URLKey(raw); err == nil {
+			todo = append(todo, pending{id, key})
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, p := range todo {
+		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO node_keys (key, node_id) VALUES (?, ?)`, p.key, p.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func findOrCreateByKey(ctx context.Context, q querier, key string, build func() *Node) (*Node, bool, error) {

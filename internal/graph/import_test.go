@@ -194,3 +194,30 @@ func TestMigrate_OnCopyOfRealTasksDB(t *testing.T) {
 		t.Fatalf("import on migrated copy: %+v, %v", stats, err)
 	}
 }
+
+// Source nodes created before keys existed (plain add-node) are adopted on
+// import instead of duplicated.
+func TestImportSources_AdoptsUnkeyedSourceNodes(t *testing.T) {
+	s := newTestStore(t)
+	pre := &Node{Type: NodeSource, Title: "MKUltra (agent)", Metadata: map[string]any{"url": "http://www.en.wikipedia.org/wiki/Project_MKUltra/"}}
+	noURL := &Node{Type: NodeSource, Title: "No URL"}
+	badURL := &Node{Type: NodeSource, Title: "Bad", Metadata: map[string]any{"url": "ftp://x"}}
+	must(t, s.CreateNode(pre))
+	must(t, s.CreateNode(noURL))
+	must(t, s.CreateNode(badURL))
+
+	st, err := s.ImportSources(BookRef{Slug: "book_b"}, bookB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.SourcesReused != 1 || st.SourcesCreated != 1 {
+		t.Fatalf("stats = %+v", st)
+	}
+	got, err := s.NodeByKey("url:en.wikipedia.org/wiki/Project_MKUltra")
+	if err != nil || got.ID != pre.ID {
+		t.Fatalf("pre-existing node not adopted: %+v, %v", got, err)
+	}
+	if nodes, _ := s.ListNodes(NodeSource); len(nodes) != 4 {
+		t.Fatalf("got %d source nodes, want 4 (3 pre-existing + 1 new)", len(nodes))
+	}
+}
