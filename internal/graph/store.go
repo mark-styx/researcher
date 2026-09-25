@@ -6,6 +6,7 @@
 package graph
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -123,8 +124,48 @@ func migrate(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 		CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 		CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(type);
+
+		-- Stable identity keys (normalized source URL, book slug) so the same
+		-- thing imported twice maps to one node. Additive: nodes is unchanged.
+		CREATE TABLE IF NOT EXISTS node_keys (
+			key     TEXT PRIMARY KEY,
+			node_id TEXT NOT NULL REFERENCES nodes(id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_node_keys_node ON node_keys(node_id);
 	`)
 	return err
+}
+
+// NodeByKey returns the node registered under key (see URLKey, BookKey), or
+// sql.ErrNoRows when none is.
+func (s *Store) NodeByKey(key string) (*Node, error) {
+	return nodeByKey(context.Background(), s.db, key)
+}
+
+// SetNodeKey registers key for nodeID. A key already pointing at a
+// different node is an error; re-registering the same pair is a no-op.
+func (s *Store) SetNodeKey(key, nodeID string) error {
+	return setNodeKey(context.Background(), s.db, key, nodeID)
+}
+
+// CitedByCounts returns, for each node with incoming edges of edgeType, how
+// many distinct nodes point at it (e.g. how many books reference a source).
+func (s *Store) CitedByCounts(edgeType string) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT to_id, COUNT(DISTINCT from_id) FROM edges WHERE type = ? GROUP BY to_id`, edgeType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) Close() error {
