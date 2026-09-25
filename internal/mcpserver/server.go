@@ -31,6 +31,7 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(reviewTool(), reviewHandler(cfg, provider))
 	s.AddTool(compareTool(), compareHandler(cfg, provider))
 	s.AddTool(enrichTool(), enrichHandler(cfg, provider))
+	s.AddTool(critiqueTool(), critiqueHandler(cfg, provider))
 	s.AddTool(searchTool(), searchHandler(cfg))
 	s.AddTool(contextTool(), contextHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))

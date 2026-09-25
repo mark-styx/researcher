@@ -100,6 +100,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		"researchguy_graph_find":     false,
 		"researchguy_graph_add_node": false,
 		"researchguy_graph_add_edge": false,
+		"researchguy_critique":       false,
 	}
 
 	for _, tool := range result.Tools {
@@ -114,8 +115,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 		}
 	}
 
-	if len(result.Tools) != 14 {
-		t.Errorf("expected 14 tools, got %d", len(result.Tools))
+	if len(result.Tools) != len(expectedTools) {
+		t.Errorf("expected %d tools, got %d", len(expectedTools), len(result.Tools))
 	}
 }
 

@@ -108,6 +108,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(reviewCmd())
 	root.AddCommand(enrichCmd())
 	root.AddCommand(compareCmd())
+	root.AddCommand(critiqueCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(contextCmd())
 	root.AddCommand(graphCmd())
