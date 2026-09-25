@@ -67,6 +67,7 @@ researchguy search "entanglement"
 | `dive <topic>` | Deep research report saved as structured markdown |
 | `review <topic>` | Literature review / synthesis, optional `--sources` |
 | `compare <topicA> <topicB>` | Side-by-side comparative analysis of two topics or documents |
+| `critique --text <file> --evidence <file>... [--json]` | Flag claims in a text that its evidence doesn't support (the hybrid backend's two critics in flag mode; see below) |
 | `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
 | `context <topic>` | Existing research on a topic, formatted as an ask/dive would see it. Never calls an LLM |
@@ -327,6 +328,28 @@ researchguy migrate --dry-run   # Preview changes
 researchguy migrate             # Apply changes
 ```
 
+## Critique
+
+`researchguy critique` runs the hybrid backend's two critics against any text
+and evidence files, in flag mode: it lists problems and rewrites nothing.
+
+- **Groundedness** lists factual claims (names, dates, numbers, attributions)
+  the evidence does not support or overstates. A flag means "not found in the
+  evidence given", not "false": the 2026-09-25 bake-off
+  (`docs/bakeoff-2026-09-25.md`) found the hybrid backend's rewrite-mode
+  groundedness critic deleting accurate facts that were simply missing from
+  the worker drafts.
+- **Narrative vs. evidence** lists claims stated as settled or consensus that
+  aren't tied to a distinct piece of evidence. In the bake-off it caught a
+  summary contradicting the report's own body.
+
+Evidence files are read in order up to `--max-evidence-chars` (default
+120,000); the file crossing the cap is cut, later ones are skipped, and
+`--json` reports both (`truncated`, `skipped`). `--json` prints `{text,
+evidence, evidence_chars, truncated, backend, groundedness, narrative,
+flags}`. bookworm runs it on approved chapters when `critique.policy` is set.
+The prompts live in `internal/critique`, shared with the hybrid backend.
+
 ## MCP Server
 
 The `researchguy mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) server over stdio, exposing researchguy's capabilities as tools that any MCP client can call.
@@ -340,6 +363,7 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_review` | Literature review / synthesis |
 | `researchguy_compare` | Side-by-side comparative analysis |
 | `researchguy_enrich` | Expand and add context to a document |
+| `researchguy_critique` | Flag claims in `text` (or `text_path`) that `evidence_paths` don't support; paths resolve like `researchguy_read` |
 | `researchguy_search` | Raw semantic search across research (chunk results, no synthesis) |
 | `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researchguy_list` | List research files by category |
