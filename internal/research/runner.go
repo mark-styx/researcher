@@ -82,16 +82,10 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 		return RunResult{Response: resp, Metadata: metadata}, nil
 	}
 
-	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	outPath, err := r.outputPath(ctx, task, "-ask")
 	if err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, err
 	}
-	filename = strings.TrimSuffix(filename, ".md") + "-ask.md"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("creating project dir: %w", err)
-	}
-
-	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# Ask: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -103,7 +97,7 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 }
 
 // gatherResearchContext searches existing research via grepai, filters by freshness,
-// reads full contents, and returns a formatted context string.
+// reads contents, and returns a formatted context string.
 // Failures are non-fatal: warnings go to stderr, empty string returned on error.
 func (r *Runner) gatherResearchContext(task Task) string {
 	// Determine max age: task override > config default
@@ -111,42 +105,29 @@ func (r *Runner) gatherResearchContext(task Task) string {
 	if task.MaxAge != "" {
 		maxAgeStr = task.MaxAge
 	}
-
-	maxAge, err := search.ParseMaxAge(maxAgeStr)
-	if err != nil {
+	if _, err := search.ParseMaxAge(maxAgeStr); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: invalid max-age %q, using 90d default: %v\n", maxAgeStr, err)
-		maxAge = 90 * 24 * time.Hour
+		maxAgeStr = "90d"
 	}
 
-	results, err := search.QueryJSON(r.cfg, task.Topic, 10)
+	result, err := search.BuildContext(r.cfg, task.Topic, search.ContextOptions{
+		Limit:    10,
+		MaxAge:   maxAgeStr,
+		Projects: task.Projects,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: research search failed (continuing without context): %v\n", err)
 		return ""
 	}
-
-	if len(results) == 0 {
-		return ""
-	}
-
-	researchDir := config.ExpandPath(r.cfg.ResearchDir)
-	fresh := search.FilterFresh(results, researchDir, maxAge)
-	if len(fresh) == 0 {
-		return ""
-	}
-
-	contents := search.ReadContents(fresh, researchDir)
-	return search.FormatContext(contents)
+	return result.Context
 }
 
 func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
-	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	outPath, err := r.outputPath(ctx, task, "")
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
-	}
 
 	prompt := fmt.Sprintf("Produce a comprehensive deep-dive research report on: %s", task.Topic)
 
@@ -167,7 +148,6 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -179,16 +159,11 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 }
 
 func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
-	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	outPath, err := r.outputPath(ctx, task, "-watch")
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
-	// Add -watch suffix to filename
-	filename = strings.TrimSuffix(filename, ".md") + "-watch.md"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
-	}
 
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
 
@@ -204,7 +179,6 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	outPath := filepath.Join(dir, filename)
 	entry := fmt.Sprintf("\n\n---\n\n## Update: %s\n\n*Backend: %s*\n\n%s\n",
 		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), resp)
 
@@ -225,16 +199,11 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 }
 
 func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
-	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	outPath, err := r.outputPath(ctx, task, "-review")
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
-	// Add -review suffix to filename
-	filename = strings.TrimSuffix(filename, ".md") + "-review.md"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
-	}
 
 	var promptBuilder strings.Builder
 	promptBuilder.WriteString(fmt.Sprintf("Create a literature review / synthesis on: %s\n", task.Topic))
@@ -266,7 +235,6 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# Review: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -319,15 +287,11 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 }
 
 func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
-	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	outPath, err := r.outputPath(ctx, task, "-comparison")
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
-	filename = strings.TrimSuffix(filename, ".md") + "-comparison.md"
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return RunResult{}, fmt.Errorf("creating project dir: %w", err)
-	}
 
 	var promptBuilder strings.Builder
 
@@ -363,7 +327,6 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	outPath := filepath.Join(dir, filename)
 	header := fmt.Sprintf("# Comparison: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
 
@@ -379,6 +342,27 @@ func (r *Runner) providerMetadata() string {
 		return p.Metadata()
 	}
 	return ""
+}
+
+// outputPath returns where a task's report is written: task.OutPath when set
+// (no categorizer call), otherwise a categorized path under research_dir with
+// suffix added before ".md". The parent directory is created.
+func (r *Runner) outputPath(ctx context.Context, task Task, suffix string) (string, error) {
+	if task.OutPath != "" {
+		p := config.ExpandPath(task.OutPath)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			return "", fmt.Errorf("creating output dir: %w", err)
+		}
+		return p, nil
+	}
+	dir, filename, err := r.categorizedPath(ctx, task.Topic)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("creating project dir: %w", err)
+	}
+	return filepath.Join(dir, strings.TrimSuffix(filename, ".md")+suffix+".md"), nil
 }
 
 // categorizedPath uses the LLM to determine the category directory and filename

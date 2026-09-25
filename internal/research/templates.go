@@ -17,6 +17,8 @@ type Task struct {
 	Quiet       bool     // suppress stdout output (used by MCP server)
 	Mode        string   // epistemic branch-role set for the hybrid backend: "", "landscape", or "inquiry"
 	BranchCount int      // hybrid backend effort/breadth dial; <= 0 uses the backend's default
+	OutPath     string   // write the report here instead of a categorized path (skips the categorizer call)
+	Projects    []string // grepai workspace projects to search for context; empty uses config
 }
 
 // RunResult holds the output from a research task execution.
