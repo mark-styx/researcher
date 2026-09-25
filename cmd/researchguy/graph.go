@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -32,6 +34,7 @@ node content lives in markdown files under the research directory.`,
 	cmd.AddCommand(graphExportCmd())
 	cmd.AddCommand(graphApproveCmd())
 	cmd.AddCommand(graphImportSourcesCmd())
+	cmd.AddCommand(graphLinkReportCmd())
 	return cmd
 }
 
@@ -128,6 +131,64 @@ func graphAddEdgeCmd() *cobra.Command {
 	cmd.MarkFlagRequired("from")
 	cmd.MarkFlagRequired("to")
 	cmd.MarkFlagRequired("type")
+	return cmd
+}
+
+func graphLinkReportCmd() *cobra.Command {
+	var path, prefix, title, summary string
+	var jsonOut bool
+
+	cmd := &cobra.Command{
+		Use:   "link-report",
+		Short: "Register a report node and link it to every node under a path prefix",
+		Long: `Creates the report node for --path (or reuses the one already there) and
+adds a references edge from it to every node whose path starts with --prefix
+(default: the report's directory). Existing edges are kept, so rerunning it
+adds nothing. The report file must exist under research_dir.`,
+		Example: `  researchguy graph link-report --path deep-research/abc123/report.md \
+    --title "Congress for Cultural Freedom funding" --summary "..." --json`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, store, err := openGraphStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+
+			clean := filepath.ToSlash(filepath.Clean(path))
+			if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+				return fmt.Errorf("--path must be relative to research_dir: %q", path)
+			}
+			full := filepath.Join(config.ExpandPath(cfg.ResearchDir), clean)
+			if info, err := os.Stat(full); err != nil || info.IsDir() {
+				return fmt.Errorf("report file %s: not found under research_dir", full)
+			}
+			if prefix == "" {
+				prefix = pathpkg.Dir(clean) + "/"
+			}
+
+			res, err := store.LinkReport(title, summary, clean, prefix)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				return printJSON(res)
+			}
+			verb := "reused"
+			if res.Created {
+				verb = "created"
+			}
+			fmt.Printf("report %s (%s): linked %d, already linked %d\n", res.ReportID, verb, res.Linked, res.AlreadyLinked)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&path, "path", "", "Report path relative to research_dir (required)")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "Link nodes whose path starts with this (default: the report's directory)")
+	cmd.Flags().StringVar(&title, "title", "", "Report node title (required)")
+	cmd.Flags().StringVar(&summary, "summary", "", "Report node summary")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print JSON: {report_id, created, linked, already_linked}")
+	cmd.MarkFlagRequired("path")
+	cmd.MarkFlagRequired("title")
 	return cmd
 }
 
