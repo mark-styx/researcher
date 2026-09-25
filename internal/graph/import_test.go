@@ -176,7 +176,9 @@ func TestMigrate_OnCopyOfRealTasksDB(t *testing.T) {
 		}
 		return n
 	}
-	beforeNodes, beforeEdges := countRows("nodes"), countRows("edges")
+	// node_keys is -1 (no table) on a DB from before Phase 3, and holds the
+	// backfilled keys on one migrated since.
+	beforeNodes, beforeEdges, beforeKeys := countRows("nodes"), countRows("edges"), countRows("node_keys")
 
 	st, err := NewStore(&config.Config{})
 	if err != nil {
@@ -186,8 +188,12 @@ func TestMigrate_OnCopyOfRealTasksDB(t *testing.T) {
 	if countRows("nodes") != beforeNodes || countRows("edges") != beforeEdges {
 		t.Fatal("migration changed existing rows")
 	}
-	if countRows("node_keys") != 0 {
-		t.Fatalf("node_keys should start empty, has %d", countRows("node_keys"))
+	wantKeys := beforeKeys
+	if beforeKeys < 0 {
+		wantKeys = 0
+	}
+	if got := countRows("node_keys"); got != wantKeys {
+		t.Fatalf("node_keys has %d rows after migration, want %d (before: %d)", got, wantKeys, beforeKeys)
 	}
 	stats, err := st.ImportSources(BookRef{Slug: "migration_test"}, bookA)
 	if err != nil || stats.SourcesCreated+stats.SourcesReused != 2 {
