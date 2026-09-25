@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/critique"
 )
 
 type hybridWorkerOutput struct {
@@ -170,13 +171,14 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			// worker evidence supports. Unlike a plain overwrite, it must
 			// report what it changed and why — that report becomes part of
 			// the metadata and the visible critic notes, not a silent edit.
+			evidence := workerEvidence(results)
 			groundReq := Request{
-				SystemPrompt: groundednessCriticSystemPrompt(),
-				UserPrompt:   buildVerificationPrompt(req.UserPrompt, draft, results),
+				SystemPrompt: critique.GroundednessRewriteSystemPrompt(),
+				UserPrompt:   critique.BuildGroundednessRewritePrompt(req.UserPrompt, draft, evidence),
 				MaxTokens:    req.MaxTokens,
 			}
 			if raw, rerr := verifier.Complete(ctx, groundReq); rerr == nil && strings.TrimSpace(raw) != "" {
-				revised, changes := splitCriticOutput(raw)
+				revised, changes := critique.SplitRewriteOutput(raw)
 				if strings.TrimSpace(revised) != "" {
 					final = revised
 					verified = true
@@ -189,8 +191,8 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			// distinct evidence in the worker outputs — separating "here's
 			// what the evidence shows" from "here's what's widely repeated."
 			narrReq := Request{
-				SystemPrompt: narrativeCriticSystemPrompt(),
-				UserPrompt:   buildNarrativeCritiquePrompt(final, results),
+				SystemPrompt: critique.NarrativeSystemPrompt(),
+				UserPrompt:   critique.BuildNarrativePrompt(final, evidence),
 				MaxTokens:    req.MaxTokens,
 			}
 			if flags, nerr := verifier.Complete(ctx, narrReq); nerr == nil {
@@ -199,7 +201,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 	}
 
-	final = appendCriticNotes(final, groundednessChanges, narrativeFlags)
+	final = critique.AppendNotes(final, groundednessChanges, narrativeFlags)
 
 	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, verified, groundednessChanges, narrativeFlags, time.Since(started)))
 	return final, nil
@@ -350,93 +352,19 @@ Return:
 `, original, shard)
 }
 
-// criticChangesMarker separates a critic's revised text from its report of
-// what it changed. Parsed by splitCriticOutput; never shown to the user raw.
-const criticChangesMarker = "===CHANGES==="
-
-func groundednessCriticSystemPrompt() string {
-	return "You are a groundedness critic. Keep only claims supported by worker evidence, fix unsupported or overstated claims, and keep the final answer concise and accurate. " +
-		"Never silently edit: after the revised answer, on its own line write exactly \"" + criticChangesMarker + "\", then a bullet list of every claim you removed, softened, or flagged as unsupported, each with a one-line reason. If you changed nothing, write \"No changes.\" after the marker."
-}
-
-func buildVerificationPrompt(original, draft string, workers []hybridWorkerOutput) string {
-	var b strings.Builder
-	b.WriteString("Original request:\n")
-	b.WriteString(original)
-	b.WriteString("\n\nDraft answer:\n")
-	b.WriteString(draft)
-	b.WriteString("\n\nWorker evidence:\n")
+// workerEvidence labels each successful worker's output for the critics.
+func workerEvidence(workers []hybridWorkerOutput) []critique.Evidence {
+	var out []critique.Evidence
 	for _, w := range workers {
-		if w.Err != nil || strings.TrimSpace(w.Content) == "" {
+		if w.Err != nil {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("\n[%s/%s | shard: %s]\n", w.Backend, w.Model, w.Shard))
-		b.WriteString(w.Content)
-		b.WriteString("\n")
+		out = append(out, critique.Evidence{
+			Label:   fmt.Sprintf("%s/%s | shard: %s", w.Backend, w.Model, w.Shard),
+			Content: w.Content,
+		})
 	}
-	b.WriteString("\nRevise the draft so every strong claim is traceable to worker evidence or clearly marked as uncertain.")
-	return b.String()
-}
-
-// splitCriticOutput separates a critic's revised answer from its trailing
-// change report, delimited by criticChangesMarker. If the marker is absent
-// (the model didn't follow the format), the whole output is treated as the
-// revised answer and changes is empty rather than silently dropping content.
-func splitCriticOutput(raw string) (revised, changes string) {
-	idx := strings.Index(raw, criticChangesMarker)
-	if idx == -1 {
-		return strings.TrimSpace(raw), ""
-	}
-	revised = strings.TrimSpace(raw[:idx])
-	changes = strings.TrimSpace(raw[idx+len(criticChangesMarker):])
-	return revised, changes
-}
-
-func narrativeCriticSystemPrompt() string {
-	return "You are a narrative-vs-evidence critic. Read the answer and the worker evidence it was built from. " +
-		"For every claim in the answer presented as settled fact or consensus, check whether it is tied to a specific, distinct piece of evidence in the worker outputs, or whether it is a widely-repeated claim being restated without independent support. " +
-		"List only the claims that lean narrative: quote or closely paraphrase the claim, then state in one line why it isn't distinctly evidenced. If every claim in the answer is directly evidenced, write exactly \"No narrative-only claims found.\" Be dry and concise. No prose padding, no restating the whole answer."
-}
-
-func buildNarrativeCritiquePrompt(answer string, workers []hybridWorkerOutput) string {
-	var b strings.Builder
-	b.WriteString("Answer to review:\n")
-	b.WriteString(answer)
-	b.WriteString("\n\nWorker evidence it was built from:\n")
-	for _, w := range workers {
-		if w.Err != nil || strings.TrimSpace(w.Content) == "" {
-			continue
-		}
-		b.WriteString(fmt.Sprintf("\n[%s/%s | shard: %s]\n", w.Backend, w.Model, w.Shard))
-		b.WriteString(w.Content)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-// appendCriticNotes appends a visible "Critic Notes" section to the final
-// answer when either critic produced output, so critic findings are part of
-// the saved document rather than only sitting in metadata nobody reads.
-func appendCriticNotes(final, groundednessChanges, narrativeFlags string) string {
-	groundednessChanges = strings.TrimSpace(groundednessChanges)
-	narrativeFlags = strings.TrimSpace(narrativeFlags)
-	if groundednessChanges == "" && narrativeFlags == "" {
-		return final
-	}
-	var b strings.Builder
-	b.WriteString(final)
-	b.WriteString("\n\n---\n\n## Critic Notes\n")
-	if groundednessChanges != "" {
-		b.WriteString("\n### Groundedness Review\n\n")
-		b.WriteString(groundednessChanges)
-		b.WriteString("\n")
-	}
-	if narrativeFlags != "" {
-		b.WriteString("\n### Narrative vs. Evidence\n\n")
-		b.WriteString(narrativeFlags)
-		b.WriteString("\n")
-	}
-	return b.String()
+	return out
 }
 
 func (h *Hybrid) shouldVerify() bool {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/critique"
 )
 
 type stubProvider struct {
@@ -345,7 +346,7 @@ func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
 	}
 	aggregator := &stubProvider{name: "claude", resp: "draft synthesis"}
 	verifier := &stubProvider{name: "claude", responses: []string{
-		"revised answer text" + "\n" + criticChangesMarker + "\n- Removed claim about X: unsupported by any worker.",
+		"revised answer text" + "\n" + critique.ChangesMarker + "\n- Removed claim about X: unsupported by any worker.",
 		"No narrative-only claims found.",
 	}}
 
@@ -377,7 +378,7 @@ func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
 	if !strings.HasPrefix(resp, "revised answer text") {
 		t.Fatalf("response should start with the revised text (marker stripped), got: %s", resp)
 	}
-	if strings.Contains(strings.SplitN(resp, "## Critic Notes", 2)[0], criticChangesMarker) {
+	if strings.Contains(strings.SplitN(resp, "## Critic Notes", 2)[0], critique.ChangesMarker) {
 		t.Error("the raw changes marker should not leak into the answer body")
 	}
 	if !strings.Contains(resp, "### Groundedness Review") {
@@ -388,25 +389,5 @@ func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
 	}
 	if !strings.Contains(h.Metadata(), "Removed claim about X") {
 		t.Errorf("metadata should record groundedness_changes, got: %s", h.Metadata())
-	}
-}
-
-func TestSplitCriticOutput(t *testing.T) {
-	revised, changes := splitCriticOutput("answer text\n" + criticChangesMarker + "\n- change one")
-	if revised != "answer text" {
-		t.Errorf("revised = %q, want %q", revised, "answer text")
-	}
-	if changes != "- change one" {
-		t.Errorf("changes = %q, want %q", changes, "- change one")
-	}
-}
-
-func TestSplitCriticOutput_NoMarker(t *testing.T) {
-	revised, changes := splitCriticOutput("just the answer, no marker")
-	if revised != "just the answer, no marker" {
-		t.Errorf("revised = %q", revised)
-	}
-	if changes != "" {
-		t.Errorf("changes = %q, want empty when marker absent", changes)
 	}
 }
