@@ -127,7 +127,6 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	metadata := r.providerMetadata()
 
 	prompt := fmt.Sprintf("Produce a comprehensive deep-dive research report on: %s", task.Topic)
 
@@ -147,6 +146,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	header := fmt.Sprintf("# %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
@@ -163,7 +163,6 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	metadata := r.providerMetadata()
 
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
 
@@ -178,6 +177,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	entry := fmt.Sprintf("\n\n---\n\n## Update: %s\n\n*Backend: %s*\n\n%s\n",
 		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), resp)
@@ -203,7 +203,6 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	metadata := r.providerMetadata()
 
 	var promptBuilder strings.Builder
 	promptBuilder.WriteString(fmt.Sprintf("Create a literature review / synthesis on: %s\n", task.Topic))
@@ -234,6 +233,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	header := fmt.Sprintf("# Review: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
@@ -291,7 +291,6 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	metadata := r.providerMetadata()
 
 	var promptBuilder strings.Builder
 
@@ -326,6 +325,7 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
+	metadata := r.providerMetadata()
 
 	header := fmt.Sprintf("# Comparison: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
 		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
