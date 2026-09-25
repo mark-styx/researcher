@@ -18,12 +18,20 @@ func mcpCmd() *cobra.Command {
 This exposes researchguy's capabilities as tools that any MCP client can call.
 
 Tools provided:
-  researchguy_ask      Ask a question with research context
-  researchguy_dive     Deep-dive research report
-  researchguy_review   Literature review / synthesis
-  researchguy_search   Semantic search across research
-  researchguy_list     List research files by category
-  researchguy_read     Read a research document
+  researchguy_ask             Ask a question with research context
+  researchguy_dive            Deep-dive research report (backend/mode/branches/projects)
+  researchguy_review          Literature review / synthesis
+  researchguy_compare         Side-by-side comparison
+  researchguy_enrich          Expand an existing document
+  researchguy_search          Semantic search across research (projects)
+  researchguy_context         Existing research on a topic, no LLM call (projects)
+  researchguy_list            List research files by category
+  researchguy_read            Read a research document or a read_roots file
+  researchguy_graph_list      List knowledge-graph nodes
+  researchguy_graph_show      One node with its edges
+  researchguy_graph_find      Find nodes by title, path, or metadata value
+  researchguy_graph_add_node  Create a node
+  researchguy_graph_add_edge  Create an edge
 
 Configure in Claude Code settings:
   {

@@ -12,7 +12,9 @@ import (
 
 func diveCmd() *cobra.Command {
 	var backend, model, maxAge, mode string
-	var noResearch bool
+	var noResearch, asJSON bool
+	var outPath string
+	var projects []string
 	var branches int
 
 	cmd := &cobra.Command{
@@ -52,11 +54,16 @@ or --max-age to control the freshness filter.`,
 				MaxAge:      maxAge,
 				Mode:        mode,
 				BranchCount: branches,
+				OutPath:     outPath,
+				Projects:    projects,
 			})
 			if err != nil {
 				return fmt.Errorf("research failed: %w", err)
 			}
 
+			if asJSON {
+				return printJSON(result.Fields("report", provider.Name()))
+			}
 			fmt.Printf("Research saved to: %s\n", result.FilePath)
 			return nil
 		},
@@ -65,8 +72,11 @@ or --max-age to control the freshness filter.`,
 	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
-	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h, none)")
 	cmd.Flags().StringVar(&mode, "mode", "", "Epistemic branch set for the hybrid backend (landscape, inquiry)")
 	cmd.Flags().IntVar(&branches, "branches", 0, "Number of angles to investigate in parallel (hybrid backend only; 0 = backend default)")
+	cmd.Flags().StringVar(&outPath, "out", "", "Write the report to this exact path (skips the LLM categorizer)")
+	cmd.Flags().StringSliceVar(&projects, "project", nil, "grepai workspace project to search for context (repeatable; default: grepai.projects)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {report, saved_to, backend, metadata} instead of a status line")
 	return cmd
 }

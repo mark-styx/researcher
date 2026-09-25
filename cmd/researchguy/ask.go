@@ -12,7 +12,8 @@ import (
 
 func askCmd() *cobra.Command {
 	var backend, model, maxAge string
-	var noSave, noResearch bool
+	var noSave, noResearch, asJSON bool
+	var projects []string
 
 	cmd := &cobra.Command{
 		Use:   "ask <question>",
@@ -53,6 +54,8 @@ or --max-age to control the freshness filter.`,
 				NoSave:     noSave,
 				NoResearch: noResearch,
 				MaxAge:     maxAge,
+				Projects:   projects,
+				Quiet:      asJSON,
 			}
 
 			result, err := runner.Run(context.Background(), task)
@@ -60,6 +63,9 @@ or --max-age to control the freshness filter.`,
 				return fmt.Errorf("ask failed: %w", err)
 			}
 
+			if asJSON {
+				return printJSON(result.Fields("answer", provider.Name()))
+			}
 			if result.FilePath != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Answer saved to: %s\n", result.FilePath)
 			}
@@ -72,6 +78,8 @@ or --max-age to control the freshness filter.`,
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().BoolVar(&noSave, "no-save", false, "Don't save the answer to the research directory")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
-	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h)")
+	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h, none)")
+	cmd.Flags().StringSliceVar(&projects, "project", nil, "grepai workspace project to search for context (repeatable; default: grepai.projects)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {answer, saved_to, backend, metadata} instead of the answer text")
 	return cmd
 }

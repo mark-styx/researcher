@@ -12,7 +12,7 @@ func TestRootCommand_HasSubcommands(t *testing.T) {
 		"version", "init", "config", "ask", "dive",
 		"list", "show", "search", "review", "enrich",
 		"compare", "watch", "daemon", "schedule", "queue",
-		"link", "migrate", "mcp",
+		"link", "migrate", "mcp", "context",
 	}
 
 	cmds := root.Commands()
