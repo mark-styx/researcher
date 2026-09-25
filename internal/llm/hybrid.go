@@ -311,6 +311,15 @@ var branchSets = map[string][]string{
 	},
 }
 
+// IsValidMode reports whether mode is "" or one of the named branch-role sets.
+func IsValidMode(mode string) bool {
+	if mode == "" {
+		return true
+	}
+	_, ok := branchSets[mode]
+	return ok
+}
+
 // planShards picks the branch-role set for mode (falling back to
 // defaultBranches) and expands or cycles it to exactly want entries.
 func planShards(topic string, mode string, want int) []string {

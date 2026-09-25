@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/llm"
+	"github.com/marklubin/researchguy/internal/search"
 )
 
 // mockProvider records calls and returns canned responses.
@@ -93,6 +94,12 @@ func TestMCPServer_ListTools(t *testing.T) {
 		"researchguy_context": false,
 		"researchguy_list":    false,
 		"researchguy_read":    false,
+
+		"researchguy_graph_list":     false,
+		"researchguy_graph_show":     false,
+		"researchguy_graph_find":     false,
+		"researchguy_graph_add_node": false,
+		"researchguy_graph_add_edge": false,
 	}
 
 	for _, tool := range result.Tools {
@@ -107,8 +114,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 		}
 	}
 
-	if len(result.Tools) != 9 {
-		t.Errorf("expected 9 tools, got %d", len(result.Tools))
+	if len(result.Tools) != 14 {
+		t.Errorf("expected 14 tools, got %d", len(result.Tools))
 	}
 }
 
@@ -621,7 +628,7 @@ func TestMCPServer_Context(t *testing.T) {
 	}
 
 	text := extractText(t, result)
-	var resp contextResult
+	var resp search.ContextResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("parsing context response: %v", err)
 	}
@@ -682,7 +689,7 @@ func TestMCPServer_Context_EmptyResults(t *testing.T) {
 	}
 
 	text := extractText(t, result)
-	var resp contextResult
+	var resp search.ContextResult
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("parsing context response: %v", err)
 	}

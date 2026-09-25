@@ -35,6 +35,7 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(contextTool(), contextHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
+	addGraphTools(s, cfg)
 
 	return s
 }
@@ -47,7 +48,8 @@ func askTool() mcp.Tool {
 		mcp.WithString("question", mcp.Required(), mcp.Description("The question to ask")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
 		mcp.WithBoolean("no_save", mcp.Description("Don't save the answer to the research directory")),
-		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h, or none)")),
+		projectsOption(),
 	)
 }
 
@@ -65,6 +67,7 @@ func askHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFun
 			NoResearch: req.GetBool("no_research", false),
 			NoSave:     req.GetBool("no_save", false),
 			MaxAge:     req.GetString("max_age", ""),
+			Projects:   req.GetStringSlice("projects", nil),
 		}
 
 		runner := research.NewRunner(cfg, provider)
@@ -83,12 +86,13 @@ func askHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFun
 // --- researchguy_dive ---
 
 func diveTool() mcp.Tool {
-	return mcp.NewTool("researchguy_dive",
-		mcp.WithDescription("Generate a comprehensive deep-dive research report on a topic. Saves to research directory."),
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("Generate a comprehensive deep-dive research report on a topic. Saves to research directory. With backend=hybrid, mode=inquiry adds counter-evidence and funding-provenance branches plus critic notes."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to research")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
-		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
-	)
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h, or none)")),
+	}
+	return mcp.NewTool("researchguy_dive", append(opts, hybridOptions()...)...)
 }
 
 func diveHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFunc {
@@ -97,36 +101,41 @@ func diveHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFu
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		p, err := parseResearchParams(cfg, provider, req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
-		runner := research.NewRunner(cfg, provider)
+		runner := research.NewRunner(cfg, p.provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:       research.TypeDive,
-			Topic:      topic,
-			Quiet:      true,
-			NoResearch: req.GetBool("no_research", false),
-			MaxAge:     req.GetString("max_age", ""),
+			Type:        research.TypeDive,
+			Topic:       topic,
+			Quiet:       true,
+			NoResearch:  req.GetBool("no_research", false),
+			MaxAge:      req.GetString("max_age", ""),
+			Mode:        p.mode,
+			BranchCount: p.branches,
+			Projects:    p.projects,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("dive failed: %v", err)), nil
 		}
 
-		return toolResultJSON(map[string]string{
-			"report":   result.Response,
-			"saved_to": result.FilePath,
-		})
+		return toolResultJSON(researchResult("report", result, p.provider.Name(), p.warning))
 	}
 }
 
 // --- researchguy_review ---
 
 func reviewTool() mcp.Tool {
-	return mcp.NewTool("researchguy_review",
+	opts := []mcp.ToolOption{
 		mcp.WithDescription("Create a literature review / synthesis on a topic. Optionally provide source file paths."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to review")),
 		mcp.WithString("sources", mcp.Description("Comma-separated file paths to include as source material")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
-		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
-	)
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h, or none)")),
+	}
+	return mcp.NewTool("researchguy_review", append(opts, hybridOptions()...)...)
 }
 
 func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFunc {
@@ -135,47 +144,43 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-
-		var sources []string
-		if s := req.GetString("sources", ""); s != "" {
-			for _, p := range strings.Split(s, ",") {
-				if p = strings.TrimSpace(p); p != "" {
-					sources = append(sources, p)
-				}
-			}
+		p, err := parseResearchParams(cfg, provider, req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		runner := research.NewRunner(cfg, provider)
+		runner := research.NewRunner(cfg, p.provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:       research.TypeReview,
-			Topic:      topic,
-			Sources:    sources,
-			Quiet:      true,
-			NoResearch: req.GetBool("no_research", false),
-			MaxAge:     req.GetString("max_age", ""),
+			Type:        research.TypeReview,
+			Topic:       topic,
+			Sources:     splitList(req.GetString("sources", "")),
+			Quiet:       true,
+			NoResearch:  req.GetBool("no_research", false),
+			MaxAge:      req.GetString("max_age", ""),
+			Mode:        p.mode,
+			BranchCount: p.branches,
+			Projects:    p.projects,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("review failed: %v", err)), nil
 		}
 
-		return toolResultJSON(map[string]string{
-			"review":   result.Response,
-			"saved_to": result.FilePath,
-		})
+		return toolResultJSON(researchResult("review", result, p.provider.Name(), p.warning))
 	}
 }
 
 // --- researchguy_compare ---
 
 func compareTool() mcp.Tool {
-	return mcp.NewTool("researchguy_compare",
+	opts := []mcp.ToolOption{
 		mcp.WithDescription("Side-by-side comparative analysis of two topics or two existing documents."),
 		mcp.WithString("subject1", mcp.Required(), mcp.Description("First subject/topic to compare")),
 		mcp.WithString("subject2", mcp.Required(), mcp.Description("Second subject/topic to compare")),
 		mcp.WithString("sources", mcp.Description("Comma-separated paths to two existing documents to compare instead of topics")),
 		mcp.WithBoolean("no_research", mcp.Description("Skip searching existing research for context")),
-		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h)")),
-	)
+		mcp.WithString("max_age", mcp.Description("Max age for research freshness filter (e.g. 90d, 2w, 24h, or none)")),
+	}
+	return mcp.NewTool("researchguy_compare", append(opts, hybridOptions()...)...)
 }
 
 func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFunc {
@@ -188,36 +193,40 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-
-		topic := subject1 + " vs " + subject2
-
-		var sources []string
-		if s := req.GetString("sources", ""); s != "" {
-			for _, p := range strings.Split(s, ",") {
-				if p = strings.TrimSpace(p); p != "" {
-					sources = append(sources, p)
-				}
-			}
+		p, err := parseResearchParams(cfg, provider, req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		runner := research.NewRunner(cfg, provider)
+		runner := research.NewRunner(cfg, p.provider)
 		result, err := runner.Run(ctx, research.Task{
-			Type:       research.TypeCompare,
-			Topic:      topic,
-			Sources:    sources,
-			Quiet:      true,
-			NoResearch: req.GetBool("no_research", false),
-			MaxAge:     req.GetString("max_age", ""),
+			Type:        research.TypeCompare,
+			Topic:       subject1 + " vs " + subject2,
+			Sources:     splitList(req.GetString("sources", "")),
+			Quiet:       true,
+			NoResearch:  req.GetBool("no_research", false),
+			MaxAge:      req.GetString("max_age", ""),
+			Mode:        p.mode,
+			BranchCount: p.branches,
+			Projects:    p.projects,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("compare failed: %v", err)), nil
 		}
 
-		return toolResultJSON(map[string]string{
-			"comparison": result.Response,
-			"saved_to":   result.FilePath,
-		})
+		return toolResultJSON(researchResult("comparison", result, p.provider.Name(), p.warning))
 	}
+}
+
+// splitList splits a comma-separated list, trimming blanks.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // --- researchguy_enrich ---
@@ -264,10 +273,11 @@ func enrichHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 
 func searchTool() mcp.Tool {
 	return mcp.NewTool("researchguy_search",
-		mcp.WithDescription("Semantic search across research documents via grepai. Returns ranked results."),
+		mcp.WithDescription("Semantic search across research documents via grepai. Returns ranked results; each carries its grepai project and on-disk path."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("The search query")),
 		mcp.WithNumber("limit", mcp.Description("Max results to return (default 10)")),
 		mcp.WithString("max_age", mcp.Description("Filter results by freshness (e.g. 90d, 2w, 24h)")),
+		projectsOption(),
 	)
 }
 
@@ -280,7 +290,7 @@ func searchHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 		limit := req.GetInt("limit", 10)
 
-		results, err := search.QueryJSON(cfg, query, limit)
+		results, err := search.QueryJSONProjects(cfg, query, limit, req.GetStringSlice("projects", nil))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
@@ -301,27 +311,13 @@ func searchHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 // --- researchguy_context ---
 
-type contextSource struct {
-	FilePath  string  `json:"file_path"`
-	Score     float64 `json:"score"`
-	Freshness string  `json:"freshness"`
-	Modified  string  `json:"modified"`
-	Excerpt   string  `json:"excerpt"`
-}
-
-type contextResult struct {
-	Topic   string          `json:"topic"`
-	Sources []contextSource `json:"sources"`
-	Context string          `json:"context"`
-	Count   int             `json:"count"`
-}
-
 func contextTool() mcp.Tool {
 	return mcp.NewTool("researchguy_context",
-		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files and freshness metadata. Does not trigger an LLM call — purely retrieves and formats existing research."),
+		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files, grepai project, and freshness metadata. Does not trigger an LLM call; purely retrieves and formats existing research. Large files contribute only their matched chunks."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to gather context for")),
-		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h). Default: from config or 90d")),
+		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h, or none to include older research such as past book research). Default: from config or 90d")),
 		mcp.WithNumber("limit", mcp.Description("Max search results to include (default 10)")),
+		projectsOption(),
 	)
 }
 
@@ -332,76 +328,18 @@ func contextHandler(cfg *config.Config) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		maxAgeStr := req.GetString("max_age", cfg.Ask.MaxAge)
-		if maxAgeStr == "" {
-			maxAgeStr = "90d"
-		}
-		maxAge, err := search.ParseMaxAge(maxAgeStr)
+		result, err := search.BuildContext(cfg, topic, search.ContextOptions{
+			Limit:    req.GetInt("limit", 10),
+			MaxAge:   req.GetString("max_age", ""),
+			Projects: req.GetStringSlice("projects", nil),
+		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid max_age: %v", err)), nil
-		}
-
-		limit := req.GetInt("limit", 10)
-
-		results, err := search.QueryJSON(cfg, topic, limit)
-		if err != nil {
+			if strings.HasPrefix(err.Error(), "invalid max_age") {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
-
-		empty := contextResult{Topic: topic, Sources: []contextSource{}, Context: "", Count: 0}
-		if len(results) == 0 {
-			return toolResultJSON(empty)
-		}
-
-		researchDir := config.ExpandPath(cfg.ResearchDir)
-		fresh := search.FilterFresh(results, researchDir, maxAge)
-		if len(fresh) == 0 {
-			return toolResultJSON(empty)
-		}
-
-		contents := search.ReadContents(fresh, researchDir)
-		formatted := search.FormatContext(contents)
-
-		// Build structured source metadata
-		seen := make(map[string]bool)
-		var sources []contextSource
-		for _, r := range fresh {
-			path := r.FilePath
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(researchDir, path)
-			}
-			if seen[path] {
-				continue
-			}
-			seen[path] = true
-
-			var freshness, modified string
-			if info, err := os.Stat(path); err == nil {
-				freshness = search.FreshnessLabel(info.ModTime())
-				modified = info.ModTime().Format("2006-01-02")
-			}
-
-			// Use grepai excerpt (truncated to keep response size reasonable)
-			excerpt := r.Content
-			if len(excerpt) > 500 {
-				excerpt = excerpt[:500] + "..."
-			}
-
-			sources = append(sources, contextSource{
-				FilePath:  r.FilePath,
-				Score:     r.Score,
-				Freshness: freshness,
-				Modified:  modified,
-				Excerpt:   excerpt,
-			})
-		}
-
-		return toolResultJSON(contextResult{
-			Topic:   topic,
-			Sources: sources,
-			Context: formatted,
-			Count:   len(sources),
-		})
+		return toolResultJSON(result)
 	}
 }
 
@@ -477,53 +415,21 @@ func listHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 func readTool() mcp.Tool {
 	return mcp.NewTool("researchguy_read",
-		mcp.WithDescription("Read a research document. Path is relative to the research directory (e.g. 'llm/agents.md')."),
-		mcp.WithString("path", mcp.Required(), mcp.Description("Relative path to the file (e.g. llm/agents.md)")),
+		mcp.WithDescription("Read a research document. Accepts a path relative to the research directory (e.g. 'llm/agents.md'), a file_path from researchguy_search/context results (e.g. 'sentinel-personal/the_poisoned_well/research/web/001-researcher-1.md'), or an absolute path inside a configured read root."),
+		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file (e.g. llm/agents.md)")),
 	)
 }
 
 func readHandler(cfg *config.Config) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		relPath, err := req.RequireString("path")
+		p, err := req.RequireString("path")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		researchDir := config.ExpandPath(cfg.ResearchDir)
-
-		// Prevent directory traversal
-		cleaned := filepath.Clean(relPath)
-		if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
-			return mcp.NewToolResultError("path must be relative to the research directory"), nil
-		}
-
-		fullPath := filepath.Join(researchDir, cleaned)
-
-		// Resolve through symlinks before boundary check.
-		resolvedPath, err := filepath.EvalSymlinks(fullPath)
+		absFile, err := resolveReadPath(cfg, p)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("reading file: %v", err)), nil
-		}
-
-		// Verify the resolved path is still within the research directory.
-		resolvedResearchDir, err := filepath.EvalSymlinks(researchDir)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("resolving research directory: %v", err)), nil
-		}
-		absResearch, err := filepath.Abs(resolvedResearchDir)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("resolving research directory: %v", err)), nil
-		}
-		absFile, err := filepath.Abs(resolvedPath)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("resolving file path: %v", err)), nil
-		}
-		rel, err := filepath.Rel(absResearch, absFile)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("resolving relative path: %v", err)), nil
-		}
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return mcp.NewToolResultError("path must be within the research directory"), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		data, err := os.ReadFile(absFile)
