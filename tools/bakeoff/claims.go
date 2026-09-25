@@ -142,6 +142,9 @@ func ExtractClaims(arm, topic string, d Doc) []Claim {
 			if len(plain) < minClaimLen {
 				continue
 			}
+			if looksLikeCitation(plain) {
+				continue
+			}
 			cites, attributed := resolveCites(s, d)
 			if !attributed {
 				continue
@@ -187,6 +190,19 @@ func resolveCites(s string, d Doc) (cites []string, attributed bool) {
 		}
 	}
 	return cites, true
+}
+
+var (
+	volPagesRe  = regexp.MustCompile(`\b\d+\s*(?:,\s*)?(?:no\.\s*\d+\s*)?\((?:1[5-9]|20)\d\d\)\s*:\s*\d+|:\s*\d+\s*[-\x{2013}]\s*\d+\.?$`)
+	publisherRe = regexp.MustCompile(`\([^()]*(?:Press|Publishing|Publishers|Books|Bloomsbury|Norton|Random House|Knopf|Penguin|Simon & Schuster|HarperCollins|Wiley|Routledge)[^()]*\)\.?$`)
+	sourceTagRe = regexp.MustCompile(`(?i)^(?:sources?|source text|summary via|see also|via)\b`)
+)
+
+// looksLikeCitation reports whether a sentence is a bibliography entry or a
+// source label rather than a claim: volume/issue/pages, a trailing
+// (Publisher, year), or a "Source:"-style lead.
+func looksLikeCitation(s string) bool {
+	return volPagesRe.MatchString(s) || publisherRe.MatchString(s) || sourceTagRe.MatchString(s)
 }
 
 // expandCiteNums turns "1, 3-5" into [1 3 4 5].

@@ -207,3 +207,28 @@ func TestReviewSheetRoundTripHidesArms(t *testing.T) {
 func srcEntry(title, author, date, url string) graph.SourceEntry {
 	return graph.SourceEntry{Title: title, Author: author, Date: date, URL: url}
 }
+
+func TestLooksLikeCitation(t *testing.T) {
+	cites := []string{
+		`C. Glenn Begley & Lee Ellis, "Raise Standards for Preclinical Cancer Research," Nature 483 (2012): 531-533.`,
+		"Perspectives on Psychological Science 15, no. 6 (2020): 1310-1328.",
+		"Naomi Oreskes and Erik Conway, Merchants of Doubt (Bloomsbury, 2010).",
+		"Summary via explorethearchive.com and factualamerica.com research aggregation",
+		"Sources: Reuters (Shiffman and Cooke, August 2013) obtained the training material.",
+	}
+	for _, c := range cites {
+		if !looksLikeCitation(c) {
+			t.Errorf("should be a citation: %q", c)
+		}
+	}
+	claims := []string{
+		"Oreskes and Conway's Merchants of Doubt (2010) traces the same personnel and playbook across tobacco and climate.",
+		"The panel predates the U-2 (first flight 1955) and OXCART, so it cannot have been designed to protect either program.",
+		"Retraction Watch now logs 60,000+ retractions (2024).",
+	}
+	for _, c := range claims {
+		if looksLikeCitation(c) {
+			t.Errorf("should be a claim: %q", c)
+		}
+	}
+}
