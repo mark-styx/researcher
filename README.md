@@ -69,8 +69,16 @@ researchguy search "entanglement"
 | `compare <topicA> <topicB>` | Side-by-side comparative analysis of two topics or documents |
 | `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
+| `context <topic>` | Existing research on a topic, formatted as an ask/dive would see it. Never calls an LLM |
 
 `dive`/`review`/`compare` accept `--no-research` (skip searching existing research for context) and `--max-age` (freshness filter, e.g. `90d`), same as `ask`. With the hybrid backend, they also accept `--mode` (`landscape`, `inquiry`) and `--branches` (effort/breadth dial) — see [Hybrid Backend](#hybrid-backend-modes-and-critics) below.
+
+For scripts and workflow engines:
+
+- `--json` on `ask`/`dive`/`review`/`compare` prints only `{"<answer|report|review|comparison>", "saved_to", "backend", "metadata"}` on stdout (progress goes to stderr). `search --json` prints hits with their grepai `project` and on-disk `path`. `context --json` prints `{"topic", "sources", "context", "count"}`.
+- `--out <path>` on `dive`/`review`/`compare` writes the report to that exact path and skips the LLM categorizer call.
+- `--project <name>` (repeatable) on every research command plus `search`/`context` picks which grepai workspace projects to search, overriding `grepai.projects`.
+- `--max-age none` turns off the freshness filter, e.g. to include past book research.
 
 ### Knowledge Graph
 
@@ -185,6 +193,15 @@ grepai:
   # shared index instead of bootstrapping a separate standalone one.
   workspace: ""
   project: ""
+  # Search several workspace projects at once (replaces "project" when set),
+  # e.g. [research, manipulation, the_poisoned_well]. Hits carry their project.
+  projects: []
+  # grepai's workspace registry, used to map hits back to files on disk.
+  workspace_file: ~/.grepai/workspace.yaml
+
+# Extra directories researchguy_read may open besides research_dir, e.g. the
+# roots of the other projects in grepai.projects.
+read_roots: []
 
 # Knowledge graph rollup (off by default)
 graph:
@@ -314,9 +331,14 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_search` | Raw semantic search across research (chunk results, no synthesis) |
 | `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researchguy_list` | List research files by category |
-| `researchguy_read` | Read a research document |
+| `researchguy_read` | Read a research document, a search hit's `file_path`, or a file under `read_roots` |
+| `researchguy_graph_list` | List graph nodes, optionally by type (default limit 100) |
+| `researchguy_graph_show` | One node with its outgoing and incoming edges |
+| `researchguy_graph_find` | Find nodes by `title`, `path`, or a metadata key (e.g. `url`) |
+| `researchguy_graph_add_node` | Create a node |
+| `researchguy_graph_add_edge` | Create an edge between existing nodes |
 
-`researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags). `researchguy_ask` additionally accepts `no_save`.
+`researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 
 ### Claude Code Configuration
 

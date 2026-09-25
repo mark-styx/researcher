@@ -31,6 +31,9 @@ extending it.
   mention), not evidence. Link it with `references` to what it concerns;
   once confirmed, create a `claim` that `supersedes` it rather than editing
   the lead into a claim.
+- Research older than `ask.max_age` (90d by default) is filtered out of
+  context. Pass `max_age: none` (MCP) or `--max-age none` (CLI) when older
+  material matters, such as past book research reached through `projects`.
 - `--no-research` / `no_research` on the CLI and MCP tools exists for the
   cases where you deliberately want a from-scratch answer; don't reach for
   it as a default.
@@ -48,6 +51,13 @@ extending it.
   `landscape`/`inquiry`), and the groundedness/narrative critic passes.
   Claude and Ollama backends are single-shot and ignore `Request.Mode`/
   `BranchCount` — that's intentional, not a gap to fix.
+- Context retrieval lives in `search.BuildContext`; the MCP context tool,
+  `researchguy context`, and the runner all use it. Keep it LLM-free.
+- Commands with `--json` must print nothing but the JSON on stdout. Send
+  progress and warnings to stderr.
+- grepai workspace hits come back as `<workspace>/<project>/<rel>`. Resolve
+  them with `search.Resolver` (reads `grepai.workspace_file`), never by
+  joining onto `research_dir`.
 - After `go install ./cmd/researchguy`, smoke-test the actual binary
   (`researchguy <cmd> --help`, or a real run against a scratch
   `RESEARCHGUY_CONFIG_DIR`) — most command wiring bugs don't show up in unit
