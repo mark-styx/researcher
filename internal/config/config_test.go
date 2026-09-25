@@ -298,3 +298,60 @@ func TestLoad_GrepaiWorkspace(t *testing.T) {
 		t.Errorf("Grepai.Project = %q, want %q", cfg.Grepai.Project, "research")
 	}
 }
+
+func TestGrepaiProjectList(t *testing.T) {
+	cases := []struct {
+		name string
+		g    GrepaiConfig
+		want []string
+	}{
+		{"none", GrepaiConfig{}, nil},
+		{"single project", GrepaiConfig{Project: "research"}, []string{"research"}},
+		{"projects win", GrepaiConfig{Project: "research", Projects: []string{"a", "b"}}, []string{"a", "b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.g.ProjectList()
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") || len(got) != len(tc.want) {
+				t.Fatalf("ProjectList() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoad_ProjectsAndReadRoots(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	yaml := `grepai:
+  workspace: sentinel-personal
+  projects: [research, manipulation]
+read_roots:
+  - ~/sentinel/books
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Grepai.ProjectList(); len(got) != 2 || got[1] != "manipulation" {
+		t.Fatalf("projects = %v", got)
+	}
+	if len(cfg.ReadRoots) != 1 || cfg.ReadRoots[0] != "~/sentinel/books" {
+		t.Fatalf("read_roots = %v", cfg.ReadRoots)
+	}
+	if cfg.Grepai.WorkspaceFile != "~/.grepai/workspace.yaml" {
+		t.Fatalf("workspace_file default lost: %q", cfg.Grepai.WorkspaceFile)
+	}
+}
+
+func TestDefaultYAML_NewFields(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(DefaultYAML), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Grepai.WorkspaceFile != "~/.grepai/workspace.yaml" || len(cfg.ReadRoots) != 0 || len(cfg.Grepai.Projects) != 0 {
+		t.Fatalf("grepai = %+v, read_roots = %v", cfg.Grepai, cfg.ReadRoots)
+	}
+}

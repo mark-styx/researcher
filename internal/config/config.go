@@ -20,6 +20,9 @@ type Config struct {
 	Grepai         GrepaiConfig    `yaml:"grepai"`
 	Ask            AskConfig       `yaml:"ask"`
 	Graph          GraphConfig     `yaml:"graph"`
+	// ReadRoots are extra directories researchguy_read may open besides
+	// research_dir (for example book repos searched through grepai.projects).
+	ReadRoots []string `yaml:"read_roots,omitempty"`
 }
 
 type GraphConfig struct {
@@ -81,6 +84,24 @@ type GrepaiConfig struct {
 	Binary    string `yaml:"binary"`
 	Workspace string `yaml:"workspace"`
 	Project   string `yaml:"project"`
+	// Projects searches several workspace projects at once. When set it
+	// replaces Project; Project alone still works as a one-element list.
+	Projects []string `yaml:"projects,omitempty"`
+	// WorkspaceFile is grepai's workspace registry, used to map workspace
+	// hit paths ("<workspace>/<project>/<rel>") back to files on disk.
+	WorkspaceFile string `yaml:"workspace_file,omitempty"`
+}
+
+// ProjectList returns the workspace projects to search: Projects if set,
+// otherwise Project as a one-element list, otherwise nil.
+func (g GrepaiConfig) ProjectList() []string {
+	if len(g.Projects) > 0 {
+		return g.Projects
+	}
+	if g.Project != "" {
+		return []string{g.Project}
+	}
+	return nil
 }
 
 const DefaultYAML = `# Research database location
@@ -132,14 +153,22 @@ scheduler:
 # If this research_dir is registered as a project inside a grepai workspace
 # (see "grepai workspace list"), set workspace/project so search hits the
 # workspace's shared index instead of a standalone local one. Leave both
-# blank for a plain, non-workspace grepai project.
+# blank for a plain, non-workspace grepai project. "projects" searches
+# several workspace projects at once (it replaces "project" when set).
+# workspace_file is grepai's registry, used to map hits back to real paths.
 grepai:
   auto_index: true
   binary: grepai
   workspace: ""
   project: ""
+  projects: []
+  workspace_file: ~/.grepai/workspace.yaml
 
-# ask command
+# Extra directories researchguy_read may open besides research_dir, e.g. the
+# roots of other grepai projects listed above.
+read_roots: []
+
+# ask command ("none" disables the freshness filter)
 ask:
   max_age: 90d
 
@@ -236,8 +265,9 @@ func defaults() *Config {
 			PIDFile:       "~/.researchguy/scheduler.pid",
 		},
 		Grepai: GrepaiConfig{
-			AutoIndex: true,
-			Binary:    "grepai",
+			AutoIndex:     true,
+			Binary:        "grepai",
+			WorkspaceFile: "~/.grepai/workspace.yaml",
 		},
 		Ask: AskConfig{
 			MaxAge: "90d",

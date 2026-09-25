@@ -16,19 +16,27 @@ import (
 )
 
 // SearchResult represents a single result from grepai --json output.
+// Project and Path are filled by Annotate, not by grepai.
 type SearchResult struct {
 	FilePath  string  `json:"file_path"`
 	StartLine int     `json:"start_line"`
 	EndLine   int     `json:"end_line"`
 	Score     float64 `json:"score"`
 	Content   string  `json:"content"`
+	Project   string  `json:"project,omitempty"`
+	Path      string  `json:"path,omitempty"`
 }
 
 // Query runs a grepai search against the research directory.
 func Query(cfg *config.Config, query string, limit int) (string, error) {
+	return QueryProjects(cfg, query, limit, nil)
+}
+
+// QueryProjects is Query with an optional project override (workspace mode).
+func QueryProjects(cfg *config.Config, query string, limit int, projects []string) (string, error) {
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
-	args := append([]string{"search", query, "--limit", strconv.Itoa(limit)}, workspaceArgs(cfg)...)
+	args := append([]string{"search", query, "--limit", strconv.Itoa(limit)}, workspaceArgs(cfg, projects)...)
 	cmd := exec.Command(cfg.Grepai.Binary, args...)
 	cmd.Dir = researchDir
 
@@ -45,9 +53,15 @@ func Query(cfg *config.Config, query string, limit int) (string, error) {
 
 // QueryJSON runs a grepai search with --json output and returns structured results.
 func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, error) {
+	return QueryJSONProjects(cfg, query, limit, nil)
+}
+
+// QueryJSONProjects is QueryJSON with an optional project override. Results
+// are annotated with their project and on-disk path.
+func QueryJSONProjects(cfg *config.Config, query string, limit int, projects []string) ([]SearchResult, error) {
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
-	args := append([]string{"search", query, "--limit", strconv.Itoa(limit), "--json"}, workspaceArgs(cfg)...)
+	args := append([]string{"search", query, "--limit", strconv.Itoa(limit), "--json"}, workspaceArgs(cfg, projects)...)
 	cmd := exec.Command(cfg.Grepai.Binary, args...)
 	cmd.Dir = researchDir
 
@@ -64,30 +78,41 @@ func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, err
 		return nil, fmt.Errorf("parsing grepai JSON: %w", err)
 	}
 
-	return results, nil
+	return Annotate(cfg, results), nil
 }
 
 // workspaceArgs returns the --workspace/--project flags for a grepai search
 // invocation when the research dir is registered inside a grepai workspace.
-// Returns nil for plain (non-workspace) grepai projects.
-func workspaceArgs(cfg *config.Config) []string {
+// projects overrides the configured project list when non-empty. Returns nil
+// for plain (non-workspace) grepai projects.
+func workspaceArgs(cfg *config.Config, projects []string) []string {
 	if cfg.Grepai.Workspace == "" {
 		return nil
 	}
+	if len(projects) == 0 {
+		projects = cfg.Grepai.ProjectList()
+	}
 	args := []string{"--workspace", cfg.Grepai.Workspace}
-	if cfg.Grepai.Project != "" {
-		args = append(args, "--project", cfg.Grepai.Project)
+	for _, p := range projects {
+		if p = strings.TrimSpace(p); p != "" {
+			args = append(args, "--project", p)
+		}
 	}
 	return args
 }
 
 // ParseMaxAge parses a duration string like "90d", "2w", "24h" into time.Duration.
-// Supported suffixes: d (days), w (weeks), h (hours).
+// Supported suffixes: d (days), w (weeks), h (hours). "none", "off", and
+// "all" return 0, which FilterFresh treats as no freshness filter.
 // Returns an error for empty or unparseable strings.
 func ParseMaxAge(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty max-age string")
+	}
+	switch strings.ToLower(s) {
+	case "none", "off", "all":
+		return 0, nil
 	}
 
 	suffix := s[len(s)-1]
@@ -114,16 +139,16 @@ func ParseMaxAge(s string) (time.Duration, error) {
 }
 
 // FilterFresh returns only results whose files have been modified within maxAge.
-// researchDir is the base directory; file paths in results are relative to it.
+// maxAge <= 0 disables the filter. Results use their resolved Path when set;
+// otherwise file paths are relative to researchDir.
 func FilterFresh(results []SearchResult, researchDir string, maxAge time.Duration) []SearchResult {
+	if maxAge <= 0 {
+		return results
+	}
 	cutoff := time.Now().Add(-maxAge)
 	var fresh []SearchResult
 	for _, r := range results {
-		path := r.FilePath
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(researchDir, path)
-		}
-		info, err := os.Stat(path)
+		info, err := os.Stat(resultPath(r, researchDir))
 		if err != nil {
 			continue // skip files we can't stat
 		}
@@ -140,10 +165,7 @@ func FilterFresh(results []SearchResult, researchDir string, maxAge time.Duratio
 func ReadContents(results []SearchResult, researchDir string) map[string]string {
 	contents := make(map[string]string)
 	for _, r := range results {
-		path := r.FilePath
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(researchDir, path)
-		}
+		path := resultPath(r, researchDir)
 		if _, ok := contents[path]; ok {
 			continue // already read
 		}
