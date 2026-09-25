@@ -69,6 +69,22 @@ func trimURL(u string) string {
 	}
 }
 
+// DocURLs returns the URLs a document cites: body, references, and sources
+// entries. Critic notes are left out, since they quote claims the critic
+// removed rather than sources the report relies on.
+func DocURLs(d Doc) []string {
+	urls := ExtractURLs(d.Body)
+	for _, r := range d.Refs {
+		urls = append(urls, r.URLs...)
+	}
+	for _, s := range d.Sources {
+		if strings.TrimSpace(s.URL) != "" {
+			urls = append(urls, strings.TrimSpace(s.URL))
+		}
+	}
+	return urls
+}
+
 // UniqueURLs maps normalized URL identity to the first raw URL seen for it.
 // URLs that fail to normalize are skipped.
 func UniqueURLs(urls []string) map[string]string {
@@ -89,6 +105,7 @@ func UniqueURLs(urls []string) map[string]string {
 // critic notes.
 func ParseDoc(md string) Doc {
 	var d Doc
+	md = stripRunHeader(md)
 
 	if m := sourcesJSON.FindStringSubmatchIndex(md); m != nil {
 		var entries []graph.SourceEntry
@@ -134,6 +151,22 @@ func ParseDoc(md string) Doc {
 	d.Critic = strings.TrimSpace(strings.Join(criticLines, "\n"))
 	d.Sections = splitSections(d.Body)
 	return d
+}
+
+var generatedLineRe = regexp.MustCompile(`(?m)^\*Generated: [^\n]*\| Backend: [^\n]*\*[ \t]*$`)
+
+// stripRunHeader drops researchguy's report header ("# <topic>", the
+// "*Generated: ... | Backend: ...*" line, and the rule after it). The topic
+// is the whole research brief, so leaving it in would count the brief's own
+// references as the report's claims.
+func stripRunHeader(md string) string {
+	loc := generatedLineRe.FindStringIndex(md)
+	if loc == nil {
+		return md
+	}
+	rest := strings.TrimLeft(md[loc[1]:], " \t\n")
+	rest = strings.TrimPrefix(rest, "---")
+	return strings.TrimLeft(rest, "\n")
 }
 
 func parseRefs(lines []string) []Ref {

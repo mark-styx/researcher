@@ -174,3 +174,29 @@ func TestCounterSentences(t *testing.T) {
 		t.Errorf("no limiting language should count 0, got %d", n)
 	}
 }
+
+func TestParseDocStripsDiveHeader(t *testing.T) {
+	md := "# ## 1.2 Brief title\n\n**Sources to Find:**\n- Weiner's *Legacy of Ashes* (2007) as the brief lists it\n\n*Generated: 2026-09-25 13:06 | Backend: hybrid*\n\n---\n\n# Report\n\nThe report says COINTELPRO ran for fifteen years (1956-1971) across the country.\n"
+	d := ParseDoc(md)
+	if strings.Contains(d.Body, "Legacy of Ashes") || strings.Contains(d.Body, "Generated:") {
+		t.Fatalf("brief header should be stripped:\n%s", d.Body)
+	}
+	if !strings.HasPrefix(d.Body, "# Report") {
+		t.Errorf("body should start at the report: %q", d.Body[:20])
+	}
+	if got := stripRunHeader("no header here\n*Generated: x*"); got != "no header here\n*Generated: x*" {
+		t.Errorf("no Backend field means no header: %q", got)
+	}
+}
+
+func TestDocURLsSkipsCriticNotes(t *testing.T) {
+	md := "Body cites https://body.example/a.\n\n## References\n\n1. Ref https://ref.example/b\n\n## Critic Notes\n\n- Removed claim citing https://critic.example/c\n"
+	got := DocURLs(ParseDoc(md))
+	want := []string{"https://body.example/a", "https://ref.example/b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DocURLs = %q, want %q", got, want)
+	}
+	if got := DocURLs(ParseDoc(bookwormSample)); !reflect.DeepEqual(got, []string{"https://example.com/lifton"}) {
+		t.Errorf("sources entries with URLs only: %q", got)
+	}
+}

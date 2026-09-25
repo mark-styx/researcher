@@ -121,7 +121,7 @@ type RunMetrics struct {
 }
 
 func measure(o Output) RunMetrics {
-	uniq := UniqueURLs(ExtractURLs(o.Raw))
+	uniq := UniqueURLs(DocURLs(o.Doc))
 	urls := make([]string, 0, len(uniq))
 	for _, k := range sortedKeys(uniq) {
 		urls = append(urls, uniq[k])
