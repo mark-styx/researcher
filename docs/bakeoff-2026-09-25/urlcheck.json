@@ -1,0 +1,998 @@
+{
+  "http://faculty.haas.berkeley.edu/dana_carney/pdf_my%20position%20on%20power%20poses.pdf": {
+    "url": "http://faculty.haas.berkeley.edu/dana_carney/pdf_my%20position%20on%20power%20poses.pdf",
+    "status": 200,
+    "final": "https://faculty.haas.berkeley.edu/dana_carney/pdf_my%20position%20on%20power%20poses.pdf",
+    "class": "ok"
+  },
+  "http://www.aarclibrary.org/publib/church/reports/book3/pdf/ChurchB3_1_COINTELPRO.pdf": {
+    "url": "http://www.aarclibrary.org/publib/church/reports/book3/pdf/ChurchB3_1_COINTELPRO.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://arxiv.org/abs/1605.09511": {
+    "url": "https://arxiv.org/abs/1605.09511",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://arxiv.org/pdf/2105.13020": {
+    "url": "https://arxiv.org/pdf/2105.13020",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://bitterwinter.org/the-truth-please-about-steven-hassan-1-the-bite-model-as-pseudoscience/": {
+    "url": "https://bitterwinter.org/the-truth-please-about-steven-hassan-1-the-bite-model-as-pseudoscience/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://blog.ucs.org/anita-desikan/how-tobacco-companies-created-the-disinformation-playbook/": {
+    "url": "https://blog.ucs.org/anita-desikan/how-tobacco-companies-created-the-disinformation-playbook/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://books.google.com/books/about/Ad_Hominem_Arguments.html?id=-HTQY_b1_84C": {
+    "url": "https://books.google.com/books/about/Ad_Hominem_Arguments.html?id=-HTQY_b1_84C",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://bps.stanford.edu/home/instances-scientific-misconduct/instances-scientific-misconduct-diederik-stapel": {
+    "url": "https://bps.stanford.edu/home/instances-scientific-misconduct/instances-scientific-misconduct-diederik-stapel",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://cct.biola.edu/riding-moral-elephant-review-jonathan-haidts-righteous-mind/": {
+    "url": "https://cct.biola.edu/riding-moral-elephant-review-jonathan-haidts-righteous-mind/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://cesnur.net/wp-content/uploads/2026/03/tjoc_10_2_2_introvigne.pdf": {
+    "url": "https://cesnur.net/wp-content/uploads/2026/03/tjoc_10_2_2_introvigne.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://climateinvestigations.org/global-climate-coalition-koch-exxon/": {
+    "url": "https://climateinvestigations.org/global-climate-coalition-koch-exxon/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://davidlingenfelter.substack.com/p/one-nation-under-blackmail-an-analytical": {
+    "url": "https://davidlingenfelter.substack.com/p/one-nation-under-blackmail-an-analytical",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://doi.org/10.1177/1745691620924463": {
+    "url": "https://doi.org/10.1177/1745691620924463",
+    "status": 403,
+    "final": "https://journals.sagepub.com/doi/10.1177/1745691620924463",
+    "class": "blocked"
+  },
+  "https://elifesciences.org/articles/71601": {
+    "url": "https://elifesciences.org/articles/71601",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/APA_Task_Force_on_Deceptive_and_Indirect_Methods_of_Persuasion_and_Control": {
+    "url": "https://en.wikipedia.org/wiki/APA_Task_Force_on_Deceptive_and_Indirect_Methods_of_Persuasion_and_Control",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/A_Frank_Statement": {
+    "url": "https://en.wikipedia.org/wiki/A_Frank_Statement",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Advancement_of_Sound_Science_Center": {
+    "url": "https://en.wikipedia.org/wiki/Advancement_of_Sound_Science_Center",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Asch_conformity_experiments": {
+    "url": "https://en.wikipedia.org/wiki/Asch_conformity_experiments",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Association_fallacy": {
+    "url": "https://en.wikipedia.org/wiki/Association_fallacy",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Bad-jacketing": {
+    "url": "https://en.wikipedia.org/wiki/Bad-jacketing",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Brainwashing:_The_Science_of_Thought_Control": {
+    "url": "https://en.wikipedia.org/wiki/Brainwashing:_The_Science_of_Thought_Control",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/CESNUR": {
+    "url": "https://en.wikipedia.org/wiki/CESNUR",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/COINTELPRO": {
+    "url": "https://en.wikipedia.org/wiki/COINTELPRO",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Cognitive_dissonance": {
+    "url": "https://en.wikipedia.org/wiki/Cognitive_dissonance",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Combating_Cult_Mind_Control": {
+    "url": "https://en.wikipedia.org/wiki/Combating_Cult_Mind_Control",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Cults_in_Our_Midst": {
+    "url": "https://en.wikipedia.org/wiki/Cults_in_Our_Midst",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/DARVO": {
+    "url": "https://en.wikipedia.org/wiki/DARVO",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Diederik_Stapel": {
+    "url": "https://en.wikipedia.org/wiki/Diederik_Stapel",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Dorothy_Martin_(spiritualist)": {
+    "url": "https://en.wikipedia.org/wiki/Dorothy_Martin_(spiritualist)",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Eileen_Barker": {
+    "url": "https://en.wikipedia.org/wiki/Eileen_Barker",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/FBI%E2%80%93King_letter": {
+    "url": "https://en.wikipedia.org/wiki/FBI%E2%80%93King_letter",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Fair_game_(Scientology)": {
+    "url": "https://en.wikipedia.org/wiki/Fair_game_(Scientology)",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Family_Jewels_(Central_Intelligence_Agency)": {
+    "url": "https://en.wikipedia.org/wiki/Family_Jewels_(Central_Intelligence_Agency)",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Hwang_affair": {
+    "url": "https://en.wikipedia.org/wiki/Hwang_affair",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/International_Cultic_Studies_Association": {
+    "url": "https://en.wikipedia.org/wiki/International_Cultic_Studies_Association",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Joint_Threat_Research_Intelligence_Group": {
+    "url": "https://en.wikipedia.org/wiki/Joint_Threat_Research_Intelligence_Group",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Limited_hangout": {
+    "url": "https://en.wikipedia.org/wiki/Limited_hangout",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/MKUltra": {
+    "url": "https://en.wikipedia.org/wiki/MKUltra",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Margaret_Singer": {
+    "url": "https://en.wikipedia.org/wiki/Margaret_Singer",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Merchants_of_Doubt": {
+    "url": "https://en.wikipedia.org/wiki/Merchants_of_Doubt",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Obedience_to_Authority:_An_Experimental_View": {
+    "url": "https://en.wikipedia.org/wiki/Obedience_to_Authority:_An_Experimental_View",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Operation_Mockingbird": {
+    "url": "https://en.wikipedia.org/wiki/Operation_Mockingbird",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Parallel_construction": {
+    "url": "https://en.wikipedia.org/wiki/Parallel_construction",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Pizzagate_conspiracy_theory": {
+    "url": "https://en.wikipedia.org/wiki/Pizzagate_conspiracy_theory",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Poisoning_the_well": {
+    "url": "https://en.wikipedia.org/wiki/Poisoning_the_well",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Replication_crisis": {
+    "url": "https://en.wikipedia.org/wiki/Replication_crisis",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Robert_Jay_Lifton": {
+    "url": "https://en.wikipedia.org/wiki/Robert_Jay_Lifton",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Sch%C3%B6n_scandal": {
+    "url": "https://en.wikipedia.org/wiki/Sch%C3%B6n_scandal",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/The_Righteous_Mind": {
+    "url": "https://en.wikipedia.org/wiki/The_Righteous_Mind",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Thinking,_Fast_and_Slow": {
+    "url": "https://en.wikipedia.org/wiki/Thinking,_Fast_and_Slow",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Thought-terminating_clich%C3%A9": {
+    "url": "https://en.wikipedia.org/wiki/Thought-terminating_clich%C3%A9",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Thought_Reform_and_the_Psychology_of_Totalism": {
+    "url": "https://en.wikipedia.org/wiki/Thought_Reform_and_the_Psychology_of_Totalism",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/Truth_Tobacco_Industry_Documents": {
+    "url": "https://en.wikipedia.org/wiki/Truth_Tobacco_Industry_Documents",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://en.wikipedia.org/wiki/When_Prophecy_Fails": {
+    "url": "https://en.wikipedia.org/wiki/When_Prophecy_Fails",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://factually.co/fact-checks/media/operation-mockingbird-documents-testimonies-revealed-b3a9c2": {
+    "url": "https://factually.co/fact-checks/media/operation-mockingbird-documents-testimonies-revealed-b3a9c2",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://factually.co/fact-checks/media/whitney-webb-profile-analysis-9e6ca9": {
+    "url": "https://factually.co/fact-checks/media/whitney-webb-profile-analysis-9e6ca9",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://foreignpolicy.com/2013/08/15/declassified-the-cias-secret-history-of-area-51/": {
+    "url": "https://foreignpolicy.com/2013/08/15/declassified-the-cias-secret-history-of-area-51/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://freedomofmind.com/cult-mind-control/bite-model-pdf-download/": {
+    "url": "https://freedomofmind.com/cult-mind-control/bite-model-pdf-download/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://freedomofmind.com/wp-content/uploads/2021/01/Dr-Hassan-Dissertation-Published.pdf": {
+    "url": "https://freedomofmind.com/wp-content/uploads/2021/01/Dr-Hassan-Dissertation-Published.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://grokipedia.com/page/Conspiracy_theory": {
+    "url": "https://grokipedia.com/page/Conspiracy_theory",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://gwern.net/doc/psychology/cognitive-bias/2025-kelly.pdf": {
+    "url": "https://gwern.net/doc/psychology/cognitive-bias/2025-kelly.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://history-matters.com/archive/jfk/cia/russholmes/104-10406/104-10406-10110/html/104-10406-10110_0002a.htm": {
+    "url": "https://history-matters.com/archive/jfk/cia/russholmes/104-10406/104-10406-10110/html/104-10406-10110_0002a.htm",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://internationalculticstudies.org/history/": {
+    "url": "https://internationalculticstudies.org/history/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://internationalculticstudies.org/icsa-classics/honoring-dr-robert-j-lifton-his-legacy-in-cultic-studies-and-beyond/": {
+    "url": "https://internationalculticstudies.org/icsa-classics/honoring-dr-robert-j-lifton-his-legacy-in-cultic-studies-and-beyond/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://internationalculticstudies.org/icsa-insights/eight-criteria-for-thought-reform-in-cults/": {
+    "url": "https://internationalculticstudies.org/icsa-insights/eight-criteria-for-thought-reform-in-cults/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://jamanetwork.com/journals/jama/fullarticle/2698337": {
+    "url": "https://jamanetwork.com/journals/jama/fullarticle/2698337",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journal.media-culture.org.au/index.php/mcjournal/article/view/1422": {
+    "url": "https://journal.media-culture.org.au/index.php/mcjournal/article/view/1422",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://journals.plos.org/plosmedicine/article?id=10.1371/journal.pmed.0020124": {
+    "url": "https://journals.plos.org/plosmedicine/article?id=10.1371/journal.pmed.0020124",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://journals.sagepub.com/doi/10.1177/0956797610383437": {
+    "url": "https://journals.sagepub.com/doi/10.1177/0956797610383437",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/0956797611417632": {
+    "url": "https://journals.sagepub.com/doi/10.1177/0956797611417632",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/0956797614553946": {
+    "url": "https://journals.sagepub.com/doi/10.1177/0956797614553946",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/1745691614551642": {
+    "url": "https://journals.sagepub.com/doi/10.1177/1745691614551642",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/1745691616652873": {
+    "url": "https://journals.sagepub.com/doi/10.1177/1745691616652873",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/1745691620924463": {
+    "url": "https://journals.sagepub.com/doi/10.1177/1745691620924463",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/1948550617693060": {
+    "url": "https://journals.sagepub.com/doi/10.1177/1948550617693060",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1177/25152459211007467": {
+    "url": "https://journals.sagepub.com/doi/10.1177/25152459211007467",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/10.1207/s15327957pspr0203_4": {
+    "url": "https://journals.sagepub.com/doi/10.1207/s15327957pspr0203_4",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/abs/10.1177/0956797611430953": {
+    "url": "https://journals.sagepub.com/doi/abs/10.1177/0956797611430953",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://journals.sagepub.com/doi/full/10.1177/00113921211034896": {
+    "url": "https://journals.sagepub.com/doi/full/10.1177/00113921211034896",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://law.justia.com/cases/federal/district-courts/FSupp/743/713/2593631/": {
+    "url": "https://law.justia.com/cases/federal/district-courts/FSupp/743/713/2593631/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://link.springer.com/article/10.1007/s11192-023-04896-y": {
+    "url": "https://link.springer.com/article/10.1007/s11192-023-04896-y",
+    "status": 200,
+    "final": "https://link.springer.com/article/10.1007/s11192-023-04896-y?error=cookies_not_supported\u0026code=4ad02677-76b8-4633-9955-b70001ae42ef",
+    "class": "ok"
+  },
+  "https://link.springer.com/article/10.1023/A:1007799929131": {
+    "url": "https://link.springer.com/article/10.1023/A:1007799929131",
+    "status": 200,
+    "final": "https://link.springer.com/article/10.1023/A:1007799929131?error=cookies_not_supported\u0026code=a05b1648-d8e8-4485-b4cf-b1d31edcbf56",
+    "class": "ok"
+  },
+  "https://link.springer.com/article/10.3758/s13423-012-0346-3": {
+    "url": "https://link.springer.com/article/10.3758/s13423-012-0346-3",
+    "status": 200,
+    "final": "https://link.springer.com/article/10.3758/s13423-012-0346-3?error=cookies_not_supported\u0026code=3727e1d4-ba01-49d8-994d-258a0d7270ca",
+    "class": "ok"
+  },
+  "https://logicalfallacy.org/posts/2026/02/thought-terminating-cliche/": {
+    "url": "https://logicalfallacy.org/posts/2026/02/thought-terminating-cliche/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://longform.org/posts/when-the-revolution-came-for-amy-cuddy": {
+    "url": "https://longform.org/posts/when-the-revolution-came-for-amy-cuddy",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://loveman.sdsu.edu/docs/1976Churchcommittee.pdf": {
+    "url": "https://loveman.sdsu.edu/docs/1976Churchcommittee.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://misinforeview.hks.harvard.edu/article/global-vaccination-badnews/": {
+    "url": "https://misinforeview.hks.harvard.edu/article/global-vaccination-badnews/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://nsarchive.gwu.edu/briefing-book/intelligence/2013-10-29/area-51-file-secret-aircraft-soviet-migs": {
+    "url": "https://nsarchive.gwu.edu/briefing-book/intelligence/2013-10-29/area-51-file-secret-aircraft-soviet-migs",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://nsarchive2.gwu.edu/NSAEBB/NSAEBB434/": {
+    "url": "https://nsarchive2.gwu.edu/NSAEBB/NSAEBB434/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://onlinelibrary.wiley.com/doi/10.1111/pops.12285": {
+    "url": "https://onlinelibrary.wiley.com/doi/10.1111/pops.12285",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://onlinelibrary.wiley.com/doi/abs/10.1002/jhbs.70043": {
+    "url": "https://onlinelibrary.wiley.com/doi/abs/10.1002/jhbs.70043",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://onlinelibrary.wiley.com/doi/full/10.1111/pops.12285": {
+    "url": "https://onlinelibrary.wiley.com/doi/full/10.1111/pops.12285",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1084585": {
+    "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1084585",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://philpapers.org/rec/WALPTW": {
+    "url": "https://philpapers.org/rec/WALPTW",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://psyberspace.com/stop-thinking-the-cognitive-science-of-thought-terminating-cliches/": {
+    "url": "https://psyberspace.com/stop-thinking-the-cognitive-science-of-thought-terminating-cliches/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://psycnet.apa.org/record/1979-27602-001": {
+    "url": "https://psycnet.apa.org/record/1979-27602-001",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://pubmed.ncbi.nlm.nih.gov/19209958/": {
+    "url": "https://pubmed.ncbi.nlm.nih.gov/19209958/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://pubmed.ncbi.nlm.nih.gov/37154429/": {
+    "url": "https://pubmed.ncbi.nlm.nih.gov/37154429/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://pubsonline.informs.org/doi/10.1287/orsc.2021.1440": {
+    "url": "https://pubsonline.informs.org/doi/10.1287/orsc.2021.1440",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://retractionwatch.com/": {
+    "url": "https://retractionwatch.com/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://retractionwatch.com/2015/12/08/diederik-stapel-now-has-58-retractions": {
+    "url": "https://retractionwatch.com/2015/12/08/diederik-stapel-now-has-58-retractions",
+    "status": 200,
+    "final": "https://retractionwatch.com/2015/12/08/diederik-stapel-now-has-58-retractions/",
+    "class": "ok"
+  },
+  "https://retractionwatch.com/2017/02/20/placed-much-faith-underpowered-studies-nobel-prize-winner-admits-mistakes/": {
+    "url": "https://retractionwatch.com/2017/02/20/placed-much-faith-underpowered-studies-nobel-prize-winner-admits-mistakes/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://rewirenewsgroup.com/2019/06/21/nxivm-scam-is-dead-but-brainwashing-pseudoscience-lives-on/": {
+    "url": "https://rewirenewsgroup.com/2019/06/21/nxivm-scam-is-dead-but-brainwashing-pseudoscience-lives-on/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://sites.stat.columbia.edu/gelman/research/published/psych_crisis_minipaper3.pdf": {
+    "url": "https://sites.stat.columbia.edu/gelman/research/published/psych_crisis_minipaper3.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://sites.stat.columbia.edu/gelman/research/unpublished/Forking_paths.pdf": {
+    "url": "https://sites.stat.columbia.edu/gelman/research/unpublished/Forking_paths.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://slate.com/human-interest/2021/06/steven-hassan-former-moonie-trumpism-cult-theory.html": {
+    "url": "https://slate.com/human-interest/2021/06/steven-hassan-former-moonie-trumpism-cult-theory.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://slate.com/technology/2017/10/did-power-posing-guru-amy-cuddy-deserve-her-public-shaming.html": {
+    "url": "https://slate.com/technology/2017/10/did-power-posing-guru-amy-cuddy-deserve-her-public-shaming.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://slate.com/technology/2019/06/science-replication-conservatives-liberals-reacting-to-threats.html": {
+    "url": "https://slate.com/technology/2019/06/science-replication-conservatives-liberals-reacting-to-threats.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://social-epistemology.com/2023/08/10/conspiracy-theory-and-the-bodyguard-of-lies-the-bennewitz-matter-mark-d-west/": {
+    "url": "https://social-epistemology.com/2023/08/10/conspiracy-theory-and-the-bodyguard-of-lies-the-bennewitz-matter-mark-d-west/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://statmodeling.stat.columbia.edu/": {
+    "url": "https://statmodeling.stat.columbia.edu/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://statmodeling.stat.columbia.edu/2016/09/21/what-has-happened-down-here-is-the-winds-have-changed/": {
+    "url": "https://statmodeling.stat.columbia.edu/2016/09/21/what-has-happened-down-here-is-the-winds-have-changed/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://statmodeling.stat.columbia.edu/2017/10/18/beyond-power-pose-using-replication-failures-better-understanding-data-collection-analysis-better-science/": {
+    "url": "https://statmodeling.stat.columbia.edu/2017/10/18/beyond-power-pose-using-replication-failures-better-understanding-data-collection-analysis-better-science/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://stevenhassan.substack.com/p/qanon-and-the-bite-model-control-of-behavior-information-thoughts-and-emotions": {
+    "url": "https://stevenhassan.substack.com/p/qanon-and-the-bite-model-control-of-behavior-information-thoughts-and-emotions",
+    "status": 200,
+    "final": "https://stevenhassan.freedomofmind.com/p/qanon-and-the-bite-model-control-of-behavior-information-thoughts-and-emotions",
+    "class": "ok"
+  },
+  "https://stevenhassan.substack.com/p/robert-jay-liftons-eight-criteria-of-thought-reform-brainwashing-mind-control": {
+    "url": "https://stevenhassan.substack.com/p/robert-jay-liftons-eight-criteria-of-thought-reform-brainwashing-mind-control",
+    "status": 200,
+    "final": "https://stevenhassan.freedomofmind.com/p/robert-jay-liftons-eight-criteria-of-thought-reform-brainwashing-mind-control",
+    "class": "ok"
+  },
+  "https://theintercept.com/2014/02/24/jtrig-manipulation/": {
+    "url": "https://theintercept.com/2014/02/24/jtrig-manipulation/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://theintercept.com/2020/06/02/history-united-states-government-infiltration-protests/": {
+    "url": "https://theintercept.com/2020/06/02/history-united-states-government-infiltration-protests/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://thenewpress.org/books/losing-reality/": {
+    "url": "https://thenewpress.org/books/losing-reality/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://tonyortega.org/2024/07/02/courts-have-no-excuse-scientologys-fair-game-harassment-exposed-early-on/": {
+    "url": "https://tonyortega.org/2024/07/02/courts-have-no-excuse-scientologys-fair-game-harassment-exposed-early-on/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://unredacted.com/2013/10/25/the-family-jewels-then-and-now/": {
+    "url": "https://unredacted.com/2013/10/25/the-family-jewels-then-and-now/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://vault.fbi.gov/cointel-pro": {
+    "url": "https://vault.fbi.gov/cointel-pro",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://web.ma.utexas.edu/users/mks/statmistakes/filedrawer.html": {
+    "url": "https://web.ma.utexas.edu/users/mks/statmistakes/filedrawer.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.adl.org/resources/backgrounder/qanon": {
+    "url": "https://www.adl.org/resources/backgrounder/qanon",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.bitss.org/education/mooc-parent-page/week-1/introduction-to-research-transparency-and-the-scientific-ethos/mertons-norms-and-the-scientific-ethos/": {
+    "url": "https://www.bitss.org/education/mooc-parent-page/week-1/introduction-to-research-transparency-and-the-scientific-ethos/mertons-norms-and-the-scientific-ethos/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.carlbernstein.com/magazine_cia_and_media.php": {
+    "url": "https://www.carlbernstein.com/magazine_cia_and_media.php",
+    "status": 404,
+    "class": "dead"
+  },
+  "https://www.cbsnews.com/live-updates/epstein-files-released-documents-2025/": {
+    "url": "https://www.cbsnews.com/live-updates/epstein-files-released-documents-2025/",
+    "status": 406,
+    "class": "error"
+  },
+  "https://www.cesnur.org/testi/gandow_eng.htm": {
+    "url": "https://www.cesnur.org/testi/gandow_eng.htm",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cia.gov/readingroom/docs/PROJECT%20MOCKINGBIRD%5B15770719%5D.pdf": {
+    "url": "https://www.cia.gov/readingroom/docs/PROJECT%20MOCKINGBIRD%5B15770719%5D.pdf",
+    "status": 200,
+    "final": "https://www.cia.gov/readingroom/",
+    "class": "ok"
+  },
+  "https://www.cia.gov/resources/csi/static/The-White-House-Helms-and-Watergate-1.pdf": {
+    "url": "https://www.cia.gov/resources/csi/static/The-White-House-Helms-and-Watergate-1.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.congress.gov/119/plaws/publ38/PLAW-119publ38.pdf": {
+    "url": "https://www.congress.gov/119/plaws/publ38/PLAW-119publ38.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cos.io/initiatives/registered-reports": {
+    "url": "https://www.cos.io/initiatives/registered-reports",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cos.io/team/brian-nosek": {
+    "url": "https://www.cos.io/team/brian-nosek",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cs.cmu.edu/~dst/Fishman/time-behar.html": {
+    "url": "https://www.cs.cmu.edu/~dst/Fishman/time-behar.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cs.cmu.edu/~dst/NXIVM/esp11.html": {
+    "url": "https://www.cs.cmu.edu/~dst/NXIVM/esp11.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.cultrecover.com/lifton8": {
+    "url": "https://www.cultrecover.com/lifton8",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.decisionsciencenews.com/?p=3634": {
+    "url": "https://www.decisionsciencenews.com/?p=3634",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.democracynow.org/2025/9/8/remembering_robert_jay_lifton_archival_interview": {
+    "url": "https://www.democracynow.org/2025/9/8/remembering_robert_jay_lifton_archival_interview",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.discovermagazine.com/mind/terrorist-fiske-jab-revisited": {
+    "url": "https://www.discovermagazine.com/mind/terrorist-fiske-jab-revisited",
+    "status": 200,
+    "final": "https://www.discovermagazine.com/terrorist-fiske-jab-revisited-40121",
+    "class": "ok"
+  },
+  "https://www.eff.org/deeplinks/2013/08/dea-and-nsa-team-intelligence-laundering": {
+    "url": "https://www.eff.org/deeplinks/2013/08/dea-and-nsa-team-intelligence-laundering",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.eff.org/deeplinks/2014/11/fbis-suicide-letter-dr-martin-luther-king-jr-and-dangers-unchecked-surveillance": {
+    "url": "https://www.eff.org/deeplinks/2014/11/fbis-suicide-letter-dr-martin-luther-king-jr-and-dangers-unchecked-surveillance",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.factualamerica.com/conspiracy-critic/brainwash-or-balderdash-unraveling-the-cias-mind-bending-mk-ultra-saga": {
+    "url": "https://www.factualamerica.com/conspiracy-critic/brainwash-or-balderdash-unraveling-the-cias-mind-bending-mk-ultra-saga",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.fifthestate.org/archive/334-summer-1990/fbi-war-on-the-black-panthers/": {
+    "url": "https://www.fifthestate.org/archive/334-summer-1990/fbi-war-on-the-black-panthers/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.goodreads.com/book/show/1224206.The_Cultural_Cold_War": {
+    "url": "https://www.goodreads.com/book/show/1224206.The_Cultural_Cold_War",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.goodreads.com/book/show/51074723-one-nation-under-blackmail---vol-1": {
+    "url": "https://www.goodreads.com/book/show/51074723-one-nation-under-blackmail---vol-1",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.hrw.org/report/2018/01/09/dark-side/secret-origins-evidence-us-criminal-cases": {
+    "url": "https://www.hrw.org/report/2018/01/09/dark-side/secret-origins-evidence-us-criminal-cases",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.huffpost.com/entry/exair-force-law-enforceme_b_5312650": {
+    "url": "https://www.huffpost.com/entry/exair-force-law-enforceme_b_5312650",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.intelligence.senate.gov/wp-content/uploads/2024/08/sites-default-files-hearings-95mkultra.pdf": {
+    "url": "https://www.intelligence.senate.gov/wp-content/uploads/2024/08/sites-default-files-hearings-95mkultra.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.jjfreyd.com/darvo": {
+    "url": "https://www.jjfreyd.com/darvo",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.justice.gov/opa/pr/department-justice-publishes-35-million-responsive-pages-compliance-epstein-files": {
+    "url": "https://www.justice.gov/opa/pr/department-justice-publishes-35-million-responsive-pages-compliance-epstein-files",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.lib.berkeley.edu/about/news/fbi": {
+    "url": "https://www.lib.berkeley.edu/about/news/fbi",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.merchantsofdoubt.org/": {
+    "url": "https://www.merchantsofdoubt.org/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.muckrock.com/news/archives/2019/feb/13/fbi-cointelpro-forgery/": {
+    "url": "https://www.muckrock.com/news/archives/2019/feb/13/fbi-cointelpro-forgery/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.nature.com/articles/483531a": {
+    "url": "https://www.nature.com/articles/483531a",
+    "status": 200,
+    "final": "https://www.nature.com/articles/483531a?error=cookies_not_supported\u0026code=5121f9be-af79-4277-ac68-7c9671132d6f",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/d41586-019-01307-2": {
+    "url": "https://www.nature.com/articles/d41586-019-01307-2",
+    "status": 200,
+    "final": "https://www.nature.com/articles/d41586-019-01307-2?error=cookies_not_supported\u0026code=5c7fb36f-ee4d-403b-8101-0926327e3445",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/d41586-023-03974-8": {
+    "url": "https://www.nature.com/articles/d41586-023-03974-8",
+    "status": 200,
+    "final": "https://www.nature.com/articles/d41586-023-03974-8?error=cookies_not_supported\u0026code=a292ea7c-1ba6-49a3-820a-06ac7ec26585",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/nrd3439-c1": {
+    "url": "https://www.nature.com/articles/nrd3439-c1",
+    "status": 200,
+    "final": "https://www.nature.com/articles/nrd3439-c1?error=cookies_not_supported\u0026code=92cceaf9-e0a4-4450-a0b3-044efe830a4f",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/s41562-018-0399-z": {
+    "url": "https://www.nature.com/articles/s41562-018-0399-z",
+    "status": 200,
+    "final": "https://www.nature.com/articles/s41562-018-0399-z?error=cookies_not_supported\u0026code=c7f8ba30-91ec-4a11-8c65-2e951de88ad5",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/s41598-025-10331-4": {
+    "url": "https://www.nature.com/articles/s41598-025-10331-4",
+    "status": 200,
+    "final": "https://www.nature.com/articles/s41598-025-10331-4?error=cookies_not_supported\u0026code=8f286222-c671-4ec2-9f92-91e02c6538e7",
+    "class": "ok"
+  },
+  "https://www.nature.com/articles/s44271-023-00003-2": {
+    "url": "https://www.nature.com/articles/s44271-023-00003-2",
+    "status": 200,
+    "final": "https://www.nature.com/articles/s44271-023-00003-2?error=cookies_not_supported\u0026code=04a886c4-9140-43c6-ac00-0a69de3b8308",
+    "class": "ok"
+  },
+  "https://www.nbcnews.com/sciencemain/area-51-its-purpose-declassified-no-ufos-lots-u-2-6c10931555": {
+    "url": "https://www.nbcnews.com/sciencemain/area-51-its-purpose-declassified-no-ufos-lots-u-2-6c10931555",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5329006/": {
+    "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5329006/",
+    "status": 200,
+    "final": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5329006/",
+    "class": "ok"
+  },
+  "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5387793/": {
+    "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5387793/",
+    "status": 200,
+    "final": "https://pmc.ncbi.nlm.nih.gov/articles/PMC5387793/",
+    "class": "ok"
+  },
+  "https://www.nejm.org/doi/full/10.1056/NEJMsa065779": {
+    "url": "https://www.nejm.org/doi/full/10.1056/NEJMsa065779",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.newsnationnow.com/politics/pizzagate-epstein-investigation-clinton-depositions/": {
+    "url": "https://www.newsnationnow.com/politics/pizzagate-epstein-investigation-clinton-depositions/",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.nixonlibrary.gov/sites/default/files/forresearchers/find/tapes/watergate/trial/exhibit_18.pdf": {
+    "url": "https://www.nixonlibrary.gov/sites/default/files/forresearchers/find/tapes/watergate/trial/exhibit_18.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.npr.org/2024/01/04/1222857174/jeffrey-epstein-julie-k-brown-documents-clinton-trump-prince-andrew": {
+    "url": "https://www.npr.org/2024/01/04/1222857174/jeffrey-epstein-julie-k-brown-documents-clinton-trump-prince-andrew",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.pnas.org/doi/10.1073/pnas.1212247109": {
+    "url": "https://www.pnas.org/doi/10.1073/pnas.1212247109",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.psychologicalscience.org/observer/a-call-to-change-sciences-culture-of-shaming": {
+    "url": "https://www.psychologicalscience.org/observer/a-call-to-change-sciences-culture-of-shaming",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.psychologicalscience.org/observer/derailed-the-rise-and-fall-of-diederik-stapel": {
+    "url": "https://www.psychologicalscience.org/observer/derailed-the-rise-and-fall-of-diederik-stapel",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.psychologicalscience.org/publications/observer/obsonline/draft-of-observer-column-sparks-strong-social-media-response.html": {
+    "url": "https://www.psychologicalscience.org/publications/observer/obsonline/draft-of-observer-column-sparks-strong-social-media-response.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.psychologytoday.com/us/blog/freedom-of-mind/202506/why-do-doomsday-believers-double-down-when-prophecy-fails": {
+    "url": "https://www.psychologytoday.com/us/blog/freedom-of-mind/202506/why-do-doomsday-believers-double-down-when-prophecy-fails",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.rand.org/content/dam/rand/pubs/perspectives/PE100/PE198/RAND_PE198.pdf": {
+    "url": "https://www.rand.org/content/dam/rand/pubs/perspectives/PE100/PE198/RAND_PE198.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.rand.org/pubs/perspectives/PE198.html": {
+    "url": "https://www.rand.org/pubs/perspectives/PE198.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.researchgate.net/publication/348419785_THE_BITE_MODEL_OF_AUTHORITARIAN_CONTROL_UNDUE_INFLUENCE_THOUGHT_REFORM_BRAINWASHING_MIND_CONTROL_TRAFFICKING_AND_THE_LAW_A_dissertation_submitted": {
+    "url": "https://www.researchgate.net/publication/348419785_THE_BITE_MODEL_OF_AUTHORITARIAN_CONTROL_UNDUE_INFLUENCE_THOUGHT_REFORM_BRAINWASHING_MIND_CONTROL_TRAFFICKING_AND_THE_LAW_A_dissertation_submitted",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.rollingstone.com/feature/anatomy-of-a-fake-news-scandal-125877/": {
+    "url": "https://www.rollingstone.com/feature/anatomy-of-a-fake-news-scandal-125877/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.science.org/content/article/final-report-stapel-affair-points-bigger-problems-social-psychology": {
+    "url": "https://www.science.org/content/article/final-report-stapel-affair-points-bigger-problems-social-psychology",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/content/article/fraudulent-data-set-raise-questions-about-superstar-honesty-researcher": {
+    "url": "https://www.science.org/content/article/fraudulent-data-set-raise-questions-about-superstar-honesty-researcher",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/doi/10.1126/sciadv.abo6254": {
+    "url": "https://www.science.org/doi/10.1126/sciadv.abo6254",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/doi/10.1126/science.1255484": {
+    "url": "https://www.science.org/doi/10.1126/science.1255484",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/doi/10.1126/science.aac4716": {
+    "url": "https://www.science.org/doi/10.1126/science.aac4716",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/doi/10.1126/science.aad7243": {
+    "url": "https://www.science.org/doi/10.1126/science.aad7243",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.science.org/doi/10.1126/science.aaf0918": {
+    "url": "https://www.science.org/doi/10.1126/science.aaf0918",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.sciencedirect.com/science/article/abs/pii/S0749597820304015": {
+    "url": "https://www.sciencedirect.com/science/article/abs/pii/S0749597820304015",
+    "status": 400,
+    "final": "https://www.sciencedirect.com/user/error/ATN-20?errorContext=arp-56fae960-0a6b-431b-8002-57dabff01138",
+    "class": "error"
+  },
+  "https://www.sciencedirect.com/science/article/abs/pii/S2352250X16300215": {
+    "url": "https://www.sciencedirect.com/science/article/abs/pii/S2352250X16300215",
+    "status": 400,
+    "final": "https://www.sciencedirect.com/user/error/ATN-20?errorContext=arp-158645e8-2b90-476c-b9a9-11bb96384524",
+    "class": "error"
+  },
+  "https://www.senate.gov/about/powers-procedures/investigations/church-committee.htm": {
+    "url": "https://www.senate.gov/about/powers-procedures/investigations/church-committee.htm",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.simplypsychology.org/asch-conformity.html": {
+    "url": "https://www.simplypsychology.org/asch-conformity.html",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.snopes.com/fact-check/cia-invent-conspiracy-theory/": {
+    "url": "https://www.snopes.com/fact-check/cia-invent-conspiracy-theory/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.snopes.com/fact-check/pizzagate-epstein-files-claims/": {
+    "url": "https://www.snopes.com/fact-check/pizzagate-epstein-files-claims/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.snopes.com/fact-check/pizzagate-epstein-files/": {
+    "url": "https://www.snopes.com/fact-check/pizzagate-epstein-files/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.sourcewatch.org/index.php/Tobacco_industry_front_groups": {
+    "url": "https://www.sourcewatch.org/index.php/Tobacco_industry_front_groups",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.tandfonline.com/doi/full/10.1080/10926771.2020.1774695": {
+    "url": "https://www.tandfonline.com/doi/full/10.1080/10926771.2020.1774695",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.techdirt.com/2014/02/03/parallel-construction-revealed-how-dea-is-trained-to-launder-classified-surveillance-info/": {
+    "url": "https://www.techdirt.com/2014/02/03/parallel-construction-revealed-how-dea-is-trained-to-launder-classified-surveillance-info/",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(09)60329-9/fulltext": {
+    "url": "https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(09)60329-9/fulltext",
+    "status": 403,
+    "class": "blocked"
+  },
+  "https://www.tilburguniversity.edu/sites/default/files/download/Final%20report%20Flawed%20Science_2.pdf": {
+    "url": "https://www.tilburguniversity.edu/sites/default/files/download/Final%20report%20Flawed%20Science_2.pdf",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.ucs.org/resources/how-fossil-fuel-lobbyists-used-astroturf-front-groups-confuse-public": {
+    "url": "https://www.ucs.org/resources/how-fossil-fuel-lobbyists-used-astroturf-front-groups-confuse-public",
+    "status": 200,
+    "class": "ok"
+  },
+  "https://www.universetoday.com/articles/cias-declassified-documents-reveals-secrets-about-area-51-and-ufos": {
+    "url": "https://www.universetoday.com/articles/cias-declassified-documents-reveals-secrets-about-area-51-and-ufos",
+    "status": 200,
+    "class": "ok"
+  }
+}

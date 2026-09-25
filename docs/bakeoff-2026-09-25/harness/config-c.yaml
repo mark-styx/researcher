@@ -1,0 +1,27 @@
+research_dir: /private/tmp/claude-501/-Users-mark/900bf9b6-5220-4175-b726-d691d0656871/scratchpad/bakeoff/research-c
+default_backend: hybrid
+claude:
+  binary: claude
+  model: opus
+  max_turns: 50
+  max_budget_usd: 3
+ollama:
+  host: http://localhost:11434
+  model: qwen3-coder-next
+  fallback_model: nemotron
+hybrid:
+  worker_backend: claude
+  worker_models: [sonnet]
+  aggregator_backend: claude
+  aggregator_model: opus
+  verifier_backend: claude
+  verifier_model: sonnet
+  enable_verification: true
+  max_parallel: 2
+tools:
+  enabled: true
+  max_iterations: 20
+  max_results: 10
+grepai:
+  auto_index: false
+  binary: grepai

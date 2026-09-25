@@ -293,9 +293,13 @@ researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 - `--mode inquiry` — for open-ended or contested claims. Branches: primary evidence, counter-evidence/disconfirming cases, funding and institutional provenance, independent replication, narrative-vs-evidence gap.
 - `--branches <n>` — how many angles to investigate, decoupled from how many worker models are configured (models are reused round-robin if `n` exceeds `worker_models` length).
 
+Without `--branches`, the count defaults to the number of worker models (2 by default), so `--mode inquiry` covers only its first two angles. Pass `--branches 5` for all of them.
+
 Both critic passes are visible in the saved output under a `## Critic Notes` section, not silently folded into the answer:
 - **Groundedness critic** — revises the draft to keep only evidence-backed claims, and reports what it removed/softened and why.
 - **Narrative-vs-evidence critic** — doesn't rewrite anything; flags claims stated as settled/consensus that aren't tied to a distinct piece of worker evidence.
+
+`docs/bakeoff-2026-09-25.md` compares this backend with bookworm's researcher on cost, time, sourcing, and critic value; `go run ./tools/bakeoff` is the measuring tool it used.
 
 ## File Organization
 
