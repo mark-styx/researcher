@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/marklubin/researchguy/internal/config"
-	_ "modernc.org/sqlite"
+	"github.com/marklubin/researchguy/internal/sqlitedb"
 )
 
 type Store struct {
@@ -17,7 +17,7 @@ type Store struct {
 
 func NewStore(cfg *config.Config) (*Store, error) {
 	dbPath := filepath.Join(config.Dir(), "tasks.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlitedb.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
