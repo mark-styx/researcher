@@ -93,6 +93,13 @@ For scripts and workflow engines:
 
 Node structure/relationships live in `~/.researchguy/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). A `lead` is an unconfirmed breadcrumb (a forum comment, an offhand mention) worth chasing but not evidence: link it to what it concerns with a `references` edge, and when it's confirmed, add a `claim` that `supersedes` it. There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
 
+### Book bibliographies (source graph)
+
+`researchguy graph import-sources --book <slug> --file <book>/research/sources.json --title "<title>" --path <book>/research` records a bookworm bibliography: one `report` node for the book, one `source` node per distinct URL shared across every book that cites it, and a `references` edge from the book to each source. URLs are keyed after normalization (http/https, `www.`, trailing slash, fragments, and `utm_*`/click-ID parameters don't count as differences; keys live in the `node_keys` table). Re-running is safe; per-book notes are appended, never overwritten. bookworm runs this automatically after research when `research.researchguy.enabled` is on.
+
+- `researchguy graph list --type source --cited-by-min 2` lists sources cited by two or more books, most-cited first.
+- `researchguy graph show <url>` resolves a URL to its source node and lists the books that cite it.
+
 ### Node rollup (keeping summaries fresh)
 
 A node's `Summary` is set at creation time and otherwise static. With `graph.rollup.enabled: true` in config, `researchguy daemon start` also polls for nodes whose linked file has changed since it was last summarized (mtime-based) and re-summarizes them with the LLM — capped at `graph.rollup.max_per_cycle` per poll so one tick can't burn through LLM budget resummarizing everything at once.

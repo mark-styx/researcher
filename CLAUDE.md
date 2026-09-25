@@ -27,6 +27,11 @@ extending it.
   (`researchguy graph show <id>` to inspect it) rather than creating a
   duplicate. There's no automated entity-resolution/dedup yet (see the graph
   storage commit for why), so this check is manual until that exists.
+- Book bibliographies are in the graph (`graph import-sources`). Before
+  creating a `source` node for a URL, resolve it with `graph show <url>` or
+  `researchguy_graph_find` (key `url`): both match normalized variants, so
+  a hit means the source already exists and should get a new edge, not a
+  duplicate node. Register new identity keys with `Store.SetNodeKey`.
 - A `lead` node is an unconfirmed breadcrumb (forum comment, offhand
   mention), not evidence. Link it with `references` to what it concerns;
   once confirmed, create a `claim` that `supersedes` it rather than editing
