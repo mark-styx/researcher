@@ -413,10 +413,16 @@ func listHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 // --- researchguy_read ---
 
+// maxReadBytes caps a researchguy_read response so one large file (combined
+// book research runs to hundreds of KB) can't flood the caller's context.
+var maxReadBytes = 100_000
+
 func readTool() mcp.Tool {
 	return mcp.NewTool("researchguy_read",
-		mcp.WithDescription("Read a research document. Accepts a path relative to the research directory (e.g. 'llm/agents.md'), a file_path from researchguy_search/context results (e.g. 'sentinel-personal/the_poisoned_well/research/web/001-researcher-1.md'), or an absolute path inside a configured read root."),
+		mcp.WithDescription("Read a research document. Accepts a path relative to the research directory (e.g. 'llm/agents.md'), a file_path from researchguy_search/context results (e.g. 'sentinel-personal/the_poisoned_well/research/web/001-researcher-1.md'), or an absolute path inside a configured read root. Output is capped at 100KB; use start_line/end_line (search hits carry them) to read part of a large file."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Path to the file (e.g. llm/agents.md)")),
+		mcp.WithNumber("start_line", mcp.Description("First line to return, 1-based (default 1)")),
+		mcp.WithNumber("end_line", mcp.Description("Last line to return, inclusive (default: end of file)")),
 	)
 }
 
@@ -436,8 +442,29 @@ func readHandler(cfg *config.Config) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("reading file: %v", err)), nil
 		}
+		text := string(data)
 
-		return mcp.NewToolResultText(string(data)), nil
+		start, end := req.GetInt("start_line", 0), req.GetInt("end_line", 0)
+		if start > 0 || end > 0 {
+			lines := strings.Split(text, "\n")
+			if start < 1 {
+				start = 1
+			}
+			if end <= 0 || end > len(lines) {
+				end = len(lines)
+			}
+			if start > len(lines) || start > end {
+				return mcp.NewToolResultError(fmt.Sprintf("line range %d-%d is outside the file (%d lines)", start, end, len(lines))), nil
+			}
+			text = strings.Join(lines[start-1:end], "\n")
+		}
+
+		if len(text) > maxReadBytes {
+			total := len(text)
+			text = search.TruncateBytes(text, maxReadBytes) +
+				fmt.Sprintf("\n\n[truncated: %d of %d bytes shown; pass start_line/end_line to read more]", maxReadBytes, total)
+		}
+		return mcp.NewToolResultText(text), nil
 	}
 }
 

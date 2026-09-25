@@ -241,3 +241,36 @@ func TestRead_ReadRootsDenied(t *testing.T) {
 		})
 	}
 }
+
+func TestRead_LineRangeAndCap(t *testing.T) {
+	cfg := testConfig(t)
+	var lines []string
+	for i := 1; i <= 50; i++ {
+		lines = append(lines, "line "+strings.Repeat("x", i%3)+string(rune('0'+i%10)))
+	}
+	path := filepath.Join(cfg.ResearchDir, "f.md")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := extractText(t, call(t, cfg, &mockProvider{}, "researchguy_read", map[string]any{"path": "f.md", "start_line": 2, "end_line": 3}))
+	if got != lines[1]+"\n"+lines[2] {
+		t.Fatalf("range read = %q", got)
+	}
+	got = extractText(t, call(t, cfg, &mockProvider{}, "researchguy_read", map[string]any{"path": "f.md", "start_line": 49}))
+	if got != lines[48]+"\n"+lines[49] {
+		t.Fatalf("open-ended range = %q", got)
+	}
+	res := call(t, cfg, &mockProvider{}, "researchguy_read", map[string]any{"path": "f.md", "start_line": 60})
+	if !res.IsError {
+		t.Fatalf("start past EOF should error, got %q", extractText(t, res))
+	}
+
+	orig := maxReadBytes
+	maxReadBytes = 20
+	t.Cleanup(func() { maxReadBytes = orig })
+	got = extractText(t, call(t, cfg, &mockProvider{}, "researchguy_read", map[string]any{"path": "f.md"}))
+	if !strings.HasPrefix(got, strings.Join(lines, "\n")[:20]) || !strings.Contains(got, "[truncated:") {
+		t.Fatalf("cap not applied: %q", got)
+	}
+}

@@ -211,9 +211,8 @@ func joinChunks(chunks []SearchResult) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// truncateRunes cuts s to at most n bytes on a rune boundary, adding "..."
-// when it cuts.
-func truncateRunes(s string, n int) string {
+// TruncateBytes cuts s to at most n bytes without splitting a UTF-8 rune.
+func TruncateBytes(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
@@ -221,5 +220,13 @@ func truncateRunes(s string, n int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + "..."
+	return s[:cut]
+}
+
+// truncateRunes is TruncateBytes plus "..." when it cuts.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return TruncateBytes(s, n) + "..."
 }

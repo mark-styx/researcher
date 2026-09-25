@@ -331,7 +331,7 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_search` | Raw semantic search across research (chunk results, no synthesis) |
 | `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researchguy_list` | List research files by category |
-| `researchguy_read` | Read a research document, a search hit's `file_path`, or a file under `read_roots` |
+| `researchguy_read` | Read a research document, a search hit's `file_path`, or a file under `read_roots`. Capped at 100KB; `start_line`/`end_line` read part of a large file |
 | `researchguy_graph_list` | List graph nodes, optionally by type (default limit 100) |
 | `researchguy_graph_show` | One node with its outgoing and incoming edges |
 | `researchguy_graph_find` | Find nodes by `title`, `path`, or a metadata key (e.g. `url`) |
