@@ -140,7 +140,7 @@ func describeEdge(st *graph.Store, e *graph.Edge, otherID string) edgeView {
 
 func graphFindTool() mcp.Tool {
 	return mcp.NewTool("researchguy_graph_find",
-		mcp.WithDescription("Find knowledge-graph nodes by field value: key is 'title', 'path', or any metadata key (e.g. 'url', 'book'). Matching is exact, case-insensitive for title."),
+		mcp.WithDescription("Find knowledge-graph nodes by field value: key is 'title', 'path', or any metadata key (e.g. 'url', 'book'). Matching is exact, case-insensitive for title; 'url' also matches normalized variants (http/https, www., trailing slash, tracking parameters)."),
 		mcp.WithString("key", mcp.Required(), mcp.Description("Field to match: title, path, or a metadata key")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to match")),
 		mcp.WithString("type", mcp.Description("Node type filter"), mcp.Enum(graph.ValidNodeTypes...)),
@@ -159,6 +159,15 @@ func graphFindHandler(cfg *config.Config) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		return withStore(cfg, func(st *graph.Store) (*mcp.CallToolResult, error) {
+			// URLs resolve through the normalized key index first, so
+			// http/https, www., and tracking-parameter variants all match.
+			if key == "url" {
+				if k, err := graph.URLKey(value); err == nil {
+					if n, err := st.NodeByKey(k); err == nil {
+						return toolResultJSON(limitNodes([]*graph.Node{n}, 0))
+					}
+				}
+			}
 			nodes, err := st.ListNodes(req.GetString("type", ""))
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("listing nodes: %v", err)), nil

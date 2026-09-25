@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -30,6 +31,7 @@ node content lives in markdown files under the research directory.`,
 	cmd.AddCommand(graphListCmd())
 	cmd.AddCommand(graphExportCmd())
 	cmd.AddCommand(graphApproveCmd())
+	cmd.AddCommand(graphImportSourcesCmd())
 	return cmd
 }
 
@@ -131,10 +133,14 @@ func graphAddEdgeCmd() *cobra.Command {
 
 func graphShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "show <node-id>",
-		Short:   "Show a node's details and its connected edges",
-		Args:    cobra.ExactArgs(1),
-		Example: `  researchguy graph show 3f9c2e1a-...`,
+		Use:   "show <node-id | url>",
+		Short: "Show a node's details and its connected edges",
+		Long: `Show a node's details and its connected edges. The argument is a node ID,
+or an http(s) URL, which is resolved to its source node by normalized URL.
+For a source, incoming references edges are the books that cite it.`,
+		Args: cobra.ExactArgs(1),
+		Example: `  researchguy graph show 3f9c2e1a-...
+  researchguy graph show https://en.wikipedia.org/wiki/Project_MKUltra`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {
@@ -143,8 +149,18 @@ func graphShowCmd() *cobra.Command {
 			defer store.Close()
 
 			id := args[0]
-			n, err := store.GetNode(id)
-			if err != nil {
+			var n *graph.Node
+			if strings.HasPrefix(id, "http://") || strings.HasPrefix(id, "https://") {
+				key, kerr := graph.URLKey(id)
+				if kerr != nil {
+					return kerr
+				}
+				n, err = store.NodeByKey(key)
+				if err != nil {
+					return fmt.Errorf("no source node for %s: %w", id, err)
+				}
+				id = n.ID
+			} else if n, err = store.GetNode(id); err != nil {
 				return fmt.Errorf("node not found: %w", err)
 			}
 
@@ -191,6 +207,15 @@ func graphShowCmd() *cobra.Command {
 				}
 			}
 			if len(in) > 0 {
+				citing := map[string]bool{}
+				for _, e := range in {
+					if e.Type == graph.EdgeReferences {
+						citing[e.FromID] = true
+					}
+				}
+				if n.Type == graph.NodeSource && len(citing) > 0 {
+					fmt.Printf("\nCited by %d node(s).\n", len(citing))
+				}
 				fmt.Println("\nIncoming:")
 				for _, e := range in {
 					source, serr := store.GetNode(e.FromID)
@@ -208,11 +233,13 @@ func graphShowCmd() *cobra.Command {
 
 func graphListCmd() *cobra.Command {
 	var typeFilter string
+	var citedByMin int
 
 	cmd := &cobra.Command{
-		Use:     "list",
-		Short:   "List nodes, optionally filtered by type",
-		Example: `  researchguy graph list --type entity`,
+		Use:   "list",
+		Short: "List nodes, optionally filtered by type",
+		Example: `  researchguy graph list --type entity
+  researchguy graph list --type source --cited-by-min 2   # sources cited by 2+ books`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, store, err := openGraphStore()
 			if err != nil {
@@ -225,18 +252,46 @@ func graphListCmd() *cobra.Command {
 				return fmt.Errorf("listing nodes: %w", err)
 			}
 
+			var cited map[string]int
+			if citedByMin > 0 {
+				if cited, err = store.CitedByCounts(graph.EdgeReferences); err != nil {
+					return fmt.Errorf("counting citations: %w", err)
+				}
+				kept := nodes[:0]
+				for _, n := range nodes {
+					if cited[n.ID] >= citedByMin {
+						kept = append(kept, n)
+					}
+				}
+				nodes = kept
+				sort.SliceStable(nodes, func(i, j int) bool { return cited[nodes[i].ID] > cited[nodes[j].ID] })
+			}
+
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tTYPE\tTITLE\tUPDATED\tFLAGS")
+			if cited != nil {
+				fmt.Fprintln(w, "ID\tTYPE\tCITED BY\tTITLE\tUPDATED\tFLAGS")
+			} else {
+				fmt.Fprintln(w, "ID\tTYPE\tTITLE\tUPDATED\tFLAGS")
+			}
 			for _, n := range nodes {
+				if cited != nil {
+					fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n",
+						n.ID[:8], n.Type, cited[n.ID], n.Title, n.UpdatedAt.Format("2006-01-02"), nodeFlags(n))
+					continue
+				}
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 					n.ID[:8], n.Type, n.Title, n.UpdatedAt.Format("2006-01-02"), nodeFlags(n))
 			}
 			w.Flush()
+			if cited != nil {
+				fmt.Printf("%d node(s) cited by at least %d.\n", len(nodes), citedByMin)
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&typeFilter, "type", "", "Filter by node type")
+	cmd.Flags().IntVar(&citedByMin, "cited-by-min", 0, "Only nodes with incoming references edges from at least N distinct nodes (e.g. books)")
 	return cmd
 }
 

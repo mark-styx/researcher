@@ -98,6 +98,7 @@ func buildRoot() *cobra.Command {
 	root.AddGroup(
 		&cobra.Group{ID: "research", Title: "Research Commands:"},
 		&cobra.Group{ID: "project", Title: "Project Management:"},
+		&cobra.Group{ID: "graph", Title: "Knowledge Graph:"},
 		&cobra.Group{ID: "scheduling", Title: "Task Scheduling:"},
 		&cobra.Group{ID: "setup", Title: "Setup:"},
 	)
@@ -109,6 +110,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(compareCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(contextCmd())
+	root.AddCommand(graphCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())
 	root.AddCommand(linkCmd())

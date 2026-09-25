@@ -91,3 +91,24 @@ func TestGraphTools_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestGraphFind_URLUsesNormalizedKey(t *testing.T) {
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", t.TempDir())
+	cfg := testConfig(t)
+	st, err := graph.NewStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ImportSources(graph.BookRef{Slug: "b"}, []graph.SourceEntry{{Title: "MK", URL: "https://en.wikipedia.org/wiki/Project_MKUltra"}}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	var found nodeList
+	decode(t, call(t, cfg, &mockProvider{}, "researchguy_graph_find", map[string]any{
+		"key": "url", "value": "http://www.en.wikipedia.org/wiki/Project_MKUltra/?utm_campaign=z",
+	}), &found)
+	if found.Count != 1 || found.Nodes[0].Title != "MK" {
+		t.Fatalf("found = %+v", found)
+	}
+}
