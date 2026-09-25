@@ -76,14 +76,14 @@ researchguy search "entanglement"
 
 | Command | Description |
 |---------|-------------|
-| `graph add-node --type <type> --title <title>` | Create a node (`entity`, `source`, `claim`, `funding-pattern`, `report`) |
+| `graph add-node --type <type> --title <title>` | Create a node (`entity`, `source`, `claim`, `funding-pattern`, `report`, `lead`) |
 | `graph add-edge --from <id> --to <id> --type <type>` | Create a typed edge (`funds`, `authored-by`, `supports`, `contradicts`, `sponsors-research`, `references`, `supersedes`) |
 | `graph show <id>` | Show a node's details and its connected edges |
 | `graph list [--type <type>]` | List nodes, optionally filtered by type |
 | `graph export [--out <path>]` | Export the full graph as JSON for visualization |
 | `graph approve <id>` | Approve a pending rollup resummarization (see below) |
 
-Node structure/relationships live in `~/.researchguy/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
+Node structure/relationships live in `~/.researchguy/tasks.db`; node content lives in markdown files under `research_dir` (so grepai keeps indexing it). A `lead` is an unconfirmed breadcrumb (a forum comment, an offhand mention) worth chasing but not evidence: link it to what it concerns with a `references` edge, and when it's confirmed, add a `claim` that `supersedes` it. There's no automated entity resolution/dedup yet — check `graph list`/`graph show` before creating a node that might already exist.
 
 ### Node rollup (keeping summaries fresh)
 
@@ -339,6 +339,7 @@ Add to `~/.claude/settings.json`:
 ~/.researchguy/
   config.yaml          # Configuration
   tasks.db             # Scheduler tasks + knowledge graph (nodes/edges) tables
+  tasks.db-wal/-shm    # WAL sidecars; back up with `sqlite3 tasks.db ".backup <dest>"`, not cp
   scheduler.log        # Daemon log
   scheduler.pid        # Daemon PID file
 ```

@@ -27,6 +27,10 @@ extending it.
   (`researchguy graph show <id>` to inspect it) rather than creating a
   duplicate. There's no automated entity-resolution/dedup yet (see the graph
   storage commit for why), so this check is manual until that exists.
+- A `lead` node is an unconfirmed breadcrumb (forum comment, offhand
+  mention), not evidence. Link it with `references` to what it concerns;
+  once confirmed, create a `claim` that `supersedes` it rather than editing
+  the lead into a claim.
 - `--no-research` / `no_research` on the CLI and MCP tools exists for the
   cases where you deliberately want a from-scratch answer; don't reach for
   it as a default.
@@ -34,6 +38,9 @@ extending it.
 ## Working in this codebase
 
 - `go build ./...` / `go test ./...` before considering any change done.
+- Open `tasks.db` through `internal/sqlitedb.Open`, never `sql.Open`
+  directly: parallel researchguy processes (daemon, MCP server, agents
+  running `graph add-node`) need its busy timeout and WAL mode.
 - `gofmt -l <files>` before committing — CI has no separate lint step, this
   is the only formatting gate.
 - The hybrid backend (`internal/llm/hybrid.go`) is the one place with real
