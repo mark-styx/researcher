@@ -88,6 +88,7 @@ For scripts and workflow engines:
 | `graph add-edge --from <id> --to <id> --type <type>` | Create a typed edge (`funds`, `authored-by`, `supports`, `contradicts`, `sponsors-research`, `references`, `supersedes`) |
 | `graph show <id>` | Show a node's details and its connected edges |
 | `graph list [--type <type>]` | List nodes, optionally filtered by type |
+| `graph link-report --path <report.md> --title <title> [--prefix <dir/>] [--json]` | Create (or reuse) the `report` node for a file and add a `references` edge to every node whose path starts with the prefix (default: the report's directory). Idempotent; alo's `deep_research` workflow runs it after synthesis |
 | `graph export [--out <path>]` | Export the full graph as JSON for visualization |
 | `graph approve <id>` | Approve a pending rollup resummarization (see below) |
 
