@@ -168,3 +168,70 @@ func TestWorkspaceArgs(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// grepai applies several --project flags as a post-filter on the
+// workspace-wide top-k, which can return nothing even when each project has
+// strong hits. QueryJSONProjects therefore queries one project per call.
+func TestQueryJSONProjectsQueriesEachProject(t *testing.T) {
+	cfg, _, _ := workspaceFixture(t)
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	// Fake grepai: one hit per call, scored by project, and an empty list if
+	// more than one --project is passed (the post-filter failure mode).
+	script := filepath.Join(dir, "fake-grepai")
+	body := `#!/bin/sh
+echo "$@" >> ` + calls + `
+n=0; proj=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--project" ]; then n=$((n+1)); proj="$2"; shift; fi
+  shift
+done
+if [ "$n" -ne 1 ]; then echo '[]'; exit 0; fi
+case "$proj" in
+  research) score=0.4 ;;
+  the_book) score=0.9 ;;
+  *) score=0.1 ;;
+esac
+echo "[{\"file_path\":\"ws/$proj/a.md\",\"score\":$score,\"content\":\"x\"},{\"file_path\":\"ws/$proj/b.md\",\"score\":0.05,\"content\":\"y\"}]"
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Grepai.Binary = script
+
+	got, err := QueryJSONProjects(cfg, "q", 3, []string{"research", "the_book", "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Project != "the_book" || got[1].Project != "research" || got[2].Project != "other" {
+		t.Fatalf("merged results = %+v", got)
+	}
+	data, _ := os.ReadFile(calls)
+	if n := strings.Count(string(data), "\n"); n != 3 {
+		t.Fatalf("want 3 grepai calls, got %d:\n%s", n, data)
+	}
+
+	// A single project stays a single call.
+	os.Remove(calls)
+	if got, err := QueryJSONProjects(cfg, "q", 5, []string{"research"}); err != nil || len(got) != 2 {
+		t.Fatalf("single project: %v, %v", got, err)
+	}
+}
+
+func TestQueryJSONProjectsPartialFailure(t *testing.T) {
+	cfg, _, _ := workspaceFixture(t)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-grepai")
+	body := "#!/bin/sh\ncase \"$*\" in *broken*) echo boom >&2; exit 1;; esac\necho '[{\"file_path\":\"ws/research/a.md\",\"score\":0.5,\"content\":\"x\"}]'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Grepai.Binary = script
+	got, err := QueryJSONProjects(cfg, "q", 5, []string{"research", "broken"})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("one failing project should not sink the search: %v, %v", got, err)
+	}
+	if _, err := QueryJSONProjects(cfg, "q", 5, []string{"broken", "broken2"}); err == nil {
+		t.Fatal("all projects failing should error")
+	}
+}

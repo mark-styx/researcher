@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
@@ -33,7 +34,20 @@ func Query(cfg *config.Config, query string, limit int) (string, error) {
 }
 
 // QueryProjects is Query with an optional project override (workspace mode).
+// Searching several workspace projects goes through QueryJSONProjects (see
+// there for why) and is rendered as plain text.
 func QueryProjects(cfg *config.Config, query string, limit int, projects []string) (string, error) {
+	if len(projects) == 0 {
+		projects = cfg.Grepai.ProjectList()
+	}
+	if cfg.Grepai.Workspace != "" && len(projects) > 1 {
+		results, err := QueryJSONProjects(cfg, query, limit, projects)
+		if err != nil {
+			return "", err
+		}
+		return FormatResults(results), nil
+	}
+
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
 	args := append([]string{"search", query, "--limit", strconv.Itoa(limit)}, workspaceArgs(cfg, projects)...)
@@ -51,6 +65,15 @@ func QueryProjects(cfg *config.Config, query string, limit int, projects []strin
 	return stdout.String(), nil
 }
 
+// FormatResults renders results as plain text, one block per hit.
+func FormatResults(results []SearchResult) string {
+	var b strings.Builder
+	for _, r := range results {
+		fmt.Fprintf(&b, "%.3f  %s:%d-%d\n%s\n\n", r.Score, r.FilePath, r.StartLine, r.EndLine, strings.TrimSpace(r.Content))
+	}
+	return b.String()
+}
+
 // QueryJSON runs a grepai search with --json output and returns structured results.
 func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, error) {
 	return QueryJSONProjects(cfg, query, limit, nil)
@@ -58,7 +81,73 @@ func QueryJSON(cfg *config.Config, query string, limit int) ([]SearchResult, err
 
 // QueryJSONProjects is QueryJSON with an optional project override. Results
 // are annotated with their project and on-disk path.
+//
+// grepai applies several --project flags as a filter over the workspace-wide
+// top results, so a query whose best matches live in other projects returns
+// nothing. With more than one workspace project this runs one grepai call per
+// project, then merges by score. A project whose search fails is skipped
+// unless every project fails.
 func QueryJSONProjects(cfg *config.Config, query string, limit int, projects []string) ([]SearchResult, error) {
+	if len(projects) == 0 {
+		projects = cfg.Grepai.ProjectList()
+	}
+	if cfg.Grepai.Workspace == "" || len(projects) <= 1 {
+		results, err := queryJSONOnce(cfg, query, limit, projects)
+		if err != nil {
+			return nil, err
+		}
+		return Annotate(cfg, results), nil
+	}
+
+	type outcome struct {
+		results []SearchResult
+		err     error
+	}
+	outcomes := make([]outcome, len(projects))
+	sem := make(chan struct{}, maxParallelSearches)
+	var wg sync.WaitGroup
+	for i, p := range projects {
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r, err := queryJSONOnce(cfg, query, limit, []string{p})
+			outcomes[i] = outcome{r, err}
+		}(i, p)
+	}
+	wg.Wait()
+
+	var merged []SearchResult
+	var firstErr error
+	failed := 0
+	for _, o := range outcomes {
+		if o.err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = o.err
+			}
+			continue
+		}
+		merged = append(merged, o.results...)
+	}
+	if failed == len(projects) {
+		return nil, firstErr
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	if merged == nil {
+		merged = []SearchResult{}
+	}
+	return Annotate(cfg, merged), nil
+}
+
+// maxParallelSearches bounds concurrent grepai processes per search.
+const maxParallelSearches = 4
+
+func queryJSONOnce(cfg *config.Config, query string, limit int, projects []string) ([]SearchResult, error) {
 	researchDir := config.ExpandPath(cfg.ResearchDir)
 
 	args := append([]string{"search", query, "--limit", strconv.Itoa(limit), "--json"}, workspaceArgs(cfg, projects)...)
@@ -77,8 +166,7 @@ func QueryJSONProjects(cfg *config.Config, query string, limit int, projects []s
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
 		return nil, fmt.Errorf("parsing grepai JSON: %w", err)
 	}
-
-	return Annotate(cfg, results), nil
+	return results, nil
 }
 
 // workspaceArgs returns the --workspace/--project flags for a grepai search

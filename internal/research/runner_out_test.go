@@ -62,7 +62,7 @@ func TestRunner_ProjectsReachGrepai(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	script := filepath.Join(dir, "fake-grepai")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" > "+argsFile+"\necho '[]'\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+argsFile+"\necho '[]'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Grepai.Binary = script
@@ -75,7 +75,7 @@ func TestRunner_ProjectsReachGrepai(t *testing.T) {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.Contains(string(args), "--project book_a --project book_b") || strings.Contains(string(args), "--project research") {
+	if !strings.Contains(string(args), "--project book_a\n") || !strings.Contains(string(args), "--project book_b\n") || strings.Contains(string(args), "--project research") {
 		t.Fatalf("grepai args = %s", args)
 	}
 }

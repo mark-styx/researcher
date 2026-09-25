@@ -94,7 +94,7 @@ func writeGrepaiJSON(t *testing.T, configDir, researchDir, extra, results string
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	script := filepath.Join(dir, "fake-grepai")
-	body := "#!/bin/sh\necho \"$@\" > " + argsFile + "\ncat <<'JSONEOF'\n" + results + "\nJSONEOF\n"
+	body := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\ncase \"$*\" in *\"--project book\"*) echo '[]'; exit 0;; esac\ncat <<'JSONEOF'\n" + results + "\nJSONEOF\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -125,8 +125,8 @@ func TestSearchCmd_JSONProjects(t *testing.T) {
 		t.Fatalf("hits = %v", hits)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.Contains(string(args), "--json --workspace ws --project research --project book") {
-		t.Fatalf("args = %s", args)
+	if !strings.Contains(string(args), "--json --workspace ws --project research\n") || !strings.Contains(string(args), "--json --workspace ws --project book\n") {
+		t.Fatalf("want one grepai call per project, got:\n%s", args)
 	}
 
 	if _, _, err := runCmdStdout(t, "search", "q", "--max-age", "30d"); err == nil {

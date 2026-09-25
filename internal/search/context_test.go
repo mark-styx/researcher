@@ -22,7 +22,7 @@ func fakeGrepai(t *testing.T, results []SearchResult) (script, argsFile string) 
 	}
 	argsFile = filepath.Join(dir, "args")
 	script = filepath.Join(dir, "fake-grepai")
-	body := "#!/bin/sh\necho \"$@\" > " + argsFile + "\ncat <<'JSONEOF'\n" + string(data) + "\nJSONEOF\n"
+	body := "#!/bin/sh\necho \"$@\" >> " + argsFile + "\ncat <<'JSONEOF'\n" + string(data) + "\nJSONEOF\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,8 +57,8 @@ func TestBuildContextAcrossProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	args, _ := os.ReadFile(argsFile)
-	if !strings.Contains(string(args), "--project research --project the_book") {
-		t.Fatalf("projects not passed: %s", args)
+	if !strings.Contains(string(args), "--workspace ws --project research\n") || !strings.Contains(string(args), "--workspace ws --project the_book\n") {
+		t.Fatalf("want one grepai call per project, got:\n%s", args)
 	}
 	if got.Count != 2 || got.Sources[1].Project != "the_book" || got.Sources[1].Path != big {
 		t.Fatalf("sources = %+v", got.Sources)
