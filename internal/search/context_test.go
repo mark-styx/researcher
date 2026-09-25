@@ -115,3 +115,53 @@ func TestTruncateRunes(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// bookworm writes both per-topic files and a combined file that repeats
+// them, so grepai returns the same text under different paths.
+func TestBuildContextSkipsDuplicateText(t *testing.T) {
+	cfg, _, book := workspaceFixture(t)
+	web := filepath.Join(book, "research", "web")
+	big := strings.Repeat("filler ", MaxWholeFileBytes/7+1)
+	files := map[string]string{
+		"combined.md":  big + "same text" + big,
+		"combined2.md": big + "chunk only" + big,
+		"copy.md":      big + "chunk only" + big,
+		"topic.md":     "same text\n\nother text",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(web, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hit := func(name string, score float64, text string) SearchResult {
+		return SearchResult{FilePath: "ws/the_book/research/web/" + name, Score: score, Content: "File: research/web/" + name + "\n\n" + text}
+	}
+	script, _ := fakeGrepai(t, []SearchResult{
+		hit("topic.md", 0.6, "other text"),
+		hit("combined.md", 0.9, "same text"),
+		hit("topic.md", 0.8, "same text"),
+		hit("combined2.md", 0.5, "chunk only"),
+		hit("copy.md", 0.4, "chunk only"),
+	})
+	cfg.Grepai.Binary = script
+
+	got, err := BuildContext(cfg, "t", ContextOptions{MaxAge: "none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// combined.md's only chunk is inside topic.md (included whole), and
+	// copy.md's only chunk repeats combined2.md's, so both drop out.
+	var names []string
+	for _, s := range got.Sources {
+		names = append(names, filepath.Base(s.FilePath))
+	}
+	if strings.Join(names, ",") != "topic.md,combined2.md" {
+		t.Fatalf("sources = %v", names)
+	}
+	if strings.Count(got.Context, "same text") != 1 || strings.Count(got.Context, "chunk only") != 1 {
+		t.Fatalf("duplicate text in context:\n%s", got.Context)
+	}
+	if got.Count != 2 {
+		t.Fatalf("count = %d", got.Count)
+	}
+}

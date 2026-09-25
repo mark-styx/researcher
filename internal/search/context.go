@@ -76,53 +76,90 @@ func BuildContext(cfg *config.Config, topic string, opts ContextOptions) (Contex
 		return empty, nil
 	}
 
+	// Highest score first, so the best copy of repeated text wins.
+	sort.SliceStable(fresh, func(i, j int) bool { return fresh[i].Score > fresh[j].Score })
+
 	resolver := NewResolver(cfg)
 	type fileHits struct {
 		label, path string
+		source      ContextSource
 		chunks      []SearchResult
+		whole       string
 	}
+	var order []*fileHits
 	byPath := map[string]*fileHits{}
-	var sources []ContextSource
+	seenBodies := map[string]bool{}
 	for _, r := range fresh {
+		body := chunkBody(r.Content)
+		if body != "" && seenBodies[body] {
+			continue
+		}
+		seenBodies[body] = true
+
 		path := resultPath(r, researchDir)
 		if fh, ok := byPath[path]; ok {
 			fh.chunks = append(fh.chunks, r)
 			continue
 		}
-		byPath[path] = &fileHits{label: resolver.Label(r.FilePath), path: path, chunks: []SearchResult{r}}
-
 		var freshness, modified string
 		if info, err := os.Stat(path); err == nil {
 			freshness = FreshnessLabel(info.ModTime())
 			modified = info.ModTime().Format("2006-01-02")
 		}
-		sources = append(sources, ContextSource{
-			FilePath:  r.FilePath,
-			Project:   r.Project,
-			Path:      r.Path,
-			Score:     r.Score,
-			Freshness: freshness,
-			Modified:  modified,
-			Excerpt:   truncateRunes(r.Content, excerptChars),
-		})
-	}
-
-	files := make([]*fileHits, 0, len(byPath))
-	for _, fh := range byPath {
-		files = append(files, fh)
-	}
-	sort.Slice(files, func(i, j int) bool { return files[i].label < files[j].label })
-
-	var b strings.Builder
-	for _, fh := range files {
-		body, ok := readWhole(fh.path)
-		if !ok {
-			body = joinChunks(fh.chunks)
+		fh := &fileHits{
+			label:  resolver.Label(r.FilePath),
+			path:   path,
+			chunks: []SearchResult{r},
+			source: ContextSource{
+				FilePath:  r.FilePath,
+				Project:   r.Project,
+				Path:      r.Path,
+				Score:     r.Score,
+				Freshness: freshness,
+				Modified:  modified,
+				Excerpt:   truncateRunes(r.Content, excerptChars),
+			},
 		}
+		fh.whole, _ = readWhole(path)
+		byPath[path] = fh
+		order = append(order, fh)
+	}
+
+	// Chunks already contained in a file included whole add nothing.
+	var wholes []string
+	for _, fh := range order {
+		if fh.whole != "" {
+			wholes = append(wholes, fh.whole)
+		}
+	}
+	type part struct{ label, body string }
+	var parts []part
+	var sources []ContextSource
+	for _, fh := range order {
+		body := fh.whole
 		if body == "" {
+			var kept []SearchResult
+			for _, c := range fh.chunks {
+				if !containedIn(chunkBody(c.Content), wholes) {
+					kept = append(kept, c)
+				}
+			}
+			body = joinChunks(kept)
+		}
+		if strings.TrimSpace(body) == "" {
 			continue
 		}
-		fmt.Fprintf(&b, "--- Source: %s ---\n%s\n\n", fh.label, body)
+		parts = append(parts, part{fh.label, body})
+		sources = append(sources, fh.source)
+	}
+	if len(sources) == 0 {
+		return empty, nil
+	}
+	sort.Slice(parts, func(i, j int) bool { return parts[i].label < parts[j].label })
+
+	var b strings.Builder
+	for _, p := range parts {
+		fmt.Fprintf(&b, "--- Source: %s ---\n%s\n\n", p.label, p.body)
 	}
 
 	return ContextResult{Topic: topic, Sources: sources, Context: b.String(), Count: len(sources)}, nil
@@ -139,6 +176,27 @@ func readWhole(path string) (string, bool) {
 		return "", false
 	}
 	return string(data), true
+}
+
+// chunkBody strips grepai's "File: <path>" header line from a chunk so the
+// same text under two paths compares equal.
+func chunkBody(content string) string {
+	if first, rest, ok := strings.Cut(content, "\n"); ok && strings.HasPrefix(first, "File: ") {
+		content = rest
+	}
+	return strings.TrimSpace(content)
+}
+
+func containedIn(body string, texts []string) bool {
+	if body == "" {
+		return false
+	}
+	for _, t := range texts {
+		if strings.Contains(t, body) {
+			return true
+		}
+	}
+	return false
 }
 
 func joinChunks(chunks []SearchResult) string {
