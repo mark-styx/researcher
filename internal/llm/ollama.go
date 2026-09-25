@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/marklubin/researchguy/internal/tools"
@@ -58,7 +59,7 @@ type ollamaChatResponse struct {
 func (o *Ollama) Complete(ctx context.Context, req Request) (string, error) {
 	resp, err := o.doChat(ctx, o.Model, req)
 	if err != nil && o.FallbackModel != "" && o.FallbackModel != o.Model {
-		fmt.Printf("Primary model %q failed, trying fallback %q...\n", o.Model, o.FallbackModel)
+		fmt.Fprintf(os.Stderr, "Primary model %q failed, trying fallback %q...\n", o.Model, o.FallbackModel)
 		resp, err = o.doChat(ctx, o.FallbackModel, req)
 	}
 	return resp, err
@@ -117,7 +118,7 @@ func (o *Ollama) doChat(ctx context.Context, model string, req Request) (string,
 				Arguments: args,
 			}
 
-			fmt.Printf("[tool] %s(%v)\n", call.Name, formatArgs(args))
+			fmt.Fprintf(os.Stderr, "[tool] %s(%v)\n", call.Name, formatArgs(args))
 			result := o.Executor.Execute(ctx, call)
 
 			messages = append(messages, ollamaMessage{
