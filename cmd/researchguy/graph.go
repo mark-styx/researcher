@@ -16,8 +16,8 @@ func graphCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Manage the node/edge knowledge graph",
-		Long: `Entities, sources, claims, funding-pattern observations, and reports
-persist as independently referenceable nodes connected by typed edges,
+		Long: `Entities, sources, claims, funding-pattern observations, reports, and
+leads persist as independently referenceable nodes connected by typed edges,
 instead of being re-derived or restated inside every report that touches
 them. Node structure and relationships live in ~/.researchguy/tasks.db;
 node content lives in markdown files under the research directory.`,
@@ -64,7 +64,7 @@ func graphAddNodeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "add-node",
-		Short: "Create a node (entity, source, claim, funding-pattern, or report)",
+		Short: "Create a node (entity, source, claim, funding-pattern, report, or lead)",
 		Example: `  researchguy graph add-node --type entity --title "Acme Research Institute"
   researchguy graph add-node --type funding-pattern --title "Acme funds Study X" \
     --summary "Acme sponsored Study X, which reached conclusions aligned with Acme's stated position" \

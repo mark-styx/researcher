@@ -68,6 +68,34 @@ func TestCreateNode_InvalidType(t *testing.T) {
 	}
 }
 
+func TestCreateNode_Lead(t *testing.T) {
+	s := newTestStore(t)
+	lead := &Node{
+		Type:    NodeLead,
+		Title:   "HN commenter says the benchmark excluded long-context runs",
+		Path:    "deep-research/run/r0-benchmarks.md",
+		Summary: "Unconfirmed; would be confirmed by the benchmark's published config",
+	}
+	must(t, s.CreateNode(lead))
+	claim := &Node{Type: NodeClaim, Title: "Benchmark config excludes contexts over 32k"}
+	must(t, s.CreateNode(claim))
+	must(t, s.CreateEdge(&Edge{FromID: claim.ID, ToID: lead.ID, Type: EdgeSupersedes}))
+
+	leads, err := s.ListNodes(NodeLead)
+	if err != nil {
+		t.Fatalf("ListNodes: %v", err)
+	}
+	if len(leads) != 1 || leads[0].ID != lead.ID || leads[0].Path != lead.Path {
+		t.Fatalf("ListNodes(lead) = %+v, want only %s", leads, lead.ID)
+	}
+}
+
+func TestValidNodeTypes_IncludesLead(t *testing.T) {
+	if !isValidType(NodeLead, ValidNodeTypes) {
+		t.Errorf("ValidNodeTypes %v missing %q", ValidNodeTypes, NodeLead)
+	}
+}
+
 func TestCreateNode_MissingTitle(t *testing.T) {
 	s := newTestStore(t)
 	err := s.CreateNode(&Node{Type: NodeEntity})

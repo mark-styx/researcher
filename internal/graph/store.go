@@ -25,10 +25,14 @@ const (
 	NodeClaim          = "claim"
 	NodeFundingPattern = "funding-pattern"
 	NodeReport         = "report"
+	// NodeLead is an unconfirmed breadcrumb (a forum comment, an offhand
+	// mention) worth chasing but not evidence. Link it to what it concerns
+	// with a references edge; once confirmed, a new claim supersedes it.
+	NodeLead = "lead"
 )
 
 // ValidNodeTypes lists every accepted Node.Type value.
-var ValidNodeTypes = []string{NodeEntity, NodeSource, NodeClaim, NodeFundingPattern, NodeReport}
+var ValidNodeTypes = []string{NodeEntity, NodeSource, NodeClaim, NodeFundingPattern, NodeReport, NodeLead}
 
 // Edge types.
 const (
