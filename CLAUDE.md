@@ -1,7 +1,7 @@
 # researchguy (researchguy)
 
 CLI + MCP server for research collection, storage, and retrieval. Generates
-markdown research reports via LLM backends (claude, ollama, hybrid), stores
+markdown research reports via LLM backends (claude, ollama, codex, hybrid), stores
 them under `research_dir`, and indexes them via grepai. Structured
 relationships (entities, sources, claims, funding-pattern observations,
 reports) live as nodes/edges in `~/.researchguy/tasks.db` (`internal/graph`).
@@ -56,8 +56,10 @@ extending it.
   `landscape`/`inquiry`), staged model unloading, a raw tool-result evidence
   ledger, and flag-only groundedness/narrative critic passes. Named modes use
   their full role set unless `BranchCount` is explicit.
-  Claude and Ollama backends are single-shot and ignore `Request.Mode`/
-  `BranchCount` — that's intentional, not a gap to fix.
+  Claude, Codex and Ollama backends are single-shot and ignore `Request.Mode`/
+  `BranchCount`. That's intentional, not a gap to fix. Codex
+  (`internal/llm/codex.go`) is the hybrid worker option that isn't local:
+  it parses `codex exec --json` so its web search results reach the ledger.
 - Context retrieval lives in `search.BuildContext`; the MCP context tool,
   `researchguy context`, and the runner all use it. Keep it LLM-free.
 - Commands with `--json` must print nothing but the JSON on stdout. Send

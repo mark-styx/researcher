@@ -1,7 +1,7 @@
 # Research database location
 research_dir: ~/sentinel/research
 
-# Default LLM backend ("claude", "ollama", or "hybrid")
+# Default LLM backend ("claude", "ollama", "codex", or "hybrid")
 default_backend: claude
 
 # Claude CLI configuration
@@ -21,7 +21,17 @@ ollama:
   num_predict: 4096
   keep_alive: 0s
 
-# Hybrid configuration (small local workers + aggregator model)
+# Codex CLI configuration ("codex exec"). Blank model/reasoning_effort use
+# Codex's defaults. ignore_user_config skips ~/.codex/config.toml (and its
+# MCP servers); auth still comes from CODEX_HOME.
+codex:
+  binary: codex
+  model: ""
+  reasoning_effort: ""
+  ignore_user_config: true
+
+# Hybrid configuration (small local workers + aggregator model).
+# worker_backend may be "codex" to run the shards through Codex instead.
 hybrid:
   worker_backend: ollama
   worker_models:

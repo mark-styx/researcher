@@ -16,7 +16,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
 - **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
-- **Multi-backend** — supports Claude CLI, Ollama, and hybrid local-worker aggregation
+- **Multi-backend**: supports Claude CLI, Codex CLI, Ollama, and hybrid worker aggregation
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
 - **Evidence-ledger critics**: hybrid verification checks the unchanged draft against raw successful tool results and reports flags instead of rewriting
 - **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researchguy graph`), instead of being re-derived per report
@@ -154,7 +154,7 @@ Config file: `~/.researchguy/config.yaml` (created by `researchguy init`)
 # Where research output is saved
 research_dir: ~/sentinel/research
 
-# LLM backend: "claude", "ollama", or "hybrid"
+# LLM backend: "claude", "ollama", "codex", or "hybrid"
 default_backend: claude
 
 # Claude CLI settings
@@ -173,7 +173,14 @@ ollama:
   num_predict: 4096
   keep_alive: 0s
 
-# Hybrid settings (fan-out to local models, then aggregate)
+# Codex CLI settings (blank model/reasoning_effort = Codex defaults)
+codex:
+  binary: codex
+  model: ""
+  reasoning_effort: ""
+  ignore_user_config: true
+
+# Hybrid settings (fan-out to worker models, then aggregate)
 hybrid:
   worker_backend: ollama
   worker_models: [glm-4.7-flash]
@@ -293,6 +300,32 @@ Override per-command:
 researchguy dive "topic" --backend ollama --model llama3
 ```
 
+### Codex
+
+Uses the [Codex CLI](https://github.com/openai/codex) through `codex exec`. Each call runs in a fresh empty scratch dir with a read-only sandbox, `--ephemeral`, and the prompt on stdin. The system prompt is folded into the prompt because `codex exec` has no flag for it. When the request has tools, Codex's built-in live web search is on; otherwise it is off. The backend reads `codex exec --json`, so every web search result (title, URL, snippet) is kept as raw evidence, which the hybrid aggregator gets in its ledger.
+
+`ignore_user_config: true` (the default) skips `~/.codex/config.toml`, so worker runs don't start your Codex MCP servers, researchguy among them. Auth still comes from `CODEX_HOME`. With it on, set `model` explicitly, since your config's default model is skipped too.
+
+```bash
+codex login
+researchguy dive "topic" --backend codex --model gpt-5.6-sol
+```
+
+The usual use is Codex as the hybrid worker backend with Claude aggregating:
+
+```yaml
+codex:
+  reasoning_effort: high
+hybrid:
+  worker_backend: codex
+  worker_models: [gpt-5.6-sol]
+  aggregator_backend: claude
+  aggregator_model: opus
+  max_parallel: 5
+```
+
+Keep that in its own config dir (`RESEARCHGUY_CONFIG_DIR=~/.researchguy/codex-hybrid researchguy dive ...`) if the MCP server should keep its default stack. A dive doesn't touch `tasks.db`, so a separate config dir is safe for it. Graph and scheduler commands do read `tasks.db` from the config dir, so run those with your main config.
+
 ### Hybrid backend: modes and critics
 
 The hybrid backend fans out to worker models, unloads them, runs one aggregation stage, then optionally runs two flag-only critic passes:
@@ -387,7 +420,7 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_graph_add_node` | Create a node |
 | `researchguy_graph_add_edge` | Create an edge between existing nodes |
 
-`researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
+`researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `codex`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 
 ### Claude Code Configuration
 
