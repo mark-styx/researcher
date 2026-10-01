@@ -29,7 +29,7 @@ func TestWorkerEvidenceUsesLedgerNotWorkerProse(t *testing.T) {
 		},
 	}
 
-	evidence := workerEvidence(workers)
+	evidence := workerEvidence(workers, 0)
 	if len(evidence) != 1 || evidence[0].Content != "raw source text" {
 		t.Fatalf("workerEvidence() = %+v", evidence)
 	}

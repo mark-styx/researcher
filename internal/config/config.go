@@ -80,6 +80,10 @@ type HybridConfig struct {
 	VerifierModel      string   `yaml:"verifier_model"`
 	EnableVerification bool     `yaml:"enable_verification"`
 	MaxParallel        int      `yaml:"max_parallel"`
+	// MaxEvidenceChars caps the raw tool-result ledger handed to the
+	// aggregator and critics, split evenly across shards. Raise it for an
+	// aggregator with a large context window (e.g. claude).
+	MaxEvidenceChars int `yaml:"max_evidence_chars"`
 }
 
 type SchedulerConfig struct {
@@ -164,6 +168,9 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
+  # Cap on raw tool results passed to the aggregator, split evenly across
+  # shards. Raise it for a large-context aggregator such as claude.
+  max_evidence_chars: 80000
 
 # Tool use (web search, web fetch)
 tools:
@@ -289,6 +296,7 @@ func defaults() *Config {
 			VerifierModel:      "qwen3.5:9b",
 			EnableVerification: false,
 			MaxParallel:        1,
+			MaxEvidenceChars:   80_000,
 		},
 		Tools: ToolsConfig{
 			Enabled:       true,

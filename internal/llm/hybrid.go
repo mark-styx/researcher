@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +13,9 @@ import (
 	"github.com/marklubin/researchguy/internal/critique"
 )
 
-const maxHybridEvidenceChars = 80_000
+// defaultHybridEvidenceChars caps the evidence ledger when neither
+// Hybrid.MaxEvidenceChars nor hybrid.max_evidence_chars sets a cap.
+const defaultHybridEvidenceChars = 80_000
 
 type hybridWorkerOutput struct {
 	Index    int
@@ -37,6 +40,10 @@ type Hybrid struct {
 	VerifierModel      string
 	EnableVerification bool
 	MaxParallel        int
+	// MaxEvidenceChars caps the raw evidence ledger across all workers. The
+	// cap is split evenly across shards. <= 0 falls back to
+	// hybrid.max_evidence_chars, then defaultHybridEvidenceChars.
+	MaxEvidenceChars int
 
 	makeProvider func(backend, model string) (Provider, error)
 	mu           sync.RWMutex
@@ -141,6 +148,9 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	if success == 0 {
 		return "", fmt.Errorf("all hybrid workers failed: %s", strings.Join(failures, "; "))
 	}
+	// One ledger for the aggregator and both critics, so they judge the
+	// draft against the same evidence it was written from.
+	evidence, ledger := buildLedger(results, h.evidenceCap())
 
 	aggregatorBackend := normalizeAggregatorBackend(h.AggregatorBackend)
 	aggregatorModel := h.AggregatorModel
@@ -155,7 +165,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 
 	aggReq := Request{
 		SystemPrompt: aggregationSystemPrompt(req.SystemPrompt),
-		UserPrompt:   buildAggregationPrompt(req, results),
+		UserPrompt:   buildAggregationPrompt(req, results, evidence),
 		MaxTokens:    req.MaxTokens,
 	}
 	draft, err := aggregator.Complete(ctx, aggReq)
@@ -192,7 +202,6 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			// Groundedness is flag-only. It validates the unchanged draft
 			// against raw tool results rather than treating worker prose as a
 			// source of truth.
-			evidence := workerEvidence(results)
 			groundReq := Request{
 				SystemPrompt: critique.GroundednessFlagSystemPrompt(),
 				UserPrompt:   critique.BuildGroundednessFlagPrompt(draft, evidence),
@@ -231,7 +240,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 
 	final = critique.AppendNotes(final, groundednessFlags, narrativeFlags)
 
-	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, aggregatorMetadata, verified, groundednessFlags, narrativeFlags, groundednessVerifierMetadata, narrativeVerifierMetadata, time.Since(started)))
+	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, aggregatorMetadata, ledger, verified, groundednessFlags, narrativeFlags, groundednessVerifierMetadata, narrativeVerifierMetadata, time.Since(started)))
 	return final, nil
 }
 
@@ -297,7 +306,7 @@ func aggregationSystemPrompt(base string) string {
 	return strings.TrimSpace(base) + "\n\n" + suffix
 }
 
-func buildAggregationPrompt(original Request, workers []hybridWorkerOutput) string {
+func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evidence []critique.Evidence) string {
 	var b strings.Builder
 	b.WriteString("Original request:\n")
 	b.WriteString(original.UserPrompt)
@@ -317,7 +326,6 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput) stri
 		b.WriteString("\n")
 	}
 	b.WriteString("\nEvidence ledger (raw successful tool results; cite ledger labels for factual claims):\n")
-	evidence := workerEvidence(workers)
 	if len(evidence) == 0 {
 		b.WriteString("\n(no raw tool evidence captured)\n")
 	} else {
@@ -399,15 +407,100 @@ Return:
 
 // workerEvidence returns only raw successful tool results. Worker prose is
 // useful analysis for aggregation, but is not promoted into source evidence.
-func workerEvidence(workers []hybridWorkerOutput) []critique.Evidence {
-	var out []critique.Evidence
+func workerEvidence(workers []hybridWorkerOutput, maxChars int) []critique.Evidence {
+	evidence, _ := buildLedger(workers, maxChars)
+	return evidence
+}
+
+// ledgerStats records how much raw evidence the workers captured and how much
+// of it fit under the cap, so a run's metadata shows what the aggregator saw.
+type ledgerStats struct {
+	MaxChars       int `json:"max_chars"`
+	ItemsCaptured  int `json:"items_captured"`
+	ItemsPassed    int `json:"items_passed"`
+	CharsCaptured  int `json:"chars_captured"`
+	CharsPassed    int `json:"chars_passed"`
+	ShardsCaptured int `json:"shards_captured"`
+	ShardsPassed   int `json:"shards_passed"`
+}
+
+// buildLedger caps the successful workers' evidence at maxChars in total,
+// split evenly across workers. Filling the cap in shard order let the first
+// shard (primary evidence, in inquiry mode) take the whole ledger and drop
+// the counter-evidence shards. A worker that needs less than its share
+// passes the remainder to the others. Each worker keeps its items in order.
+func buildLedger(workers []hybridWorkerOutput, maxChars int) ([]critique.Evidence, ledgerStats) {
+	if maxChars <= 0 {
+		maxChars = defaultHybridEvidenceChars
+	}
+	stats := ledgerStats{MaxChars: maxChars}
+	var groups [][]critique.Evidence
+	var needs []int
 	for _, w := range workers {
-		if w.Err != nil {
+		if w.Err != nil || len(w.Evidence) == 0 {
 			continue
 		}
-		out = append(out, w.Evidence...)
+		need := evidenceChars(w.Evidence)
+		groups = append(groups, w.Evidence)
+		needs = append(needs, need)
+		stats.ItemsCaptured += len(w.Evidence)
+		stats.CharsCaptured += need
+		stats.ShardsCaptured++
 	}
-	return critique.LimitEvidence(out, maxHybridEvidenceChars)
+
+	var out []critique.Evidence
+	for i, budget := range fairShares(needs, maxChars) {
+		if budget <= 0 {
+			continue
+		}
+		passed := critique.LimitEvidence(groups[i], budget)
+		if len(passed) == 0 {
+			continue
+		}
+		out = append(out, passed...)
+		stats.ItemsPassed += len(passed)
+		stats.CharsPassed += evidenceChars(passed)
+		stats.ShardsPassed++
+	}
+	return out, stats
+}
+
+func evidenceChars(evidence []critique.Evidence) int {
+	n := 0
+	for _, e := range evidence {
+		n += len(e.Content)
+	}
+	return n
+}
+
+// fairShares splits total across needs by water-filling. Going from the
+// smallest need up, each gets the lesser of its need and an even split of
+// what is left, so unused share flows to the needs that are still open.
+// The allocations never sum past total.
+func fairShares(needs []int, total int) []int {
+	alloc := make([]int, len(needs))
+	order := make([]int, len(needs))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return needs[order[a]] < needs[order[b]] })
+	remaining := total
+	for k, i := range order {
+		give := min(needs[i], remaining/(len(order)-k))
+		alloc[i] = give
+		remaining -= give
+	}
+	return alloc
+}
+
+func (h *Hybrid) evidenceCap() int {
+	if h.MaxEvidenceChars > 0 {
+		return h.MaxEvidenceChars
+	}
+	if h.cfg != nil && h.cfg.Hybrid.MaxEvidenceChars > 0 {
+		return h.cfg.Hybrid.MaxEvidenceChars
+	}
+	return defaultHybridEvidenceChars
 }
 
 func providerEvidence(provider Provider, backend, model, shard string) []critique.Evidence {
@@ -482,7 +575,7 @@ func (h *Hybrid) setMetadata(s string) {
 	h.lastMetadata = s
 }
 
-func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, aggregatorMetadata json.RawMessage, verified bool, groundednessFlags, narrativeFlags string, groundednessVerifierMetadata, narrativeVerifierMetadata json.RawMessage, duration time.Duration) string {
+func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, aggregatorMetadata json.RawMessage, ledger ledgerStats, verified bool, groundednessFlags, narrativeFlags string, groundednessVerifierMetadata, narrativeVerifierMetadata json.RawMessage, duration time.Duration) string {
 	type workerMeta struct {
 		Backend       string          `json:"backend"`
 		Model         string          `json:"model"`
@@ -501,6 +594,7 @@ func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorke
 		AggregatorBackend            string          `json:"aggregator_backend"`
 		AggregatorModel              string          `json:"aggregator_model"`
 		AggregatorMetadata           json.RawMessage `json:"aggregator_metadata,omitempty"`
+		EvidenceLedger               ledgerStats     `json:"evidence_ledger"`
 		Verified                     bool            `json:"verified"`
 		GroundednessFlags            string          `json:"groundedness_flags,omitempty"`
 		NarrativeFlags               string          `json:"narrative_flags,omitempty"`
@@ -515,6 +609,7 @@ func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorke
 		AggregatorBackend:            aggBackend,
 		AggregatorModel:              aggModel,
 		AggregatorMetadata:           aggregatorMetadata,
+		EvidenceLedger:               ledger,
 		Verified:                     verified,
 		GroundednessFlags:            truncateForMetadata(groundednessFlags, 2000),
 		NarrativeFlags:               truncateForMetadata(narrativeFlags, 2000),

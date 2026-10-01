@@ -172,3 +172,19 @@ func TestNewProvider_Unknown(t *testing.T) {
 		t.Fatal("expected error for unknown backend")
 	}
 }
+
+func TestNewProvider_HybridPassesEvidenceCap(t *testing.T) {
+	cfg := defaultTestConfig()
+	cfg.Hybrid.MaxEvidenceChars = 400_000
+	p, err := NewProvider(cfg, "hybrid", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := p.(*Hybrid)
+	if h.MaxEvidenceChars != 400_000 || h.evidenceCap() != 400_000 {
+		t.Errorf("MaxEvidenceChars = %d, evidenceCap() = %d, want 400000", h.MaxEvidenceChars, h.evidenceCap())
+	}
+	if got := (&Hybrid{}).evidenceCap(); got != defaultHybridEvidenceChars {
+		t.Errorf("unset cap = %d, want default %d", got, defaultHybridEvidenceChars)
+	}
+}

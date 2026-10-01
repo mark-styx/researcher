@@ -104,6 +104,7 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			VerifierModel:      cfg.Hybrid.VerifierModel,
 			EnableVerification: cfg.Hybrid.EnableVerification,
 			MaxParallel:        cfg.Hybrid.MaxParallel,
+			MaxEvidenceChars:   cfg.Hybrid.MaxEvidenceChars,
 		}
 		h.makeProvider = func(backend, model string) (Provider, error) {
 			return NewProvider(cfg, backend, model)

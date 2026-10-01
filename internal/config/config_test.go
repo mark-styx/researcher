@@ -431,3 +431,29 @@ hybrid:
 		t.Errorf("Hybrid = %+v", cfg.Hybrid)
 	}
 }
+
+func TestHybridMaxEvidenceChars_DefaultsAndOverride(t *testing.T) {
+	if got := defaults().Hybrid.MaxEvidenceChars; got != 80_000 {
+		t.Errorf("defaults() Hybrid.MaxEvidenceChars = %d, want 80000", got)
+	}
+	var parsed Config
+	if err := yaml.Unmarshal([]byte(DefaultYAML), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Hybrid.MaxEvidenceChars != 80_000 {
+		t.Errorf("DefaultYAML max_evidence_chars = %d, want 80000", parsed.Hybrid.MaxEvidenceChars)
+	}
+
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("hybrid:\n  max_evidence_chars: 400000\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Hybrid.MaxEvidenceChars != 400_000 {
+		t.Errorf("loaded max_evidence_chars = %d, want 400000", cfg.Hybrid.MaxEvidenceChars)
+	}
+}
