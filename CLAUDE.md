@@ -53,7 +53,9 @@ extending it.
   is the only formatting gate.
 - The hybrid backend (`internal/llm/hybrid.go`) is the one place with real
   parallel LLM fan-out, epistemic branch-role planning (`Mode`:
-  `landscape`/`inquiry`), and the groundedness/narrative critic passes.
+  `landscape`/`inquiry`), staged model unloading, a raw tool-result evidence
+  ledger, and flag-only groundedness/narrative critic passes. Named modes use
+  their full role set unless `BranchCount` is explicit.
   Claude and Ollama backends are single-shot and ignore `Request.Mode`/
   `BranchCount` — that's intentional, not a gap to fix.
 - Context retrieval lives in `search.BuildContext`; the MCP context tool,

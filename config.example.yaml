@@ -9,31 +9,35 @@ claude:
   binary: claude
   model: opus
   max_tokens: 16000
+  max_turns: 50
 
 # Ollama configuration
 ollama:
   host: http://localhost:11434
-  model: qwen3-coder-next
-  fallback_model: nemotron
+  model: glm-4.7-flash
+  fallback_model: ""
+  utility_model: qwen3.5:9b
+  num_ctx: 32768
+  num_predict: 4096
+  keep_alive: 0s
 
 # Hybrid configuration (small local workers + aggregator model)
 hybrid:
   worker_backend: ollama
   worker_models:
-    - qwen3-coder-next
-    - nemotron
-  aggregator_backend: claude
-  aggregator_model: opus
-  verifier_backend: claude
-  verifier_model: sonnet
-  enable_verification: true
-  max_parallel: 2
+    - glm-4.7-flash
+  aggregator_backend: ollama
+  aggregator_model: qwen3.8:27b-q4_K_M
+  verifier_backend: ollama
+  verifier_model: qwen3.5:9b
+  enable_verification: false
+  max_parallel: 1
 
 # Tool use (web search, web fetch)
 tools:
   enabled: true
-  max_iterations: 20
-  max_results: 10
+  max_iterations: 6
+  max_results: 6
 
 # Scheduler
 scheduler:

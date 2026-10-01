@@ -9,7 +9,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Literature review** — synthesis from topics or source documents
 - **Comparative analysis** — side-by-side comparison of two topics or existing documents
 - **Document enrichment** — expand thin sections and add context to existing research; interactive file picker when no path given
-- **Smart file organization** — LLM-based auto-categorization into topic directories with descriptive filenames
+- **Smart file organization**: bounded utility-model categorization into topic directories with descriptive filenames
 - **Migration tool** — reorganize existing flat research directories into the new category structure
 - **Semantic search** — find across all research via grepai, including grepai workspace mode for shared multi-project indexes
 - **Context-aware generation** — `dive`/`review`/`compare` search existing research before generating, not just `ask`
@@ -18,7 +18,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
 - **Multi-backend** — supports Claude CLI, Ollama, and hybrid local-worker aggregation
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
-- **Transparent critics** — hybrid backend's groundedness and narrative-vs-evidence critic passes report what they changed/flagged instead of silently rewriting
+- **Evidence-ledger critics**: hybrid verification checks the unchanged draft against raw successful tool results and reports flags instead of rewriting
 - **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researchguy graph`), instead of being re-derived per report
 
 ## Installation
@@ -166,25 +166,29 @@ claude:
 # Ollama settings
 ollama:
   host: http://localhost:11434
-  model: qwen3-coder-next
-  fallback_model: nemotron
+  model: glm-4.7-flash
+  fallback_model: ""
+  utility_model: qwen3.5:9b
+  num_ctx: 32768
+  num_predict: 4096
+  keep_alive: 0s
 
 # Hybrid settings (fan-out to local models, then aggregate)
 hybrid:
   worker_backend: ollama
-  worker_models: [qwen3-coder-next, nemotron]
-  aggregator_backend: claude
-  aggregator_model: opus
-  verifier_backend: claude
-  verifier_model: sonnet
-  enable_verification: true
-  max_parallel: 2
+  worker_models: [glm-4.7-flash]
+  aggregator_backend: ollama
+  aggregator_model: qwen3.8:27b-q4_K_M
+  verifier_backend: ollama
+  verifier_model: qwen3.5:9b
+  enable_verification: false
+  max_parallel: 1
 
 # Web search and tool use
 tools:
   enabled: true
-  max_iterations: 20
-  max_results: 10
+  max_iterations: 6
+  max_results: 6
 
 # Background scheduler
 scheduler:
@@ -269,13 +273,19 @@ researchguy config set default_backend claude
 
 ### Ollama
 
-Uses a local [Ollama](https://ollama.ai) instance:
+Uses a local [Ollama](https://ollama.com) instance. The default local stack uses a sparse worker for repeated tool calls, a dense model for one synthesis call, and a small utility model for categorization and optional verification:
 
 ```bash
 ollama serve
-ollama pull qwen3-coder-next
+ollama pull glm-4.7-flash
+ollama pull qwen3.8:27b-q4_K_M
+ollama pull qwen3.5:9b
 researchguy config set default_backend ollama
 ```
+
+`num_ctx` bounds the context allocation. `num_predict` is an output ceiling: a smaller per-request `MaxTokens` still wins. `keep_alive: 0s` keeps a model resident across one tool loop, then explicitly unloads it. Hybrid also unloads every worker stage before loading the aggregator, and unloads the aggregator before an optional verifier.
+
+For a memory-constrained Ollama service, also set `OLLAMA_MAX_LOADED_MODELS=1` and `OLLAMA_NUM_PARALLEL=1` in the service environment. These are server-wide admission controls, while the YAML fields above bound each Researchguy request.
 
 Override per-command:
 
@@ -285,7 +295,7 @@ researchguy dive "topic" --backend ollama --model llama3
 
 ### Hybrid backend: modes and critics
 
-The hybrid backend fans out to worker models in parallel, aggregates their drafts, then (if `enable_verification` is on) runs two critic passes before returning:
+The hybrid backend fans out to worker models, unloads them, runs one aggregation stage, then optionally runs two flag-only critic passes:
 
 ```bash
 researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
@@ -293,19 +303,22 @@ researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 
 - `--mode landscape` — for tool/alternatives-comparison questions. Branches: documented alternatives, vendor claims vs. independently reported usage, competitive positioning, adoption evidence.
 - `--mode inquiry` — for open-ended or contested claims. Branches: primary evidence, counter-evidence/disconfirming cases, funding and institutional provenance, independent replication, narrative-vs-evidence gap.
-- `--branches <n>` — how many angles to investigate, decoupled from how many worker models are configured (models are reused round-robin if `n` exceeds `worker_models` length).
+- `--branches <n>`: how many angles to investigate, decoupled from how many worker models are configured. Models are reused round-robin if `n` exceeds `worker_models` length.
 
-Without `--branches`, the count defaults to the number of worker models (2 by default), so `--mode inquiry` covers only its first two angles. Pass `--branches 5` for all of them.
+Without `--branches`, a named mode covers its complete role set: four branches for `landscape` and five for `inquiry`. General mode defaults to the number of configured worker models. Set `--branches` explicitly when cost or latency matters more than full role coverage.
 
-Both critic passes are visible in the saved output under a `## Critic Notes` section, not silently folded into the answer:
-- **Groundedness critic** — revises the draft to keep only evidence-backed claims, and reports what it removed/softened and why.
-- **Narrative-vs-evidence critic** — doesn't rewrite anything; flags claims stated as settled/consensus that aren't tied to a distinct piece of worker evidence.
+Worker prose is analysis, not evidence. Successful tool results form a capped evidence ledger that is passed separately to the aggregator and optional critics. Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
+
+- **Groundedness critic**: flags factual claims that the raw evidence ledger does not support or that overstate it.
+- **Narrative-vs-evidence critic**: flags claims stated as settled or consensus that are not tied to a distinct ledger entry.
+
+Verification is off by default. When enabled, use the small verifier model and treat its output as review notes, not an automatic correction. Ollama timing and token counts are retained in run metadata, including per-worker telemetry inside hybrid metadata.
 
 `docs/bakeoff-2026-09-25.md` compares this backend with bookworm's researcher on cost, time, sourcing, and critic value; `go run ./tools/bakeoff` is the measuring tool it used.
 
 ## File Organization
 
-Research files are automatically categorized by the LLM into topic directories with short descriptive filenames:
+Research files are automatically categorized by `ollama.utility_model` into topic directories with short descriptive filenames. This bypasses the research provider, so a hybrid run does not fan out again just to choose a path:
 
 ```
 ~/sentinel/research/           # Default research directory
