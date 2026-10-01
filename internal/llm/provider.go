@@ -77,6 +77,18 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 		}
 		return newOllamaProvider(cfg, model, cfg.Ollama.FallbackModel), nil
 
+	case "codex":
+		model := cfg.Codex.Model
+		if modelOverride != "" {
+			model = modelOverride
+		}
+		return &Codex{
+			Binary:           cfg.Codex.Binary,
+			Model:            model,
+			ReasoningEffort:  cfg.Codex.ReasoningEffort,
+			IgnoreUserConfig: cfg.Codex.IgnoreUserConfig,
+		}, nil
+
 	case "hybrid":
 		aggregatorModel := cfg.Hybrid.AggregatorModel
 		if modelOverride != "" {
@@ -99,7 +111,7 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 		return h, nil
 
 	default:
-		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, or hybrid)", backend)
+		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, codex, or hybrid)", backend)
 	}
 }
 

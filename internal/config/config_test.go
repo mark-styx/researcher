@@ -383,3 +383,51 @@ func TestDefaultYAML_NewFields(t *testing.T) {
 		t.Fatalf("grepai = %+v, read_roots = %v", cfg.Grepai, cfg.ReadRoots)
 	}
 }
+
+func TestCodexConfig_DefaultsAndYAML(t *testing.T) {
+	cfg := defaults()
+	if cfg.Codex.Binary != "codex" || cfg.Codex.Model != "" || cfg.Codex.ReasoningEffort != "" || !cfg.Codex.IgnoreUserConfig {
+		t.Errorf("Codex defaults = %+v", cfg.Codex)
+	}
+
+	var parsed Config
+	if err := yaml.Unmarshal([]byte(DefaultYAML), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Codex != cfg.Codex {
+		t.Errorf("DefaultYAML codex = %+v, want defaults() %+v", parsed.Codex, cfg.Codex)
+	}
+}
+
+func TestLoad_CodexHybridWorkers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	data := `default_backend: hybrid
+codex:
+  model: gpt-test
+  reasoning_effort: high
+  ignore_user_config: false
+hybrid:
+  worker_backend: codex
+  worker_models: [gpt-test]
+  aggregator_backend: claude
+  aggregator_model: opus
+  max_parallel: 5
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Codex.Binary != "codex" {
+		t.Errorf("Codex.Binary = %q, want the default kept when unset", cfg.Codex.Binary)
+	}
+	if cfg.Codex.Model != "gpt-test" || cfg.Codex.ReasoningEffort != "high" || cfg.Codex.IgnoreUserConfig {
+		t.Errorf("Codex = %+v", cfg.Codex)
+	}
+	if cfg.Hybrid.WorkerBackend != "codex" || cfg.Hybrid.AggregatorBackend != "claude" || cfg.Hybrid.MaxParallel != 5 {
+		t.Errorf("Hybrid = %+v", cfg.Hybrid)
+	}
+}

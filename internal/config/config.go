@@ -14,6 +14,7 @@ type Config struct {
 	DefaultBackend string          `yaml:"default_backend"`
 	Claude         ClaudeConfig    `yaml:"claude"`
 	Ollama         OllamaConfig    `yaml:"ollama"`
+	Codex          CodexConfig     `yaml:"codex"`
 	Hybrid         HybridConfig    `yaml:"hybrid"`
 	Tools          ToolsConfig     `yaml:"tools"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
@@ -57,6 +58,17 @@ type OllamaConfig struct {
 	NumCtx        int    `yaml:"num_ctx"`
 	NumPredict    int    `yaml:"num_predict"`
 	KeepAlive     string `yaml:"keep_alive"`
+}
+
+// CodexConfig drives the Codex CLI backend ("codex exec"). Blank model or
+// reasoning effort leaves Codex's own default in place.
+type CodexConfig struct {
+	Binary          string `yaml:"binary"`
+	Model           string `yaml:"model"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	// IgnoreUserConfig skips ~/.codex/config.toml so worker runs don't start
+	// the user's MCP servers. Auth still comes from CODEX_HOME.
+	IgnoreUserConfig bool `yaml:"ignore_user_config"`
 }
 
 type HybridConfig struct {
@@ -111,7 +123,7 @@ func (g GrepaiConfig) ProjectList() []string {
 const DefaultYAML = `# Research database location
 research_dir: ~/sentinel/research
 
-# Default LLM backend ("claude", "ollama", or "hybrid")
+# Default LLM backend ("claude", "ollama", "codex", or "hybrid")
 default_backend: claude
 
 # Claude CLI configuration
@@ -131,7 +143,17 @@ ollama:
   num_predict: 4096
   keep_alive: 0s
 
-# Hybrid configuration (small local workers + aggregator model)
+# Codex CLI configuration ("codex exec"). Blank model/reasoning_effort use
+# Codex's defaults. ignore_user_config skips ~/.codex/config.toml (and its
+# MCP servers); auth still comes from CODEX_HOME.
+codex:
+  binary: codex
+  model: ""
+  reasoning_effort: ""
+  ignore_user_config: true
+
+# Hybrid configuration (small local workers + aggregator model).
+# worker_backend may be "codex" to run the shards through Codex instead.
 hybrid:
   worker_backend: ollama
   worker_models:
@@ -253,6 +275,10 @@ func defaults() *Config {
 			NumCtx:        32768,
 			NumPredict:    4096,
 			KeepAlive:     "0s",
+		},
+		Codex: CodexConfig{
+			Binary:           "codex",
+			IgnoreUserConfig: true,
 		},
 		Hybrid: HybridConfig{
 			WorkerBackend:      "ollama",

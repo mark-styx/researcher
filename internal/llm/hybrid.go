@@ -65,7 +65,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	}
 
 	workerBackend := normalizeWorkerBackend(h.WorkerBackend)
-	models := h.resolveWorkerModels()
+	models := h.resolveWorkerModels(workerBackend)
 	if len(models) == 0 {
 		return "", fmt.Errorf("hybrid backend has no worker models configured")
 	}
@@ -235,10 +235,18 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	return final, nil
 }
 
-func (h *Hybrid) resolveWorkerModels() []string {
+func (h *Hybrid) resolveWorkerModels(workerBackend string) []string {
 	candidates := h.WorkerModels
-	if len(candidates) == 0 && h.cfg != nil && strings.TrimSpace(h.cfg.Ollama.Model) != "" {
-		candidates = []string{h.cfg.Ollama.Model}
+	if len(candidates) == 0 && h.cfg != nil {
+		// Fall back to the worker backend's own model, never another
+		// backend's: an Ollama model name means nothing to Codex.
+		fallback := h.cfg.Ollama.Model
+		if workerBackend == "codex" {
+			fallback = h.cfg.Codex.Model
+		}
+		if strings.TrimSpace(fallback) != "" {
+			candidates = []string{fallback}
+		}
 	}
 
 	seen := make(map[string]struct{})

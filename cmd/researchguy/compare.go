@@ -82,7 +82,7 @@ Document comparison: use --sources to compare two existing research documents.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, hybrid)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, codex, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	cmd.Flags().StringVar(&sources, "sources", "", "Comma-separated paths to two documents to compare")
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
