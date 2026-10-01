@@ -42,6 +42,9 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
+  # Cap on raw tool results passed to the aggregator, split evenly across
+  # shards. Raise it for a large-context aggregator such as claude.
+  max_evidence_chars: 80000
 
 # Tool use (web search, web fetch)
 tools:

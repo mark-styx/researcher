@@ -190,6 +190,7 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
+  max_evidence_chars: 80000  # raw tool-result ledger cap, split across shards
 
 # Web search and tool use
 tools:
@@ -322,6 +323,7 @@ hybrid:
   aggregator_backend: claude
   aggregator_model: opus
   max_parallel: 5
+  max_evidence_chars: 400000
 ```
 
 Keep that in its own config dir (`RESEARCHGUY_CONFIG_DIR=~/.researchguy/codex-hybrid researchguy dive ...`) if the MCP server should keep its default stack. A dive doesn't touch `tasks.db`, so a separate config dir is safe for it. Graph and scheduler commands do read `tasks.db` from the config dir, so run those with your main config.
@@ -340,7 +342,7 @@ researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 
 Without `--branches`, a named mode covers its complete role set: four branches for `landscape` and five for `inquiry`. General mode defaults to the number of configured worker models. Set `--branches` explicitly when cost or latency matters more than full role coverage.
 
-Worker prose is analysis, not evidence. Successful tool results form a capped evidence ledger that is passed separately to the aggregator and optional critics. Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
+Worker prose is analysis, not evidence. Successful tool results form a capped evidence ledger that is passed separately to the aggregator and optional critics. `hybrid.max_evidence_chars` (default 80000) is the cap. It's split evenly across shards, and a shard that needs less than its share passes the rest to the others, so the first shard can't fill the ledger and starve the counter-evidence branches. Run metadata records `evidence_ledger` (items and chars captured vs. passed, and how many shards made it in). Search-heavy workers such as Codex capture far more than 80000 chars, so raise the cap when the aggregator has a large context window. The Claude backend passes the prompt as one argv string, so keep the whole aggregation prompt well under macOS's 1 MB `ARG_MAX`. Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
 
 - **Groundedness critic**: flags factual claims that the raw evidence ledger does not support or that overstate it.
 - **Narrative-vs-evidence critic**: flags claims stated as settled or consensus that are not tied to a distinct ledger entry.
