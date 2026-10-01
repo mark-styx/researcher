@@ -16,12 +16,28 @@ import (
 
 // Runner orchestrates research tasks.
 type Runner struct {
-	cfg      *config.Config
-	provider llm.Provider
+	cfg             *config.Config
+	provider        llm.Provider
+	utilityProvider llm.Provider
 }
 
 func NewRunner(cfg *config.Config, provider llm.Provider) *Runner {
-	return &Runner{cfg: cfg, provider: provider}
+	utilityProvider := provider
+	if p, err := llm.NewUtilityProvider(cfg); err == nil && p != nil {
+		utilityProvider = p
+	}
+	return NewRunnerWithUtility(cfg, provider, utilityProvider)
+}
+
+// NewRunnerWithUtility constructs a runner with an explicit provider for
+// bounded utility calls. It primarily exists to keep categorization isolated
+// from an expensive hybrid research provider and to make that routing
+// directly testable.
+func NewRunnerWithUtility(cfg *config.Config, provider, utilityProvider llm.Provider) *Runner {
+	if utilityProvider == nil {
+		utilityProvider = provider
+	}
+	return &Runner{cfg: cfg, provider: provider, utilityProvider: utilityProvider}
 }
 
 // Run executes a research task and returns the result.
@@ -370,7 +386,7 @@ func (r *Runner) outputPath(ctx context.Context, task Task, suffix string) (stri
 func (r *Runner) categorizedPath(ctx context.Context, topic string) (dir string, filename string, err error) {
 	researchDir := config.ExpandPath(r.cfg.ResearchDir)
 	cats, _ := ExistingCategories(researchDir)
-	loc, err := Categorize(ctx, r.provider, topic, cats)
+	loc, err := Categorize(ctx, r.utilityProvider, topic, cats)
 	if err != nil {
 		loc = FileLocation{Category: "uncategorized", Filename: Slugify(topic)}
 	}

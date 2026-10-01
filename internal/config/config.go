@@ -53,6 +53,10 @@ type OllamaConfig struct {
 	Host          string `yaml:"host"`
 	Model         string `yaml:"model"`
 	FallbackModel string `yaml:"fallback_model"`
+	UtilityModel  string `yaml:"utility_model"`
+	NumCtx        int    `yaml:"num_ctx"`
+	NumPredict    int    `yaml:"num_predict"`
+	KeepAlive     string `yaml:"keep_alive"`
 }
 
 type HybridConfig struct {
@@ -120,27 +124,30 @@ claude:
 # Ollama configuration
 ollama:
   host: http://localhost:11434
-  model: qwen3-coder-next
-  fallback_model: nemotron
+  model: glm-4.7-flash
+  fallback_model: ""
+  utility_model: qwen3.5:9b
+  num_ctx: 32768
+  num_predict: 4096
+  keep_alive: 0s
 
 # Hybrid configuration (small local workers + aggregator model)
 hybrid:
   worker_backend: ollama
   worker_models:
-    - qwen3-coder-next
-    - nemotron
-  aggregator_backend: claude
-  aggregator_model: opus
-  verifier_backend: claude
-  verifier_model: sonnet
-  enable_verification: true
-  max_parallel: 2
+    - glm-4.7-flash
+  aggregator_backend: ollama
+  aggregator_model: qwen3.8:27b-q4_K_M
+  verifier_backend: ollama
+  verifier_model: qwen3.5:9b
+  enable_verification: false
+  max_parallel: 1
 
 # Tool use (web search, web fetch)
 tools:
   enabled: true
-  max_iterations: 20
-  max_results: 10
+  max_iterations: 6
+  max_results: 6
 
 # Scheduler
 scheduler:
@@ -240,23 +247,27 @@ func defaults() *Config {
 		},
 		Ollama: OllamaConfig{
 			Host:          "http://localhost:11434",
-			Model:         "qwen3-coder-next",
-			FallbackModel: "nemotron",
+			Model:         "glm-4.7-flash",
+			FallbackModel: "",
+			UtilityModel:  "qwen3.5:9b",
+			NumCtx:        32768,
+			NumPredict:    4096,
+			KeepAlive:     "0s",
 		},
 		Hybrid: HybridConfig{
 			WorkerBackend:      "ollama",
-			WorkerModels:       []string{"qwen3-coder-next", "nemotron"},
-			AggregatorBackend:  "claude",
-			AggregatorModel:    "opus",
-			VerifierBackend:    "claude",
-			VerifierModel:      "sonnet",
-			EnableVerification: true,
-			MaxParallel:        2,
+			WorkerModels:       []string{"glm-4.7-flash"},
+			AggregatorBackend:  "ollama",
+			AggregatorModel:    "qwen3.8:27b-q4_K_M",
+			VerifierBackend:    "ollama",
+			VerifierModel:      "qwen3.5:9b",
+			EnableVerification: false,
+			MaxParallel:        1,
 		},
 		Tools: ToolsConfig{
 			Enabled:       true,
-			MaxIterations: 20,
-			MaxResults:    10,
+			MaxIterations: 6,
+			MaxResults:    6,
 		},
 		Scheduler: SchedulerConfig{
 			PollInterval:  "60s",

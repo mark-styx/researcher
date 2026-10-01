@@ -64,20 +64,32 @@ func TestDefaultYAML_Parses(t *testing.T) {
 	if cfg.Ollama.Host != "http://localhost:11434" {
 		t.Errorf("Ollama.Host = %q, want %q", cfg.Ollama.Host, "http://localhost:11434")
 	}
+	if cfg.Ollama.Model != "glm-4.7-flash" {
+		t.Errorf("Ollama.Model = %q, want %q", cfg.Ollama.Model, "glm-4.7-flash")
+	}
+	if cfg.Ollama.UtilityModel != "qwen3.5:9b" {
+		t.Errorf("Ollama.UtilityModel = %q, want %q", cfg.Ollama.UtilityModel, "qwen3.5:9b")
+	}
+	if cfg.Ollama.NumCtx != 32768 || cfg.Ollama.NumPredict != 4096 || cfg.Ollama.KeepAlive != "0s" {
+		t.Errorf("Ollama resource controls = %+v", cfg.Ollama)
+	}
 	if cfg.Hybrid.WorkerBackend != "ollama" {
 		t.Errorf("Hybrid.WorkerBackend = %q, want %q", cfg.Hybrid.WorkerBackend, "ollama")
 	}
-	if cfg.Hybrid.AggregatorBackend != "claude" {
-		t.Errorf("Hybrid.AggregatorBackend = %q, want %q", cfg.Hybrid.AggregatorBackend, "claude")
+	if cfg.Hybrid.AggregatorBackend != "ollama" {
+		t.Errorf("Hybrid.AggregatorBackend = %q, want %q", cfg.Hybrid.AggregatorBackend, "ollama")
 	}
-	if !cfg.Hybrid.EnableVerification {
-		t.Error("Hybrid.EnableVerification should be true")
+	if cfg.Hybrid.AggregatorModel != "qwen3.8:27b-q4_K_M" {
+		t.Errorf("Hybrid.AggregatorModel = %q, want %q", cfg.Hybrid.AggregatorModel, "qwen3.8:27b-q4_K_M")
 	}
-	if cfg.Tools.MaxResults != 10 {
-		t.Errorf("Tools.MaxResults = %d, want 10", cfg.Tools.MaxResults)
+	if cfg.Hybrid.EnableVerification {
+		t.Error("Hybrid.EnableVerification should default to false")
 	}
-	if cfg.Tools.MaxIterations != 20 {
-		t.Errorf("Tools.MaxIterations = %d, want 20", cfg.Tools.MaxIterations)
+	if cfg.Tools.MaxResults != 6 {
+		t.Errorf("Tools.MaxResults = %d, want 6", cfg.Tools.MaxResults)
+	}
+	if cfg.Tools.MaxIterations != 6 {
+		t.Errorf("Tools.MaxIterations = %d, want 6", cfg.Tools.MaxIterations)
 	}
 	if cfg.Graph.Rollup.Enabled {
 		t.Error("expected Graph.Rollup.Enabled = false by default")
@@ -156,6 +168,10 @@ ollama:
   host: http://myhost:11434
   model: llama3
   fallback_model: mistral
+  utility_model: small-model
+  num_ctx: 24576
+  num_predict: 2048
+  keep_alive: 3m
 hybrid:
   worker_backend: ollama
   worker_models: [qwen3, mistral]
@@ -197,6 +213,9 @@ hybrid:
 	}
 	if cfg.Ollama.FallbackModel != "mistral" {
 		t.Errorf("Ollama.FallbackModel = %q, want %q", cfg.Ollama.FallbackModel, "mistral")
+	}
+	if cfg.Ollama.UtilityModel != "small-model" || cfg.Ollama.NumCtx != 24576 || cfg.Ollama.NumPredict != 2048 || cfg.Ollama.KeepAlive != "3m" {
+		t.Errorf("Ollama resource controls = %+v", cfg.Ollama)
 	}
 	if cfg.Hybrid.AggregatorModel != "sonnet" {
 		t.Errorf("Hybrid.AggregatorModel = %q, want %q", cfg.Hybrid.AggregatorModel, "sonnet")
@@ -244,11 +263,20 @@ func TestDefaults(t *testing.T) {
 	if cfg.Ollama.Host != "http://localhost:11434" {
 		t.Errorf("Ollama.Host = %q, want %q", cfg.Ollama.Host, "http://localhost:11434")
 	}
-	if cfg.Hybrid.MaxParallel != 2 {
-		t.Errorf("Hybrid.MaxParallel = %d, want 2", cfg.Hybrid.MaxParallel)
+	if cfg.Ollama.Model != "glm-4.7-flash" || cfg.Ollama.FallbackModel != "" || cfg.Ollama.UtilityModel != "qwen3.5:9b" {
+		t.Errorf("Ollama model defaults = %+v", cfg.Ollama)
 	}
-	if cfg.Hybrid.VerifierModel != "sonnet" {
-		t.Errorf("Hybrid.VerifierModel = %q, want %q", cfg.Hybrid.VerifierModel, "sonnet")
+	if cfg.Ollama.NumCtx != 32768 || cfg.Ollama.NumPredict != 4096 || cfg.Ollama.KeepAlive != "0s" {
+		t.Errorf("Ollama resource defaults = %+v", cfg.Ollama)
+	}
+	if cfg.Hybrid.MaxParallel != 1 {
+		t.Errorf("Hybrid.MaxParallel = %d, want 1", cfg.Hybrid.MaxParallel)
+	}
+	if cfg.Hybrid.AggregatorBackend != "ollama" || cfg.Hybrid.AggregatorModel != "qwen3.8:27b-q4_K_M" {
+		t.Errorf("Hybrid aggregator defaults = %+v", cfg.Hybrid)
+	}
+	if cfg.Hybrid.VerifierBackend != "ollama" || cfg.Hybrid.VerifierModel != "qwen3.5:9b" || cfg.Hybrid.EnableVerification {
+		t.Errorf("Hybrid verifier defaults = %+v", cfg.Hybrid)
 	}
 	if cfg.Scheduler.PollInterval != "60s" {
 		t.Errorf("Scheduler.PollInterval = %q, want %q", cfg.Scheduler.PollInterval, "60s")

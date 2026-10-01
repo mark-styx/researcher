@@ -51,17 +51,14 @@ Use --dry-run to preview changes without moving any files.`,
 			fmt.Printf("Found %d directories to migrate.\n\n", len(candidates))
 
 			var provider llm.Provider
-			if !dryRun {
+			if backend == "" && model == "" {
+				provider, err = llm.NewUtilityProvider(cfg)
+			}
+			if provider == nil && err == nil {
 				provider, err = llm.NewProvider(cfg, backend, model)
-				if err != nil {
-					return fmt.Errorf("creating LLM provider: %w", err)
-				}
-			} else {
-				// For dry-run, still need a provider for categorization preview
-				provider, err = llm.NewProvider(cfg, backend, model)
-				if err != nil {
-					return fmt.Errorf("creating LLM provider: %w", err)
-				}
+			}
+			if err != nil {
+				return fmt.Errorf("creating categorization provider: %w", err)
 			}
 
 			ctx := context.Background()

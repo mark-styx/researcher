@@ -19,6 +19,37 @@ type Loaded struct {
 	Skipped []string
 }
 
+// LimitEvidence returns a copy capped to maxChars bytes across all content.
+// The final included item is cut on a rune boundary and later items are
+// omitted. A non-positive cap uses DefaultMaxEvidenceChars.
+func LimitEvidence(evidence []Evidence, maxChars int) []Evidence {
+	if maxChars <= 0 {
+		maxChars = DefaultMaxEvidenceChars
+	}
+	remaining := maxChars
+	out := make([]Evidence, 0, len(evidence))
+	for _, item := range evidence {
+		if remaining <= 0 {
+			break
+		}
+		content := item.Content
+		truncated := false
+		if len(content) > remaining {
+			content = truncateBytes(content, remaining)
+			truncated = true
+		}
+		if content == "" {
+			break
+		}
+		out = append(out, Evidence{Label: item.Label, Content: content})
+		remaining -= len(content)
+		if truncated {
+			break
+		}
+	}
+	return out
+}
+
 // LoadEvidence reads each file as one Evidence labeled with its path, in
 // order, until maxChars (<= 0: DefaultMaxEvidenceChars) is reached. The file
 // that crosses the cap is cut on a rune boundary; later files are skipped.

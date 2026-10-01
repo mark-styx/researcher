@@ -83,6 +83,34 @@ func TestNewRunner(t *testing.T) {
 	}
 }
 
+func TestRunner_CategorizationUsesUtilityProvider(t *testing.T) {
+	cfg := testConfig(t)
+	primary := &mockProvider{response: "Deep dive content"}
+	utility := &mockProvider{response: `{"category":"systems","filename":"bounded-routing"}`}
+	r := NewRunnerWithUtility(cfg, primary, utility)
+
+	result, err := r.Run(context.Background(), Task{
+		Type:       TypeDive,
+		Topic:      "Bounded routing",
+		NoResearch: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(primary.calls) != 1 {
+		t.Fatalf("primary calls = %d, want only the research call", len(primary.calls))
+	}
+	if len(utility.calls) != 1 {
+		t.Fatalf("utility calls = %d, want only the categorize call", len(utility.calls))
+	}
+	if utility.calls[0].MaxTokens != 200 {
+		t.Errorf("utility MaxTokens = %d, want 200", utility.calls[0].MaxTokens)
+	}
+	if !strings.Contains(result.FilePath, filepath.Join("systems", "bounded-routing.md")) {
+		t.Errorf("path = %q, want utility provider category and filename", result.FilePath)
+	}
+}
+
 func TestRunner_UnknownType(t *testing.T) {
 	cfg := testConfig(t)
 	mock := &mockProvider{}

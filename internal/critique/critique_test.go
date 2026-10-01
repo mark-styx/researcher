@@ -10,17 +10,6 @@ import (
 	"unicode/utf8"
 )
 
-func TestSplitRewriteOutput(t *testing.T) {
-	revised, changes := SplitRewriteOutput("answer text\n" + ChangesMarker + "\n- change one")
-	if revised != "answer text" || changes != "- change one" {
-		t.Errorf("got %q / %q", revised, changes)
-	}
-	revised, changes = SplitRewriteOutput("just the answer, no marker")
-	if revised != "just the answer, no marker" || changes != "" {
-		t.Errorf("no marker: %q / %q", revised, changes)
-	}
-}
-
 func TestParseFlags(t *testing.T) {
 	cases := []struct {
 		raw  string
@@ -135,16 +124,37 @@ func TestLoadEvidence(t *testing.T) {
 	}
 }
 
-func TestRewritePromptAndNotes(t *testing.T) {
+func TestLimitEvidence(t *testing.T) {
+	evidence := []Evidence{
+		{Label: "one", Content: "0123456789"},
+		{Label: "two", Content: "ééééé"},
+		{Label: "three", Content: "never included"},
+	}
+	got := LimitEvidence(evidence, 15)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Content != evidence[0].Content {
+		t.Errorf("first item changed: %q", got[0].Content)
+	}
+	if !utf8.ValidString(got[1].Content) || len(got[1].Content) > 5 {
+		t.Errorf("second item = %q, want at most 5 bytes on a rune boundary", got[1].Content)
+	}
+	if evidence[1].Content != "ééééé" {
+		t.Error("LimitEvidence mutated its input")
+	}
+}
+
+func TestFlagPromptAndNotes(t *testing.T) {
 	ev := []Evidence{{Label: "ollama/m1 | shard: s1", Content: "evidence one"}}
-	p := BuildGroundednessRewritePrompt("the question", "the draft", ev)
-	for _, want := range []string{"Original request:\nthe question", "Draft answer:\nthe draft", "[ollama/m1 | shard: s1]\nevidence one", "clearly marked as uncertain"} {
+	p := BuildGroundednessFlagPrompt("the draft", ev)
+	for _, want := range []string{"Text to check:\nthe draft", "[ollama/m1 | shard: s1]\nevidence one"} {
 		if !strings.Contains(p, want) {
-			t.Errorf("rewrite prompt missing %q", want)
+			t.Errorf("flag prompt missing %q", want)
 		}
 	}
-	if !strings.Contains(GroundednessRewriteSystemPrompt(), ChangesMarker) {
-		t.Error("rewrite system prompt must name the changes marker")
+	if !strings.Contains(GroundednessFlagSystemPrompt(), "Do not rewrite the text") {
+		t.Error("groundedness prompt must prohibit rewriting")
 	}
 	if got := AppendNotes("body", "", " "); got != "body" {
 		t.Errorf("no notes: %q", got)

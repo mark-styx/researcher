@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/tools"
@@ -17,6 +18,23 @@ type Provider interface {
 // MetadataProvider is an optional extension that exposes last-run metadata.
 type MetadataProvider interface {
 	Metadata() string
+}
+
+// EvidenceRecord is source material returned by a tool call during a model
+// run. It deliberately excludes the model's interpretation of that material.
+type EvidenceRecord struct {
+	Label   string `json:"label"`
+	Content string `json:"content"`
+}
+
+// EvidenceProvider exposes the raw tool results used during the last run.
+type EvidenceProvider interface {
+	Evidence() []EvidenceRecord
+}
+
+// Unloader lets staged providers release model memory before the next stage.
+type Unloader interface {
+	Unload(ctx context.Context) error
 }
 
 // Request holds the parameters for an LLM completion.
@@ -57,13 +75,7 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 		if modelOverride != "" {
 			model = modelOverride
 		}
-		return &Ollama{
-			Host:          cfg.Ollama.Host,
-			Model:         model,
-			FallbackModel: cfg.Ollama.FallbackModel,
-			MaxIterations: cfg.Tools.MaxIterations,
-			Executor:      tools.NewExecutor(cfg.Tools.MaxResults),
-		}, nil
+		return newOllamaProvider(cfg, model, cfg.Ollama.FallbackModel), nil
 
 	case "hybrid":
 		aggregatorModel := cfg.Hybrid.AggregatorModel
@@ -88,5 +100,29 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 
 	default:
 		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, or hybrid)", backend)
+	}
+}
+
+// NewUtilityProvider creates the small, single-model Ollama provider used for
+// bounded utility work such as report categorization. A blank utility model
+// means callers should keep using their existing provider for compatibility.
+func NewUtilityProvider(cfg *config.Config) (Provider, error) {
+	model := strings.TrimSpace(cfg.Ollama.UtilityModel)
+	if model == "" {
+		return nil, nil
+	}
+	return newOllamaProvider(cfg, model, ""), nil
+}
+
+func newOllamaProvider(cfg *config.Config, model, fallback string) *Ollama {
+	return &Ollama{
+		Host:          cfg.Ollama.Host,
+		Model:         model,
+		FallbackModel: fallback,
+		NumCtx:        cfg.Ollama.NumCtx,
+		NumPredict:    cfg.Ollama.NumPredict,
+		KeepAlive:     cfg.Ollama.KeepAlive,
+		MaxIterations: cfg.Tools.MaxIterations,
+		Executor:      tools.NewExecutor(cfg.Tools.MaxResults),
 	}
 }

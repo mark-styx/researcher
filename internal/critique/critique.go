@@ -3,14 +3,11 @@
 // evidence: `researchguy critique`, the researchguy_critique MCP tool, and
 // bookworm's chapter critique.
 //
-// Two critics:
-//   - Groundedness. The hybrid backend runs it in rewrite mode: it revises
-//     the draft to keep only claims the evidence supports and reports what
-//     it changed. Run runs it in flag mode instead: it lists claims the
-//     evidence does not support and changes nothing. A flag means "not found
-//     in the evidence given", not "false"; the 2026-09-25 bake-off found the
-//     rewrite mode deleting accurate facts that were simply absent from the
-//     worker drafts.
+// Two flag-only critics:
+//   - Groundedness. Lists claims the evidence does not support and changes
+//     nothing. A flag means "not found in the evidence given", not "false".
+//     The 2026-09-25 bake-off found rewrite mode deleting accurate facts that
+//     were simply absent from the evidence, so rewrite mode is not exposed.
 //   - Narrative vs. evidence. Lists claims presented as settled or consensus
 //     that aren't tied to a distinct piece of evidence.
 package critique
@@ -29,48 +26,11 @@ type Evidence struct {
 	Content string
 }
 
-// ChangesMarker separates a rewrite-mode groundedness critic's revised text
-// from its report of what it changed.
-const ChangesMarker = "===CHANGES==="
-
 // Sentinels the critics write when they have nothing to report.
 const (
 	NoNarrativeClaims   = "No narrative-only claims found."
 	NoUnsupportedClaims = "No unsupported claims found."
 )
-
-// GroundednessRewriteSystemPrompt is the hybrid backend's groundedness
-// critic: it rewrites the draft.
-func GroundednessRewriteSystemPrompt() string {
-	return "You are a groundedness critic. Keep only claims supported by worker evidence, fix unsupported or overstated claims, and keep the final answer concise and accurate. " +
-		"Never silently edit: after the revised answer, on its own line write exactly \"" + ChangesMarker + "\", then a bullet list of every claim you removed, softened, or flagged as unsupported, each with a one-line reason. If you changed nothing, write \"No changes.\" after the marker."
-}
-
-// BuildGroundednessRewritePrompt is the user prompt for the rewrite-mode
-// critic.
-func BuildGroundednessRewritePrompt(request, draft string, evidence []Evidence) string {
-	var b strings.Builder
-	b.WriteString("Original request:\n")
-	b.WriteString(request)
-	b.WriteString("\n\nDraft answer:\n")
-	b.WriteString(draft)
-	b.WriteString("\n\nWorker evidence:\n")
-	writeEvidence(&b, evidence)
-	b.WriteString("\nRevise the draft so every strong claim is traceable to worker evidence or clearly marked as uncertain.")
-	return b.String()
-}
-
-// SplitRewriteOutput separates a rewrite-mode critic's revised answer from
-// its trailing change report. If the marker is absent (the model didn't
-// follow the format), the whole output is the revised answer and changes is
-// empty rather than silently dropping content.
-func SplitRewriteOutput(raw string) (revised, changes string) {
-	idx := strings.Index(raw, ChangesMarker)
-	if idx == -1 {
-		return strings.TrimSpace(raw), ""
-	}
-	return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx+len(ChangesMarker):])
-}
 
 // GroundednessFlagSystemPrompt is the flag-mode groundedness critic: it
 // lists unsupported claims and rewrites nothing.
@@ -95,8 +55,8 @@ func BuildGroundednessFlagPrompt(text string, evidence []Evidence) string {
 // NarrativeSystemPrompt is the narrative-vs-evidence critic. It never
 // rewrites.
 func NarrativeSystemPrompt() string {
-	return "You are a narrative-vs-evidence critic. Read the answer and the worker evidence it was built from. " +
-		"For every claim in the answer presented as settled fact or consensus, check whether it is tied to a specific, distinct piece of evidence in the worker outputs, or whether it is a widely-repeated claim being restated without independent support. " +
+	return "You are a narrative-vs-evidence critic. Read the answer and the source evidence ledger it was built from. " +
+		"For every claim in the answer presented as settled fact or consensus, check whether it is tied to a specific, distinct piece of evidence in the ledger, or whether it is a widely-repeated claim being restated without independent support. " +
 		"List only the claims that lean narrative: quote or closely paraphrase the claim, then state in one line why it isn't distinctly evidenced. If every claim in the answer is directly evidenced, write exactly \"" + NoNarrativeClaims + "\" Be dry and concise. No prose padding, no restating the whole answer."
 }
 
@@ -105,7 +65,7 @@ func BuildNarrativePrompt(answer string, evidence []Evidence) string {
 	var b strings.Builder
 	b.WriteString("Answer to review:\n")
 	b.WriteString(answer)
-	b.WriteString("\n\nWorker evidence it was built from:\n")
+	b.WriteString("\n\nSource evidence ledger:\n")
 	writeEvidence(&b, evidence)
 	return b.String()
 }

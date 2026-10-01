@@ -16,13 +16,18 @@ type stubProvider struct {
 	resp      string
 	responses []string // if set, cycled per call (last one repeats); overrides resp
 	err       error
+	evidence  []EvidenceRecord
+	metadata  string
 	lastReq   Request
 	mu        sync.Mutex
 	calls     int
 	record    func(prompt string) // optional: called with UserPrompt on each Complete
+	unload    func() error
 }
 
 func (s *stubProvider) Name() string { return s.name }
+
+func (s *stubProvider) Metadata() string { return s.metadata }
 
 func (s *stubProvider) Complete(_ context.Context, req Request) (string, error) {
 	s.mu.Lock()
@@ -45,6 +50,19 @@ func (s *stubProvider) Complete(_ context.Context, req Request) (string, error) 
 	}
 	s.calls++
 	return resp, nil
+}
+
+func (s *stubProvider) Evidence() []EvidenceRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]EvidenceRecord(nil), s.evidence...)
+}
+
+func (s *stubProvider) Unload(context.Context) error {
+	if s.unload != nil {
+		return s.unload()
+	}
+	return nil
 }
 
 func TestHybridComplete_AggregatesWorkerOutputs(t *testing.T) {
@@ -285,10 +303,9 @@ func TestHybridComplete_VerificationPass(t *testing.T) {
 		},
 	}
 	aggregator := &stubProvider{name: "claude", resp: "draft synthesis"}
-	// Call 1 = groundedness critic (no marker -> whole output is the revised text).
-	// Call 2 = narrative critic (flags nothing).
+	// Call 1 = flag-only groundedness critic. Call 2 = narrative critic.
 	verifier := &stubProvider{name: "claude", responses: []string{
-		"verified synthesis",
+		"- Claim X is not supported by the evidence ledger.",
 		"No narrative-only claims found.",
 	}}
 
@@ -317,13 +334,13 @@ func TestHybridComplete_VerificationPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(resp, "verified synthesis") {
-		t.Fatalf("response = %q, want to start with %q", resp, "verified synthesis")
+	if !strings.HasPrefix(resp, "draft synthesis") {
+		t.Fatalf("verification rewrote the draft: %q", resp)
 	}
 	if !strings.Contains(resp, "## Critic Notes") {
 		t.Errorf("response should include visible critic notes, got: %s", resp)
 	}
-	if !strings.Contains(resp, "No narrative-only claims found.") {
+	if !strings.Contains(resp, "Claim X is not supported") || !strings.Contains(resp, "No narrative-only claims found.") {
 		t.Errorf("response should include the narrative critic's finding, got: %s", resp)
 	}
 	if verifier.calls != 2 {
@@ -346,7 +363,7 @@ func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
 	}
 	aggregator := &stubProvider{name: "claude", resp: "draft synthesis"}
 	verifier := &stubProvider{name: "claude", responses: []string{
-		"revised answer text" + "\n" + critique.ChangesMarker + "\n- Removed claim about X: unsupported by any worker.",
+		"- Claim about X: unsupported by the evidence ledger.",
 		"No narrative-only claims found.",
 	}}
 
@@ -375,19 +392,129 @@ func TestHybridComplete_GroundednessCriticReportsChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(resp, "revised answer text") {
-		t.Fatalf("response should start with the revised text (marker stripped), got: %s", resp)
-	}
-	if strings.Contains(strings.SplitN(resp, "## Critic Notes", 2)[0], critique.ChangesMarker) {
-		t.Error("the raw changes marker should not leak into the answer body")
+	if !strings.HasPrefix(resp, "draft synthesis") {
+		t.Fatalf("groundedness critic rewrote the draft: %s", resp)
 	}
 	if !strings.Contains(resp, "### Groundedness Review") {
 		t.Errorf("response should include a groundedness review section, got: %s", resp)
 	}
-	if !strings.Contains(resp, "Removed claim about X") {
-		t.Errorf("response should include the reported change, got: %s", resp)
+	if !strings.Contains(resp, "Claim about X") {
+		t.Errorf("response should include the reported flag, got: %s", resp)
 	}
-	if !strings.Contains(h.Metadata(), "Removed claim about X") {
-		t.Errorf("metadata should record groundedness_changes, got: %s", h.Metadata())
+	if !strings.Contains(h.Metadata(), "Claim about X") || !strings.Contains(h.Metadata(), `"groundedness_flags"`) {
+		t.Errorf("metadata should record groundedness_flags, got: %s", h.Metadata())
+	}
+}
+
+func TestHybridComplete_UsesRawToolEvidenceLedger(t *testing.T) {
+	cfg := &config.Config{
+		Claude: config.ClaudeConfig{Model: "opus"},
+		Ollama: config.OllamaConfig{Model: "worker"},
+		Hybrid: config.HybridConfig{EnableVerification: true, VerifierBackend: "claude", VerifierModel: "sonnet"},
+	}
+	aggregator := &stubProvider{name: "claude", resp: "draft synthesis", metadata: `{"model":"aggregator"}`}
+	verifier := &stubProvider{name: "claude", responses: []string{
+		critique.NoUnsupportedClaims,
+		critique.NoNarrativeClaims,
+	}}
+	worker := &stubProvider{
+		name:     "worker",
+		resp:     "worker interpretation that is not itself evidence",
+		metadata: `{"model":"worker","eval_count":20}`,
+		evidence: []EvidenceRecord{{
+			Label:   "web_fetch url=https://example.com/source",
+			Content: "Primary source text from the fetched page.",
+		}},
+	}
+	h := &Hybrid{
+		cfg:                cfg,
+		WorkerBackend:      "ollama",
+		WorkerModels:       []string{"worker"},
+		AggregatorBackend:  "claude",
+		AggregatorModel:    "opus",
+		VerifierBackend:    "claude",
+		VerifierModel:      "sonnet",
+		EnableVerification: true,
+		MaxParallel:        1,
+		makeProvider: func(backend, model string) (Provider, error) {
+			switch backend + "/" + model {
+			case "ollama/worker":
+				return worker, nil
+			case "claude/opus":
+				return aggregator, nil
+			case "claude/sonnet":
+				return verifier, nil
+			default:
+				return nil, fmt.Errorf("unexpected provider %s/%s", backend, model)
+			}
+		},
+	}
+
+	if _, err := h.Complete(context.Background(), Request{UserPrompt: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(aggregator.lastReq.UserPrompt, "Evidence ledger") || !strings.Contains(aggregator.lastReq.UserPrompt, "Primary source text") {
+		t.Errorf("aggregator did not receive raw evidence ledger: %s", aggregator.lastReq.UserPrompt)
+	}
+	if !strings.Contains(verifier.lastReq.UserPrompt, "Primary source text") {
+		t.Errorf("verifier did not receive raw evidence ledger: %s", verifier.lastReq.UserPrompt)
+	}
+	if strings.Contains(verifier.lastReq.UserPrompt, "worker interpretation that is not itself evidence") {
+		t.Errorf("worker prose was treated as verification evidence: %s", verifier.lastReq.UserPrompt)
+	}
+	metadata := h.Metadata()
+	if !strings.Contains(metadata, `"llm_metadata":{"model":"worker","eval_count":20}`) || !strings.Contains(metadata, `"aggregator_metadata":{"model":"aggregator"}`) {
+		t.Errorf("hybrid metadata dropped Ollama telemetry: %s", metadata)
+	}
+}
+
+func TestHybridComplete_UnloadsEachStageBeforeNextModel(t *testing.T) {
+	cfg := &config.Config{
+		Claude: config.ClaudeConfig{Model: "opus"},
+		Ollama: config.OllamaConfig{Model: "worker"},
+		Hybrid: config.HybridConfig{EnableVerification: true, VerifierBackend: "ollama", VerifierModel: "verifier"},
+	}
+	var eventsMu sync.Mutex
+	var events []string
+	record := func(event string) {
+		eventsMu.Lock()
+		defer eventsMu.Unlock()
+		events = append(events, event)
+	}
+	provider := func(model string, responses []string) *stubProvider {
+		return &stubProvider{
+			name:      model,
+			responses: responses,
+			record:    func(string) { record(model + ":complete") },
+			unload:    func() error { record(model + ":unload"); return nil },
+		}
+	}
+	worker := provider("worker", []string{"worker draft"})
+	aggregator := provider("aggregator", []string{"draft"})
+	verifier := provider("verifier", []string{critique.NoUnsupportedClaims, critique.NoNarrativeClaims})
+	h := &Hybrid{
+		cfg: cfg, WorkerBackend: "ollama", WorkerModels: []string{"worker"},
+		AggregatorBackend: "ollama", AggregatorModel: "aggregator",
+		VerifierBackend: "ollama", VerifierModel: "verifier", EnableVerification: true, MaxParallel: 1,
+		makeProvider: func(_ string, model string) (Provider, error) {
+			switch model {
+			case "worker":
+				return worker, nil
+			case "aggregator":
+				return aggregator, nil
+			case "verifier":
+				return verifier, nil
+			default:
+				return nil, fmt.Errorf("unexpected model %s", model)
+			}
+		},
+	}
+	if _, err := h.Complete(context.Background(), Request{UserPrompt: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(events, ",")
+	want := "worker:complete,worker:unload,aggregator:complete,aggregator:unload,verifier:complete,verifier:complete,verifier:unload"
+	if got != want {
+		t.Fatalf("lifecycle = %q, want %q", got, want)
 	}
 }

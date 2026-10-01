@@ -12,13 +12,18 @@ import (
 	"github.com/marklubin/researchguy/internal/critique"
 )
 
+const maxHybridEvidenceChars = 80_000
+
 type hybridWorkerOutput struct {
-	Index   int
-	Backend string
-	Model   string
-	Shard   string
-	Content string
-	Err     error
+	Index    int
+	Backend  string
+	Model    string
+	Shard    string
+	Content  string
+	Evidence []critique.Evidence
+	Provider Provider
+	Metadata json.RawMessage
+	Err      error
 }
 
 // Hybrid runs multiple worker model calls and then aggregates with a final model.
@@ -50,6 +55,7 @@ func (h *Hybrid) Metadata() string {
 
 func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	h.setMetadata("")
+	started := time.Now()
 
 	makeProvider := h.makeProvider
 	if makeProvider == nil {
@@ -99,12 +105,15 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			}
 			resp, err := p.Complete(ctx, wr)
 			out <- hybridWorkerOutput{
-				Index:   idx,
-				Backend: workerBackend,
-				Model:   m,
-				Shard:   sh,
-				Content: resp,
-				Err:     err,
+				Index:    idx,
+				Backend:  workerBackend,
+				Model:    m,
+				Shard:    sh,
+				Content:  resp,
+				Evidence: providerEvidence(p, workerBackend, m, sh),
+				Provider: p,
+				Metadata: providerMetadataJSON(p),
+				Err:      err,
 			}
 		}(i, model, shard, workerReq)
 	}
@@ -122,6 +131,9 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 		success++
 	}
+	if err := unloadWorkers(ctx, results); err != nil {
+		return "", fmt.Errorf("unloading hybrid workers before aggregation: %w", err)
+	}
 	if success == 0 {
 		return "", fmt.Errorf("all hybrid workers failed: %s", strings.Join(failures, "; "))
 	}
@@ -137,7 +149,6 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("creating hybrid aggregator provider: %w", err)
 	}
 
-	started := time.Now()
 	aggReq := Request{
 		SystemPrompt: aggregationSystemPrompt(req.SystemPrompt),
 		UserPrompt:   buildAggregationPrompt(req, results),
@@ -145,13 +156,20 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	}
 	draft, err := aggregator.Complete(ctx, aggReq)
 	if err != nil {
+		_ = unloadProvider(ctx, aggregator)
 		return "", err
+	}
+	aggregatorMetadata := providerMetadataJSON(aggregator)
+	if err := unloadProvider(ctx, aggregator); err != nil {
+		return "", fmt.Errorf("unloading hybrid aggregator before verification: %w", err)
 	}
 
 	final := draft
 	verified := false
-	var groundednessChanges string
+	var groundednessFlags string
 	var narrativeFlags string
+	var groundednessVerifierMetadata json.RawMessage
+	var narrativeVerifierMetadata json.RawMessage
 	if h.shouldVerify() {
 		verifierBackend := h.VerifierBackend
 		if strings.TrimSpace(verifierBackend) == "" && h.cfg != nil {
@@ -167,24 +185,22 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 		verifier, verr := makeProvider(verifierBackend, verifierModel)
 		if verr == nil {
-			// Groundedness critic: revises the draft to only keep claims the
-			// worker evidence supports. Unlike a plain overwrite, it must
-			// report what it changed and why — that report becomes part of
-			// the metadata and the visible critic notes, not a silent edit.
+			// Groundedness is flag-only. It validates the unchanged draft
+			// against raw tool results rather than treating worker prose as a
+			// source of truth.
 			evidence := workerEvidence(results)
 			groundReq := Request{
-				SystemPrompt: critique.GroundednessRewriteSystemPrompt(),
-				UserPrompt:   critique.BuildGroundednessRewritePrompt(req.UserPrompt, draft, evidence),
+				SystemPrompt: critique.GroundednessFlagSystemPrompt(),
+				UserPrompt:   critique.BuildGroundednessFlagPrompt(draft, evidence),
 				MaxTokens:    req.MaxTokens,
 			}
 			if raw, rerr := verifier.Complete(ctx, groundReq); rerr == nil && strings.TrimSpace(raw) != "" {
-				revised, changes := critique.SplitRewriteOutput(raw)
-				if strings.TrimSpace(revised) != "" {
-					final = revised
-					verified = true
-					groundednessChanges = changes
-				}
+				groundednessFlags = strings.TrimSpace(raw)
+				verified = true
+			} else if rerr != nil {
+				groundednessFlags = fmt.Sprintf("Groundedness verification failed: %v", rerr)
 			}
+			groundednessVerifierMetadata = providerMetadataJSON(verifier)
 
 			// Narrative-detector critic: does not rewrite the draft. It flags
 			// claims presented as settled/consensus that aren't tied to
@@ -197,13 +213,21 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			}
 			if flags, nerr := verifier.Complete(ctx, narrReq); nerr == nil {
 				narrativeFlags = strings.TrimSpace(flags)
+			} else {
+				narrativeFlags = fmt.Sprintf("Narrative verification failed: %v", nerr)
 			}
+			narrativeVerifierMetadata = providerMetadataJSON(verifier)
+			if uerr := unloadProvider(ctx, verifier); uerr != nil {
+				narrativeFlags = strings.TrimSpace(narrativeFlags + "\nVerifier unload failed: " + uerr.Error())
+			}
+		} else {
+			groundednessFlags = fmt.Sprintf("Verification provider failed: %v", verr)
 		}
 	}
 
-	final = critique.AppendNotes(final, groundednessChanges, narrativeFlags)
+	final = critique.AppendNotes(final, groundednessFlags, narrativeFlags)
 
-	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, verified, groundednessChanges, narrativeFlags, time.Since(started)))
+	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, aggregatorMetadata, verified, groundednessFlags, narrativeFlags, groundednessVerifierMetadata, narrativeVerifierMetadata, time.Since(started)))
 	return final, nil
 }
 
@@ -280,7 +304,16 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput) stri
 		b.WriteString(w.Content)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nProduce the best final answer using the strongest evidence from the worker outputs.")
+	b.WriteString("\nEvidence ledger (raw successful tool results; cite ledger labels for factual claims):\n")
+	evidence := workerEvidence(workers)
+	if len(evidence) == 0 {
+		b.WriteString("\n(no raw tool evidence captured)\n")
+	} else {
+		for i, e := range evidence {
+			fmt.Fprintf(&b, "\n[E%d | %s]\n%s\n", i+1, e.Label, e.Content)
+		}
+	}
+	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger. Mark claims without ledger support as analysis or uncertainty.")
 	return b.String()
 }
 
@@ -352,19 +385,76 @@ Return:
 `, original, shard)
 }
 
-// workerEvidence labels each successful worker's output for the critics.
+// workerEvidence returns only raw successful tool results. Worker prose is
+// useful analysis for aggregation, but is not promoted into source evidence.
 func workerEvidence(workers []hybridWorkerOutput) []critique.Evidence {
 	var out []critique.Evidence
 	for _, w := range workers {
 		if w.Err != nil {
 			continue
 		}
+		out = append(out, w.Evidence...)
+	}
+	return critique.LimitEvidence(out, maxHybridEvidenceChars)
+}
+
+func providerEvidence(provider Provider, backend, model, shard string) []critique.Evidence {
+	ep, ok := provider.(EvidenceProvider)
+	if !ok {
+		return nil
+	}
+	records := ep.Evidence()
+	out := make([]critique.Evidence, 0, len(records))
+	for _, record := range records {
+		if strings.TrimSpace(record.Content) == "" {
+			continue
+		}
 		out = append(out, critique.Evidence{
-			Label:   fmt.Sprintf("%s/%s | shard: %s", w.Backend, w.Model, w.Shard),
-			Content: w.Content,
+			Label:   fmt.Sprintf("%s/%s | shard: %s | %s", backend, model, shard, record.Label),
+			Content: record.Content,
 		})
 	}
 	return out
+}
+
+func unloadWorkers(ctx context.Context, workers []hybridWorkerOutput) error {
+	var failures []string
+	for _, worker := range workers {
+		if worker.Provider == nil {
+			continue
+		}
+		if err := unloadProvider(ctx, worker.Provider); err != nil {
+			failures = append(failures, fmt.Sprintf("%s/%s: %v", worker.Backend, worker.Model, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func unloadProvider(ctx context.Context, provider Provider) error {
+	unloader, ok := provider.(Unloader)
+	if !ok {
+		return nil
+	}
+	return unloader.Unload(ctx)
+}
+
+func providerMetadataJSON(provider Provider) json.RawMessage {
+	mp, ok := provider.(MetadataProvider)
+	if !ok {
+		return nil
+	}
+	metadata := strings.TrimSpace(mp.Metadata())
+	if metadata == "" {
+		return nil
+	}
+	if json.Valid([]byte(metadata)) {
+		return json.RawMessage(metadata)
+	}
+	encoded, _ := json.Marshal(metadata)
+	return json.RawMessage(encoded)
 }
 
 func (h *Hybrid) shouldVerify() bool {
@@ -380,44 +470,54 @@ func (h *Hybrid) setMetadata(s string) {
 	h.lastMetadata = s
 }
 
-func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, verified bool, groundednessChanges, narrativeFlags string, duration time.Duration) string {
+func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, aggregatorMetadata json.RawMessage, verified bool, groundednessFlags, narrativeFlags string, groundednessVerifierMetadata, narrativeVerifierMetadata json.RawMessage, duration time.Duration) string {
 	type workerMeta struct {
-		Backend string `json:"backend"`
-		Model   string `json:"model"`
-		Shard   string `json:"shard"`
-		Error   string `json:"error,omitempty"`
-		Output  string `json:"output"`
+		Backend       string          `json:"backend"`
+		Model         string          `json:"model"`
+		Shard         string          `json:"shard"`
+		Error         string          `json:"error,omitempty"`
+		Output        string          `json:"output"`
+		EvidenceItems int             `json:"evidence_items"`
+		LLMMetadata   json.RawMessage `json:"llm_metadata,omitempty"`
 	}
 	meta := struct {
-		Mode                string       `json:"mode"`
-		BranchMode          string       `json:"branch_mode,omitempty"`
-		OriginalPrompt      string       `json:"original_prompt"`
-		Shards              []string     `json:"shards"`
-		Workers             []workerMeta `json:"workers"`
-		AggregatorBackend   string       `json:"aggregator_backend"`
-		AggregatorModel     string       `json:"aggregator_model"`
-		Verified            bool         `json:"verified"`
-		GroundednessChanges string       `json:"groundedness_changes,omitempty"`
-		NarrativeFlags      string       `json:"narrative_flags,omitempty"`
-		DurationMS          int64        `json:"duration_ms"`
+		Mode                         string          `json:"mode"`
+		BranchMode                   string          `json:"branch_mode,omitempty"`
+		OriginalPrompt               string          `json:"original_prompt"`
+		Shards                       []string        `json:"shards"`
+		Workers                      []workerMeta    `json:"workers"`
+		AggregatorBackend            string          `json:"aggregator_backend"`
+		AggregatorModel              string          `json:"aggregator_model"`
+		AggregatorMetadata           json.RawMessage `json:"aggregator_metadata,omitempty"`
+		Verified                     bool            `json:"verified"`
+		GroundednessFlags            string          `json:"groundedness_flags,omitempty"`
+		NarrativeFlags               string          `json:"narrative_flags,omitempty"`
+		GroundednessVerifierMetadata json.RawMessage `json:"groundedness_verifier_metadata,omitempty"`
+		NarrativeVerifierMetadata    json.RawMessage `json:"narrative_verifier_metadata,omitempty"`
+		DurationMS                   int64           `json:"duration_ms"`
 	}{
-		Mode:                "hybrid",
-		BranchMode:          req.Mode,
-		OriginalPrompt:      truncateForMetadata(req.UserPrompt, 2000),
-		Shards:              shards,
-		AggregatorBackend:   aggBackend,
-		AggregatorModel:     aggModel,
-		Verified:            verified,
-		GroundednessChanges: truncateForMetadata(groundednessChanges, 2000),
-		NarrativeFlags:      truncateForMetadata(narrativeFlags, 2000),
-		DurationMS:          duration.Milliseconds(),
+		Mode:                         "hybrid",
+		BranchMode:                   req.Mode,
+		OriginalPrompt:               truncateForMetadata(req.UserPrompt, 2000),
+		Shards:                       shards,
+		AggregatorBackend:            aggBackend,
+		AggregatorModel:              aggModel,
+		AggregatorMetadata:           aggregatorMetadata,
+		Verified:                     verified,
+		GroundednessFlags:            truncateForMetadata(groundednessFlags, 2000),
+		NarrativeFlags:               truncateForMetadata(narrativeFlags, 2000),
+		GroundednessVerifierMetadata: groundednessVerifierMetadata,
+		NarrativeVerifierMetadata:    narrativeVerifierMetadata,
+		DurationMS:                   duration.Milliseconds(),
 	}
 	for _, w := range workers {
 		m := workerMeta{
-			Backend: w.Backend,
-			Model:   w.Model,
-			Shard:   w.Shard,
-			Output:  truncateForMetadata(w.Content, 4000),
+			Backend:       w.Backend,
+			Model:         w.Model,
+			Shard:         w.Shard,
+			Output:        truncateForMetadata(w.Content, 4000),
+			EvidenceItems: len(w.Evidence),
+			LLMMetadata:   w.Metadata,
 		}
 		if w.Err != nil {
 			m.Error = w.Err.Error()

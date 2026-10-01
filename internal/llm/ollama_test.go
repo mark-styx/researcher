@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -383,5 +384,207 @@ func TestDoChat_WithToolCalls(t *testing.T) {
 	}
 	if callCount.Load() != 2 {
 		t.Errorf("expected 2 LLM calls, got %d", callCount.Load())
+	}
+	evidence := o.Evidence()
+	if len(evidence) != 1 {
+		t.Fatalf("Evidence() returned %d entries, want 1", len(evidence))
+	}
+	if !strings.Contains(evidence[0].Label, "web_fetch") || !strings.Contains(evidence[0].Label, contentSrv.URL) {
+		t.Errorf("evidence label = %q, want tool name and URL", evidence[0].Label)
+	}
+	if evidence[0].Content != "fetched content" {
+		t.Errorf("evidence content = %q", evidence[0].Content)
+	}
+}
+
+func TestOllama_RequestResourceControls(t *testing.T) {
+	o := &Ollama{
+		NumCtx:     32768,
+		NumPredict: 4096,
+		KeepAlive:  "5m",
+	}
+	options := o.requestOptions(Request{MaxTokens: 16000})
+	if options.NumCtx != 32768 {
+		t.Errorf("num_ctx = %d, want 32768", options.NumCtx)
+	}
+	if options.NumPredict != 4096 {
+		t.Errorf("num_predict = %d, want configured cap 4096", options.NumPredict)
+	}
+	if o.chatKeepAlive() != "5m" {
+		t.Errorf("keep_alive = %q, want 5m", o.chatKeepAlive())
+	}
+	body, err := json.Marshal(ollamaChatRequest{Options: options, KeepAlive: o.chatKeepAlive()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"num_ctx":32768`, `"num_predict":4096`, `"keep_alive":"5m"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("request JSON %s missing %s", body, want)
+		}
+	}
+}
+
+func TestOllama_RequestMaxTokensBelowConfiguredCap(t *testing.T) {
+	o := &Ollama{NumPredict: 4096}
+	options := o.requestOptions(Request{MaxTokens: 200})
+	if options.NumPredict != 200 {
+		t.Errorf("num_predict = %d, want request limit 200", options.NumPredict)
+	}
+}
+
+func TestOllama_ZeroKeepAliveUnloadsAfterCompletion(t *testing.T) {
+	for _, value := range []string{"0", "0s", "0m"} {
+		o := &Ollama{KeepAlive: value}
+		if !keepAliveUnloads(value) {
+			t.Errorf("keepAliveUnloads(%q) = false", value)
+		}
+		if got := o.chatKeepAlive(); got != "" {
+			t.Errorf("chat keep_alive for %q = %q, want omitted so tool loops do not reload", value, got)
+		}
+	}
+	if keepAliveUnloads("5m") {
+		t.Error("5m should retain the model")
+	}
+	body, err := marshalUnloadRequest("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"model":"test","keep_alive":0}` {
+		t.Errorf("unload JSON = %s", body)
+	}
+}
+
+func TestOllama_MetadataIncludesAPITelemetry(t *testing.T) {
+	runMeta := ollamaRunMetadata{Model: "test"}
+	runMeta.add(&ollamaChatResponse{
+		Model:              "test",
+		TotalDuration:      12,
+		LoadDuration:       3,
+		PromptEvalCount:    40,
+		PromptEvalDuration: 4,
+		EvalCount:          20,
+		EvalDuration:       5,
+	})
+	o := &Ollama{}
+	o.storeRun(ollamaRun{metadata: runMeta})
+	metadata := o.Metadata()
+	for _, want := range []string{`"model":"test"`, `"prompt_eval_count":40`, `"eval_count":20`, `"total_duration_ns":12`} {
+		if !strings.Contains(metadata, want) {
+			t.Errorf("metadata %q missing %q", metadata, want)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type fakeToolExecutor struct {
+	result tools.ToolResult
+}
+
+func (f fakeToolExecutor) Execute(context.Context, tools.ToolCall) tools.ToolResult {
+	return f.result
+}
+
+func jsonHTTPResponse(status int, value any) *http.Response {
+	body, _ := json.Marshal(value)
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(string(body))),
+	}
+}
+
+func TestOllama_CompleteSendsBoundsAndUnloads(t *testing.T) {
+	var chatReq ollamaChatRequest
+	var unloadBody map[string]any
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/chat":
+			if err := json.NewDecoder(req.Body).Decode(&chatReq); err != nil {
+				t.Fatalf("decode chat request: %v", err)
+			}
+			return jsonHTTPResponse(http.StatusOK, ollamaChatResponse{
+				Model:           "bounded-model",
+				Message:         ollamaMessage{Role: "assistant", Content: "done"},
+				Done:            true,
+				TotalDuration:   100,
+				PromptEvalCount: 30,
+				EvalCount:       10,
+			}), nil
+		case "/api/generate":
+			if err := json.NewDecoder(req.Body).Decode(&unloadBody); err != nil {
+				t.Fatalf("decode unload request: %v", err)
+			}
+			return jsonHTTPResponse(http.StatusOK, map[string]any{"done": true}), nil
+		default:
+			return jsonHTTPResponse(http.StatusNotFound, map[string]any{"error": "not found"}), nil
+		}
+	})}
+	o := &Ollama{
+		Host:       "http://ollama.test",
+		Model:      "bounded-model",
+		NumCtx:     32768,
+		NumPredict: 4096,
+		KeepAlive:  "0s",
+		HTTPClient: client,
+	}
+	got, err := o.Complete(context.Background(), Request{UserPrompt: "test", MaxTokens: 16000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "done" {
+		t.Errorf("Complete() = %q", got)
+	}
+	if chatReq.Options.NumCtx != 32768 || chatReq.Options.NumPredict != 4096 || chatReq.KeepAlive != "" {
+		t.Errorf("chat request = %+v", chatReq)
+	}
+	if unloadBody["model"] != "bounded-model" || unloadBody["keep_alive"] != float64(0) {
+		t.Errorf("unload body = %#v", unloadBody)
+	}
+	if !strings.Contains(o.Metadata(), `"prompt_eval_count":30`) || !strings.Contains(o.Metadata(), `"eval_count":10`) {
+		t.Errorf("metadata = %s", o.Metadata())
+	}
+}
+
+func TestOllama_CompleteCapturesSuccessfulToolEvidence(t *testing.T) {
+	var calls atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/chat" {
+			return jsonHTTPResponse(http.StatusNotFound, nil), nil
+		}
+		if calls.Add(1) == 1 {
+			args, _ := json.Marshal(map[string]string{"url": "https://example.com/source"})
+			return jsonHTTPResponse(http.StatusOK, ollamaChatResponse{
+				Message: ollamaMessage{Role: "assistant", ToolCalls: []ollamaToolCall{{
+					Function: ollamaFunction{Name: "web_fetch", Arguments: args},
+				}}},
+			}), nil
+		}
+		return jsonHTTPResponse(http.StatusOK, ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: "answer"},
+			Done:    true,
+		}), nil
+	})}
+	o := &Ollama{
+		Host:          "http://ollama.test",
+		Model:         "tool-model",
+		KeepAlive:     "5m",
+		MaxIterations: 3,
+		HTTPClient:    client,
+		Executor: fakeToolExecutor{result: tools.ToolResult{
+			Name:    "web_fetch",
+			Content: "raw fetched source",
+		}},
+	}
+	if _, err := o.Complete(context.Background(), Request{UserPrompt: "research", Tools: tools.DefaultTools()}); err != nil {
+		t.Fatal(err)
+	}
+	evidence := o.Evidence()
+	if len(evidence) != 1 || evidence[0].Content != "raw fetched source" || !strings.Contains(evidence[0].Label, "https://example.com/source") {
+		t.Errorf("Evidence() = %+v", evidence)
 	}
 }
