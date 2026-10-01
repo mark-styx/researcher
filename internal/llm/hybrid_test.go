@@ -292,6 +292,36 @@ func TestHybridComplete_ModeSelectsBranches(t *testing.T) {
 	}
 }
 
+func TestHybridComplete_NamedModeDefaultsToAllRoles(t *testing.T) {
+	cfg := &config.Config{
+		Claude: config.ClaudeConfig{Model: "opus"},
+		Ollama: config.OllamaConfig{Model: "worker"},
+	}
+	worker := &stubProvider{name: "worker", resp: "worker draft"}
+	aggregator := &stubProvider{name: "aggregator", resp: "final"}
+	h := &Hybrid{
+		cfg:               cfg,
+		WorkerBackend:     "ollama",
+		WorkerModels:      []string{"worker"},
+		AggregatorBackend: "claude",
+		AggregatorModel:   "opus",
+		MaxParallel:       1,
+		makeProvider: func(backend, model string) (Provider, error) {
+			if backend == "claude" {
+				return aggregator, nil
+			}
+			return worker, nil
+		},
+	}
+
+	if _, err := h.Complete(context.Background(), Request{UserPrompt: "test", Mode: "inquiry"}); err != nil {
+		t.Fatal(err)
+	}
+	if worker.calls != len(branchSets["inquiry"]) {
+		t.Errorf("worker calls = %d, want all %d inquiry roles", worker.calls, len(branchSets["inquiry"]))
+	}
+}
+
 func TestHybridComplete_VerificationPass(t *testing.T) {
 	cfg := &config.Config{
 		Claude: config.ClaudeConfig{Model: "opus"},

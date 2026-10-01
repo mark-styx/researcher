@@ -76,7 +76,11 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	}
 	branchCount := req.BranchCount
 	if branchCount <= 0 {
-		branchCount = len(models)
+		if roles, ok := branchSets[req.Mode]; ok {
+			branchCount = len(roles)
+		} else {
+			branchCount = len(models)
+		}
 	}
 	shards := planShards(req.UserPrompt, req.Mode, branchCount)
 
