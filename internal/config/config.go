@@ -161,6 +161,10 @@ type HybridConfig struct {
 	// backend: ~2M chars for claude (Opus has a 1M-token window), 80k
 	// otherwise. Set it for a smaller-window claude model.
 	MaxEvidenceChars int `yaml:"max_evidence_chars"`
+	// AggregatorTools gives a claude aggregator the read-profile MCP tools
+	// (researchguy mcp --profile read) when store.dsn is set, so it can
+	// retrieve and quote the run's fetched text and prior research.
+	AggregatorTools bool `yaml:"aggregator_tools"`
 }
 
 type SchedulerConfig struct {
@@ -252,6 +256,9 @@ hybrid:
   # evenly across shards. The full ledger is saved to the run record either
   # way. 0 sizes it to the backend: ~2M chars for claude, 80k otherwise.
   max_evidence_chars: 0
+  # With store.dsn set, a claude aggregator gets the read-only researchguy
+  # MCP tools to retrieve and quote the run's fetched text.
+  aggregator_tools: true
 
 # Tool use (web search, web fetch)
 tools:
@@ -420,6 +427,7 @@ func defaults() *Config {
 			EnableVerification: false,
 			MaxParallel:        1,
 			MaxEvidenceChars:   0,
+			AggregatorTools:    true,
 		},
 		Tools: ToolsConfig{
 			Enabled:       true,

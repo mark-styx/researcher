@@ -69,6 +69,9 @@ func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
 
 	run := r.startRun(task)
 	result, err := do(ctx, task, run)
+	if err == nil {
+		r.checkCitations(ctx, task, run, result.FilePath)
+	}
 	r.finishRun(run, result, err)
 	r.fetchRun(ctx, task, run)
 	r.indexRun(ctx, run)
@@ -251,12 +254,13 @@ func (r *Runner) runAsk(ctx context.Context, task Task, run *store.Run) (RunResu
 	sysPrompt := AskSystemPrompt(researchContext)
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: sysPrompt,
-		UserPrompt:   task.Topic,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    sysPrompt,
+		UserPrompt:      task.Topic,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -329,13 +333,14 @@ func (r *Runner) runDive(ctx context.Context, task Task, run *store.Run) (RunRes
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: SystemPrompt(TypeDive, researchContext),
-		UserPrompt:   prompt,
-		MaxTokens:    r.cfg.Claude.MaxTokens,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    SystemPrompt(TypeDive, researchContext),
+		UserPrompt:      prompt,
+		MaxTokens:       r.cfg.Claude.MaxTokens,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -361,13 +366,14 @@ func (r *Runner) runWatch(ctx context.Context, task Task, run *store.Run) (RunRe
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: SystemPrompt(TypeWatch, ""),
-		UserPrompt:   prompt,
-		MaxTokens:    r.cfg.Claude.MaxTokens,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    SystemPrompt(TypeWatch, ""),
+		UserPrompt:      prompt,
+		MaxTokens:       r.cfg.Claude.MaxTokens,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -418,13 +424,14 @@ func (r *Runner) runReview(ctx context.Context, task Task, run *store.Run) (RunR
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: SystemPrompt(TypeReview, researchContext),
-		UserPrompt:   promptBuilder.String(),
-		MaxTokens:    r.cfg.Claude.MaxTokens,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    SystemPrompt(TypeReview, researchContext),
+		UserPrompt:      promptBuilder.String(),
+		MaxTokens:       r.cfg.Claude.MaxTokens,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -455,13 +462,14 @@ func (r *Runner) runEnrich(ctx context.Context, task Task, run *store.Run) (RunR
 	prompt := fmt.Sprintf("Enrich and expand the following research document:\n\n%s", string(content))
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: SystemPrompt(TypeEnrich, ""),
-		UserPrompt:   prompt,
-		MaxTokens:    r.cfg.Claude.MaxTokens,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    SystemPrompt(TypeEnrich, ""),
+		UserPrompt:      prompt,
+		MaxTokens:       r.cfg.Claude.MaxTokens,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -512,13 +520,14 @@ func (r *Runner) runCompare(ctx context.Context, task Task, run *store.Run) (Run
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{
-		SystemPrompt: SystemPrompt(TypeCompare, researchContext),
-		UserPrompt:   promptBuilder.String(),
-		MaxTokens:    r.cfg.Claude.MaxTokens,
-		Tools:        r.defaultTools(),
-		Mode:         task.Mode,
-		BranchCount:  task.BranchCount,
-		Run:          run,
+		SystemPrompt:    SystemPrompt(TypeCompare, researchContext),
+		UserPrompt:      promptBuilder.String(),
+		MaxTokens:       r.cfg.Claude.MaxTokens,
+		Tools:           r.defaultTools(),
+		Mode:            task.Mode,
+		BranchCount:     task.BranchCount,
+		Run:             run,
+		BeforeAggregate: r.beforeAggregate(task, run),
 	})
 	if err != nil {
 		return RunResult{}, err

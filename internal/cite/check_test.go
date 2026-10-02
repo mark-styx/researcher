@@ -177,15 +177,15 @@ func TestPassages_ForCritics(t *testing.T) {
 	}
 }
 
-func TestAppendNotes(t *testing.T) {
-	if got := AppendNotes("report\n", ""); got != "report\n" {
-		t.Errorf("no notes changed the report: %q", got)
+func TestNotesSection(t *testing.T) {
+	if got := NotesSection("report", ""); got != "" {
+		t.Errorf("no notes = %q", got)
 	}
-	if got := AppendNotes("report\n", "- bad\n"); got != "report\n\n---\n\n## Citation Check\n\n- bad\n" {
+	if got := NotesSection("report", "- bad\n"); got != "\n\n---\n\n## Citation Check\n\n- bad\n" {
 		t.Errorf("own section = %q", got)
 	}
-	critic := "report\n\n---\n\n## Critic Notes\n\n### Groundedness Review\n\nok\n"
-	if got := AppendNotes(critic, "- bad\n"); !strings.HasSuffix(got, "ok\n\n### Citation Check\n\n- bad\n") {
+	critic := "report\n\n---\n\n## Critic Notes\n\n### Groundedness Review\n\nok"
+	if got := NotesSection(critic, "- bad\n"); got != "\n\n### Citation Check\n\n- bad\n" {
 		t.Errorf("under critic notes = %q", got)
 	}
 }

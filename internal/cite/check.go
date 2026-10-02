@@ -233,17 +233,17 @@ func (s Summary) Notes() string {
 	return b.String()
 }
 
-// AppendNotes adds the check's notes to a report: under its critic notes
-// when it has them, else as their own section.
-func AppendNotes(report, notes string) string {
+// NotesSection is what to append to a report for the check's notes: a
+// subsection of its critic notes when it has them, else a section of its
+// own. It's "" with no notes.
+func NotesSection(report, notes string) string {
 	if notes == "" {
-		return report
+		return ""
 	}
-	report = strings.TrimRight(report, "\n")
 	if strings.Contains(report, "\n## Critic Notes\n") {
-		return report + "\n\n### Citation Check\n\n" + notes
+		return "\n\n### Citation Check\n\n" + notes
 	}
-	return report + "\n\n---\n\n## Citation Check\n\n" + notes
+	return "\n\n---\n\n## Citation Check\n\n" + notes
 }
 
 // maxCitedPassages caps the passages Passages returns.

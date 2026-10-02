@@ -49,6 +49,9 @@ hybrid:
   # evenly across shards. The full ledger is saved to the run record either
   # way. 0 sizes it to the backend: ~2M chars for claude, 80k otherwise.
   max_evidence_chars: 0
+  # With store.dsn set, a claude aggregator gets the read-only researchguy
+  # MCP tools to retrieve and quote the run's fetched text.
+  aggregator_tools: true
 
 # Tool use (web search, web fetch)
 tools:
