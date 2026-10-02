@@ -404,3 +404,35 @@ func TestClaimCandidates_CitedFirstAndCompleteSkipped(t *testing.T) {
 		t.Fatalf("after extracting = %+v (other doc %d)", got, other)
 	}
 }
+
+func TestClaimCountsAndPendingExtractions(t *testing.T) {
+	ix, _ := openIndex(t)
+	ctx := context.Background()
+	st := newStore(t)
+	claimRuns(t, ix, st)
+	ix.SetEmbedModel("fake")
+	for _, e := range []store.Extraction{docTextExtraction(), {TextSHA: store.HashText("not fetched yet"), Extractor: testExtractor}} {
+		if err := st.PutExtraction(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pending, waiting, err := ix.PendingExtractions(ctx, st); err != nil || pending != 1 || waiting != 1 {
+		t.Fatalf("before sync: pending %d, waiting %d, %v", pending, waiting, err)
+	}
+	if _, err := ix.SyncClaims(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if pending, waiting, err := ix.PendingExtractions(ctx, st); err != nil || pending != 0 || waiting != 1 {
+		t.Errorf("after sync: pending %d, waiting %d, %v", pending, waiting, err)
+	}
+	// The text's two documents each get its 4 claims, 3 with their quote found.
+	if c, err := ix.ClaimCounts(ctx); err != nil || c != (ClaimCounts{Claims: 8, Unverified: 2, Unembedded: 8, Links: 3}) {
+		t.Errorf("counts = %+v, %v", c, err)
+	}
+	if _, err := ix.EmbedClaims(ctx, st, &fakeEmbedder{model: "fake", dims: Dims}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := ix.ClaimCounts(ctx); c.Unembedded != 0 || c.Unlinked != 6 {
+		t.Errorf("after embedding = %+v", c)
+	}
+}

@@ -201,9 +201,10 @@ func storeEmbedCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "embed",
-		Short: "Embed indexed passages that have no vector yet",
+		Short: "Embed indexed passages and claims that have no vector yet",
 		Long: `Embed gives every passage in the index a vector from store.embed.model
-(through Ollama), and re-embeds passages a different model embedded. A
+(through Ollama), and re-embeds passages a different model embedded, then
+does the same for claims. A
 vector cached under <store.dir>/vectors/ is used instead of calling the
 model, and new vectors are cached there, so a rebuild doesn't embed again.
 Passages only reach the index through ingest, so run ` + "`researchguy store fetch`" + `
@@ -237,13 +238,26 @@ or ` + "`researchguy store ingest`" + ` first.`,
 				fmt.Fprintf(os.Stderr, "Embedding with %s at %s...\n", emb.Model(), emb.Host)
 			}
 			stats, err := ix.Embed(ctx, st, emb)
+			// Claims are embedded after the passages, so a claim pass
+			// that couldn't embed is caught up here.
+			out := struct {
+				index.EmbedStats
+				Claims *index.EmbedStats `json:"claims,omitempty"`
+			}{EmbedStats: stats}
+			if err == nil {
+				cs, cerr := ix.EmbedClaims(ctx, st, emb)
+				out.Claims, err = &cs, cerr
+			}
 			if jsonOut {
-				if perr := printJSON(stats); perr != nil {
+				if perr := printJSON(out); perr != nil {
 					return perr
 				}
 			} else {
 				fmt.Printf("Embedded %d passage(s) with %s, %d from cache; %d left\n",
 					stats.Embedded+stats.FromCache, stats.Model, stats.FromCache, stats.Remaining)
+				if c := out.Claims; c != nil && (c.Embedded+c.FromCache > 0 || c.Remaining > 0) {
+					fmt.Printf("Embedded %d claim(s), %d from cache; %d left\n", c.Embedded+c.FromCache, c.FromCache, c.Remaining)
+				}
 			}
 			if err != nil && ctx.Err() != nil && cmd.Context().Err() == nil {
 				fmt.Fprintln(os.Stderr, "Stopped at --budget; run it again to continue.")

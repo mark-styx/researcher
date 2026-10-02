@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -234,6 +235,18 @@ func TestStoreExtract_WithIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := fmt.Sprintf("C:%d", id)
+
+	// store embed catches up claims a pass couldn't embed.
+	if _, err := conn.Exec(context.Background(), `UPDATE claims SET embedding = NULL, embed_model = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	type embedOut struct {
+		index.EmbedStats
+		Claims *index.EmbedStats `json:"claims"`
+	}
+	if eo := decode[embedOut](t, mustStdout(t, "store", "embed", "--json")); eo.Claims == nil || eo.Claims.Embedded+eo.Claims.FromCache != stats.Claims || eo.Claims.Remaining != 0 {
+		t.Errorf("store embed claims = %+v", eo.Claims)
+	}
 	if _, _, err := runCmdStdout(t, "store", "link", "set", ref, "C:99", "same"); err == nil || !strings.Contains(err.Error(), "no claim C:99") {
 		t.Errorf("unindexed claim = %v", err)
 	}
@@ -283,5 +296,56 @@ func TestStoreExtract_WithIndex(t *testing.T) {
 	rb := decode[index.SyncStats](t, mustStdout(t, "store", "rebuild", "--json"))
 	if rb.Claims == nil || rb.Claims.Claims != stats.Claims || rb.Claims.Links != 1 {
 		t.Errorf("rebuild claims = %+v", rb.Claims)
+	}
+}
+
+func TestStoreDoctor_ReportsClaimWork(t *testing.T) {
+	srv := fetchSite(t, nil)
+	st := fetchSetup(t, srv, indextest.DSN(t))
+	finishedRun(t, st, "t", srv.URL+"/article")
+	mustStdout(t, "store", "init")
+	mustStdout(t, "store", "fetch")
+
+	if out := mustStdout(t, "store", "doctor"); !strings.Contains(out, "1 text(s) waiting on claims from qwen-test/claims-v1 (`researchguy store extract`)") {
+		t.Errorf("before extracting:\n%s", out)
+	}
+	mustStdout(t, "store", "extract")
+	out := mustStdout(t, "store", "doctor")
+	for _, want := range []string{"1 claim(s), 0 with a quote not found in their document; 0 claim link(s), 0 model-labeled",
+		"1 claim(s) the linker hasn't compared yet (`researchguy store link`)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "waiting on claims") {
+		t.Errorf("extracted text still waiting:\n%s", out)
+	}
+
+	// A changed extraction file is a problem until it's indexed; one for a
+	// text the index doesn't have just waits.
+	files, _ := st.Extractions()
+	e, err := store.ReadExtractionFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Claims = append(e.Claims, store.ExtractedClaim{Text: "Another claim.", Quote: "A paragraph of the fetched article"})
+	if err := st.PutExtraction(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutExtraction(store.Extraction{TextSHA: store.HashText("not fetched"), Extractor: e.Extractor}); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runCmdStdout(t, "store", "doctor", "--json")
+	if err == nil {
+		t.Fatal("doctor passed with an extraction file out of date")
+	}
+	rep := decode[doctorReport](t, stdout)
+	if di := rep.Index; di.ExtractionsPending != 1 || di.ExtractionsWaiting != 1 || di.Claims == nil || di.Claims.Claims != 1 || di.Extractor != "qwen-test/claims-v1" ||
+		!slices.ContainsFunc(rep.Problems, func(p string) bool { return strings.Contains(p, "1 claim extraction file(s) not indexed") }) {
+		t.Errorf("doctor = %+v, problems %q", di, rep.Problems)
+	}
+	mustStdout(t, "store", "ingest")
+	if out := mustStdout(t, "store", "doctor"); !strings.Contains(out, "2 claim(s)") || !strings.Contains(out, "1 extraction file(s) for texts not in the index yet") {
+		t.Errorf("after ingest:\n%s", out)
 	}
 }

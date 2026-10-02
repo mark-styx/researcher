@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marklubin/researchguy/internal/claims"
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/store"
@@ -352,6 +353,15 @@ type doctorIndex struct {
 	// don't resolve or quotes not found in what they cite. They're about
 	// the reports, not the store, so they aren't problems.
 	CitationFailures []index.CitationFailure `json:"citation_failures,omitempty"`
+	// Claims counts the index's claims and the work waiting on them.
+	Claims *index.ClaimCounts `json:"claims,omitempty"`
+	// ClaimsWaiting counts the texts Extractor hasn't extracted claims from.
+	Extractor     string `json:"extractor,omitempty"`
+	ClaimsWaiting int    `json:"claims_waiting"`
+	// ExtractionsPending are extraction files the index lacks or has out of
+	// date; ExtractionsWaiting are files for a text no indexed document has.
+	ExtractionsPending int `json:"extractions_pending"`
+	ExtractionsWaiting int `json:"extractions_waiting"`
 }
 
 // maxCitationFailures caps the runs doctor lists for failed citations.
@@ -485,6 +495,26 @@ func diagnose(ctx context.Context, cfg *config.Config, st *store.Store) (doctorR
 	if n := len(di.Unindexed); n > 0 {
 		add("%d finished run(s) not indexed or out of date (run `researchguy store ingest`)", n)
 	}
+
+	cc, err := ix.ClaimCounts(ctx)
+	if err != nil {
+		add("counting claims: %v", err)
+		return rep, nil
+	}
+	di.Claims = &cc
+	if di.ExtractionsPending, di.ExtractionsWaiting, err = ix.PendingExtractions(ctx, st); err != nil {
+		add("comparing claim extractions with the index: %v", err)
+	} else if di.ExtractionsPending > 0 {
+		add("%d claim extraction file(s) not indexed or out of date (run `researchguy store ingest`)", di.ExtractionsPending)
+	}
+	if ex := claims.New(cfg); ex.Model != "" {
+		di.Extractor = ex.Name()
+		cands, err := ix.ClaimCandidates(ctx, store.ExtractorDir(di.Extractor))
+		if err != nil {
+			add("listing texts waiting on claims: %v", err)
+		}
+		di.ClaimsWaiting = len(cands)
+	}
 	return rep, nil
 }
 
@@ -525,6 +555,21 @@ func printDoctor(rep doctorReport) {
 		}
 		for _, f := range di.CitationFailures {
 			fmt.Printf("    run %s: %d unresolved, %d quote(s) not found (see its citations.jsonl)\n", f.RunID, f.Unresolved, f.QuotesNotFound)
+		}
+		if c := di.Claims; c != nil {
+			fmt.Printf("  %d claim(s), %d with a quote not found in their document; %d claim link(s), %d model-labeled\n", c.Claims, c.Unverified, c.Links, c.ModelLinks)
+			if c.Unembedded > 0 {
+				fmt.Printf("  %d claim(s) without a %s vector (`researchguy store embed`)\n", c.Unembedded, di.EmbedModel)
+			}
+			if c.Unlinked > 0 {
+				fmt.Printf("  %d claim(s) the linker hasn't compared yet (`researchguy store link`)\n", c.Unlinked)
+			}
+		}
+		if di.Extractor != "" && di.ClaimsWaiting > 0 {
+			fmt.Printf("  %d text(s) waiting on claims from %s (`researchguy store extract`)\n", di.ClaimsWaiting, di.Extractor)
+		}
+		if di.ExtractionsWaiting > 0 {
+			fmt.Printf("  %d extraction file(s) for texts not in the index yet\n", di.ExtractionsWaiting)
 		}
 		if n := len(di.Running); n > 0 {
 			fmt.Printf("  %d running run(s) not indexed yet\n", n)

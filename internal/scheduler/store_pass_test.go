@@ -251,6 +251,15 @@ func TestExtractClaims_YieldsToTasks(t *testing.T) {
 	if len(c) != 0 {
 		t.Errorf("still waiting: %+v", c)
 	}
+	// The embed step catches up a claim the pass couldn't embed.
+	if _, err := s.index.Pool().Exec(context.Background(), `UPDATE claims SET embedding = NULL, embed_model = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	logs.Reset()
+	s.embedPending(context.Background())
+	if cc, _ := s.index.ClaimCounts(context.Background()); cc.Unembedded != 0 || !strings.Contains(logs.String(), "Embedded 1 claim(s) with nomic-embed-text") {
+		t.Errorf("claims after the embed step = %+v, log:\n%s", cc, logs.String())
+	}
 	// Disabled, it doesn't run.
 	cfg.Store.Claims.Enabled = false
 	logs.Reset()

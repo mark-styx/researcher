@@ -105,9 +105,17 @@ func (s *Scheduler) embedPending(ctx context.Context) {
 	}
 	ectx, cancel := context.WithTimeout(ctx, s.cfg.Store.Embed.BudgetDuration())
 	defer cancel()
-	stats, err := s.index.Embed(ectx, st, embed.New(s.cfg))
+	emb := embed.New(s.cfg)
+	stats, err := s.index.Embed(ectx, st, emb)
 	if n := stats.Embedded + stats.FromCache; n > 0 {
 		s.logger.Printf("Embedded %d passage(s) with %s (%d from cache, %d left)", n, stats.Model, stats.FromCache, stats.Remaining)
+	}
+	if err == nil {
+		cs, cerr := s.index.EmbedClaims(ectx, st, emb)
+		err = cerr
+		if n := cs.Embedded + cs.FromCache; n > 0 {
+			s.logger.Printf("Embedded %d claim(s) with %s (%d from cache, %d left)", n, cs.Model, cs.FromCache, cs.Remaining)
+		}
 	}
 	status := ""
 	if err != nil && ectx.Err() == nil {

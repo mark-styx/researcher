@@ -52,58 +52,14 @@ func (ix *Index) SyncClaims(ctx context.Context, st *store.Store) (ClaimStats, e
 
 func (ix *Index) syncClaims(ctx context.Context, q querier, st *store.Store) (ClaimStats, error) {
 	var stats ClaimStats
-	bySHA := map[string][]docRef{}
-	rows, err := q.Query(ctx, `SELECT d.id, d.sha256, coalesce(e.extractor_dir, ''), coalesce(e.file_bytes, -1)
-		FROM documents d LEFT JOIN extractions e ON e.document_id = d.id WHERE d.origin = 'primary'`)
+	pending, waiting, err := pendingExtractions(ctx, q, st)
 	if err != nil {
-		return stats, fmt.Errorf("listing documents: %w", err)
-	}
-	type key struct {
-		doc int64
-		dir string
-	}
-	indexed := map[key]int64{}
-	listed := map[int64]bool{}
-	for rows.Next() {
-		var id, size int64
-		var sha, dir string
-		if err := rows.Scan(&id, &sha, &dir, &size); err != nil {
-			rows.Close()
-			return stats, err
-		}
-		if !listed[id] {
-			listed[id] = true
-			bySHA[sha] = append(bySHA[sha], docRef{id: id, sha: sha})
-		}
-		if dir != "" {
-			indexed[key{id, dir}] = size
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return stats, err
 	}
-
-	files, err := st.Extractions()
-	if err != nil {
-		return stats, fmt.Errorf("listing extractions: %w", err)
-	}
+	stats.Waiting = waiting
 	var touched []int64
-	for _, f := range files {
-		docs := bySHA[f.TextSHA]
-		if len(docs) == 0 {
-			stats.Waiting++
-			continue
-		}
-		var todo []docRef
-		for _, d := range docs {
-			if size, ok := indexed[key{d.id, f.Dir}]; !ok || size != f.Size {
-				todo = append(todo, d)
-			}
-		}
-		if len(todo) == 0 {
-			continue
-		}
+	for _, pf := range pending {
+		f, todo := pf.file, pf.docs
 		e, err := store.ReadExtractionFile(f)
 		if err == nil && e.TextSHA != f.TextSHA {
 			err = fmt.Errorf("file is for text %s", e.TextSHA)
@@ -163,6 +119,106 @@ func (ix *Index) syncClaims(ctx context.Context, q querier, st *store.Store) (Cl
 type docRef struct {
 	id  int64
 	sha string
+}
+
+// pendingExtraction is an extraction file and the documents with its text
+// that don't have it indexed as it is.
+type pendingExtraction struct {
+	file store.ExtractionFile
+	docs []docRef
+}
+
+// pendingExtractions lists the store's extraction files that are new or
+// changed for a primary document, and counts those for a text no document
+// in the index has.
+func pendingExtractions(ctx context.Context, q querier, st *store.Store) ([]pendingExtraction, int, error) {
+	bySHA := map[string][]docRef{}
+	rows, err := q.Query(ctx, `SELECT d.id, d.sha256, coalesce(e.extractor_dir, ''), coalesce(e.file_bytes, -1)
+		FROM documents d LEFT JOIN extractions e ON e.document_id = d.id WHERE d.origin = 'primary'`)
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing documents: %w", err)
+	}
+	type key struct {
+		doc int64
+		dir string
+	}
+	indexed := map[key]int64{}
+	listed := map[int64]bool{}
+	for rows.Next() {
+		var id, size int64
+		var sha, dir string
+		if err := rows.Scan(&id, &sha, &dir, &size); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		if !listed[id] {
+			listed[id] = true
+			bySHA[sha] = append(bySHA[sha], docRef{id: id, sha: sha})
+		}
+		if dir != "" {
+			indexed[key{id, dir}] = size
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	files, err := st.Extractions()
+	if err != nil {
+		return nil, 0, fmt.Errorf("listing extractions: %w", err)
+	}
+	var out []pendingExtraction
+	waiting := 0
+	for _, f := range files {
+		docs := bySHA[f.TextSHA]
+		if len(docs) == 0 {
+			waiting++
+			continue
+		}
+		var todo []docRef
+		for _, d := range docs {
+			if size, ok := indexed[key{d.id, f.Dir}]; !ok || size != f.Size {
+				todo = append(todo, d)
+			}
+		}
+		if len(todo) > 0 {
+			out = append(out, pendingExtraction{file: f, docs: todo})
+		}
+	}
+	return out, waiting, nil
+}
+
+// PendingExtractions counts the store's extraction files the index doesn't
+// have as they are, and those for a text no indexed document has.
+func (ix *Index) PendingExtractions(ctx context.Context, st *store.Store) (pending, waiting int, err error) {
+	files, waiting, err := pendingExtractions(ctx, ix.pool, st)
+	return len(files), waiting, err
+}
+
+// ClaimCounts counts the index's claims and the work waiting on them.
+type ClaimCounts struct {
+	Claims int64 `json:"claims"`
+	// Unverified claims have a quote that wasn't found in their document.
+	Unverified int64 `json:"unverified"`
+	// Unembedded claims lack a vector from the index's embedding model.
+	Unembedded int64 `json:"unembedded"`
+	// Unlinked are verified, embedded claims the linker hasn't checked.
+	Unlinked   int64 `json:"unlinked"`
+	Links      int64 `json:"links"`
+	ModelLinks int64 `json:"model_links"`
+}
+
+// ClaimCounts counts claims and claim links.
+func (ix *Index) ClaimCounts(ctx context.Context) (ClaimCounts, error) {
+	var c ClaimCounts
+	err := ix.pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM claims), (SELECT count(*) FROM claims WHERE NOT quote_verified),
+		(SELECT count(*) FROM claims WHERE `+unembedded+`),
+		(SELECT count(*) FROM claims WHERE link_checked_at IS NULL AND quote_verified AND embedding IS NOT NULL),
+		(SELECT count(*) FROM claim_links), (SELECT count(*) FROM claim_links WHERE method = 'model')`, ix.embedModel).
+		Scan(&c.Claims, &c.Unverified, &c.Unembedded, &c.Unlinked, &c.Links, &c.ModelLinks)
+	return c, err
 }
 
 // ruleLinks links verified claims in documents $1 to verified claims in
