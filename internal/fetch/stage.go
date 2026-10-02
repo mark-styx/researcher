@@ -86,17 +86,10 @@ func (s *Stage) Run(ctx context.Context, runID string, force bool) (store.FetchS
 	if err != nil {
 		return store.FetchSummary{}, err
 	}
-	prior, err := store.ScanFetches(dir)
+	tried, err := triedKeys(dir)
 	if err != nil {
 		return store.FetchSummary{}, err
 	}
-	tried := map[string]bool{}
-	for _, r := range prior.Records {
-		if k, err := graph.NormalizeURL(r.URL); err == nil {
-			tried[k] = true
-		}
-	}
-
 	sum := store.FetchSummary{StartedAt: s.now()}
 	var todo []Target
 	for _, t := range Plan(dir, rec, captures.Captures, s.TopResults) {
@@ -107,7 +100,61 @@ func (s *Stage) Run(ctx context.Context, runID string, force bool) (store.FetchS
 		}
 		todo = append(todo, t)
 	}
+	sum, err = s.fetchAll(ctx, log, todo, sum)
+	if err != nil {
+		return sum, err
+	}
+	return sum, log.WriteSummary(sum)
+}
 
+// FetchURLs fetches urls for the run with reason store.ReasonIngest,
+// whether or not the run tried them before: asking for a URL is asking for
+// it now. Like Run, it logs every attempt and returns store.ErrFetchBusy
+// when another process is fetching for the run. It leaves fetch.json,
+// which is the planned pass's summary, alone.
+func (s *Stage) FetchURLs(ctx context.Context, runID string, urls []string) (store.FetchSummary, error) {
+	var todo []Target
+	seen := map[string]bool{}
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if !fetchable(raw) {
+			return store.FetchSummary{}, fmt.Errorf("not an http(s) URL: %q", raw)
+		}
+		key, err := graph.NormalizeURL(raw)
+		if err != nil {
+			return store.FetchSummary{}, fmt.Errorf("%q: %w", raw, err)
+		}
+		if !seen[key] {
+			seen[key] = true
+			todo = append(todo, Target{URL: raw, Key: key, Reason: store.ReasonIngest, DOI: DOIFromURL(raw)})
+		}
+	}
+	log, err := store.OpenFetchLog(s.Store.RunDir(runID))
+	if err != nil {
+		return store.FetchSummary{}, err
+	}
+	defer log.Close()
+	return s.fetchAll(ctx, log, todo, store.FetchSummary{StartedAt: s.now(), Queued: len(todo)})
+}
+
+// triedKeys is the normalized URLs a run's fetch log has attempts for.
+func triedKeys(dir string) (map[string]bool, error) {
+	prior, err := store.ScanFetches(dir)
+	if err != nil {
+		return nil, err
+	}
+	tried := map[string]bool{}
+	for _, r := range prior.Records {
+		if k, err := graph.NormalizeURL(r.URL); err == nil {
+			tried[k] = true
+		}
+	}
+	return tried, nil
+}
+
+// fetchAll fetches todo under the stage's budget and concurrency, logging
+// each attempt.
+func (s *Stage) fetchAll(ctx context.Context, log *store.FetchLog, todo []Target, sum store.FetchSummary) (store.FetchSummary, error) {
 	if s.Budget > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.Budget)
@@ -164,9 +211,6 @@ dispatch:
 		return sum, cause
 	}
 	sum.FinishedAt = s.now()
-	if err := log.WriteSummary(sum); err != nil {
-		return sum, err
-	}
 	return sum, nil
 }
 

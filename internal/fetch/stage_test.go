@@ -255,6 +255,51 @@ func TestStage_Busy(t *testing.T) {
 	}
 }
 
+func TestStage_FetchURLs(t *testing.T) {
+	srv, _ := site(t)
+	s, st := stageFor(t, srv)
+	run := runWith(t, st, store.CaptureResult{Rank: 1, URL: srv.URL + "/article"})
+	if _, err := s.Run(context.Background(), run.ID(), false); err != nil {
+		t.Fatal(err)
+	}
+	planned, _, _ := store.ReadFetchSummary(run.Dir())
+
+	// Asked-for URLs are fetched even when tried, once per normalized URL.
+	sum, err := s.FetchURLs(context.Background(), run.ID(), []string{srv.URL + "/article", srv.URL + "/article#top", " " + srv.URL + "/missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Queued != 2 || sum.Fetched != 1 || sum.Failed != 1 || sum.Records != 2 {
+		t.Errorf("summary = %+v", sum)
+	}
+	scan, _ := store.ScanFetches(run.Dir())
+	if len(scan.Records) != 3 {
+		t.Fatalf("%d records, want 3", len(scan.Records))
+	}
+	for _, r := range scan.Records[1:] {
+		if r.Reason != store.ReasonIngest || r.Rank != 0 {
+			t.Errorf("ingest record = %+v", r)
+		}
+	}
+	if after, _, _ := store.ReadFetchSummary(run.Dir()); after.Queued != planned.Queued || !after.StartedAt.Equal(planned.StartedAt) {
+		t.Errorf("fetch.json changed: %+v, was %+v", after, planned)
+	}
+
+	for _, bad := range []string{"ftp://example.com/x", "not a url", ""} {
+		if _, err := s.FetchURLs(context.Background(), run.ID(), []string{bad}); err == nil {
+			t.Errorf("FetchURLs(%q) succeeded", bad)
+		}
+	}
+	log, err := store.OpenFetchLog(run.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	if _, err := s.FetchURLs(context.Background(), run.ID(), []string{srv.URL + "/article"}); !errors.Is(err, store.ErrFetchBusy) {
+		t.Errorf("busy err = %v", err)
+	}
+}
+
 func TestKindOf(t *testing.T) {
 	cases := []struct {
 		ct, body, want string

@@ -38,17 +38,34 @@ const embedBatch = 64
 // the first model error or when ctx ends, and whatever it finished stays.
 // Concurrent calls take different passages.
 func (ix *Index) Embed(ctx context.Context, st *store.Store, emb Embedder) (EmbedStats, error) {
+	return ix.embed(ctx, st, emb, nil)
+}
+
+// EmbedDocuments is Embed for the passages of the given documents only,
+// for a caller waiting on just those. Remaining still counts the whole
+// index.
+func (ix *Index) EmbedDocuments(ctx context.Context, st *store.Store, emb Embedder, docIDs []int64) (EmbedStats, error) {
+	if docIDs == nil {
+		docIDs = []int64{}
+	}
+	return ix.embed(ctx, st, emb, docIDs)
+}
+
+// embed embeds the passages of docIDs, or of every document when docIDs
+// is nil.
+func (ix *Index) embed(ctx context.Context, st *store.Store, emb Embedder, docIDs []int64) (EmbedStats, error) {
 	model := emb.Model()
 	stats := EmbedStats{Model: model}
 	var err error
+	scope := `($2::bigint[] IS NULL OR document_id = ANY($2))`
 	passes := []struct {
 		query string
 		args  []any
 	}{
-		{`SELECT id, text, text_sha256 FROM passages WHERE embedding IS NULL
-			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch}},
-		{`SELECT id, text, text_sha256 FROM passages WHERE embed_model IS DISTINCT FROM $2
-			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch, model}},
+		{`SELECT id, text, text_sha256 FROM passages WHERE embedding IS NULL AND ` + scope + `
+			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch, docIDs}},
+		{`SELECT id, text, text_sha256 FROM passages WHERE embed_model IS DISTINCT FROM $3 AND ` + scope + `
+			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch, docIDs, model}},
 	}
 	for _, pass := range passes {
 		for {

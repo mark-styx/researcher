@@ -92,6 +92,10 @@ var skipExt = map[string]bool{
 }
 
 // fetchable reports whether a URL is worth fetching as a document.
+// Fetchable reports whether the fetch stage would fetch raw: an http(s)
+// URL with a host that isn't an image, video or other non-document file.
+func Fetchable(raw string) bool { return fetchable(strings.TrimSpace(raw)) }
+
 func fetchable(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
