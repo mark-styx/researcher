@@ -123,6 +123,7 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		model := models[i%len(models)]
 		workerReq := req
 		workerReq.UserPrompt = buildShardPrompt(req.UserPrompt, shard)
+		workerReq.MCP, workerReq.BeforeAggregate = nil, nil
 		workerReq.Capture = captures.forWorker(i, workerBackend, model, shard)
 		wg.Add(1)
 		go func(idx int, m string, sh string, wr Request) {
@@ -183,6 +184,19 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("all hybrid workers failed: %s", strings.Join(failures, "; "))
 	}
 
+	// The runner fetches and indexes what the workers found, so the
+	// aggregator gets the run's sources and can retrieve their text.
+	var in AggregateInput
+	if req.BeforeAggregate != nil {
+		var err error
+		if in, err = req.BeforeAggregate(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: preparing the run's sources for aggregation (aggregating from the ledger alone): %v\n", err)
+			st.beforeAggregateErr = err.Error()
+			in = AggregateInput{}
+		}
+	}
+	st.sourcesTable = in.Sources != ""
+
 	st.aggBackend = normalizeAggregatorBackend(h.AggregatorBackend)
 	st.aggModel = h.AggregatorModel
 	if strings.TrimSpace(st.aggModel) == "" {
@@ -198,10 +212,17 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("creating hybrid aggregator provider: %w", err)
 	}
 
+	// Only the Claude provider runs MCP servers.
+	if st.aggBackend == "claude" && len(in.MCP) > 0 {
+		st.aggTools = true
+	} else {
+		in.MCP = nil
+	}
 	aggReq := Request{
 		SystemPrompt: aggregationSystemPrompt(req.SystemPrompt),
-		UserPrompt:   buildAggregationPrompt(req, results, evidence),
+		UserPrompt:   buildAggregationPrompt(req, results, evidence, in),
 		MaxTokens:    req.MaxTokens,
+		MCP:          in.MCP,
 	}
 	st.storeErr(req.Run.WriteFile("aggregator-prompt.md", promptRecord(aggReq)))
 	raw, err := aggregator.Complete(ctx, aggReq)
@@ -243,6 +264,12 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			var criticLedger ledgerStats
 			criticEvidence, criticLedger = buildLedger(results, criticCap)
 			st.criticLedger = &criticLedger
+		}
+		// Store passages the draft cites aren't in the ledger.
+		if in.Cited != nil {
+			cited := in.Cited(ctx, draft)
+			st.citedPassages = len(cited)
+			criticEvidence = append(append([]critique.Evidence(nil), criticEvidence...), cited...)
 		}
 		verifier, verr := makeProvider(verifierBackend, verifierModel)
 		if verr == nil {
@@ -355,7 +382,7 @@ func aggregationSystemPrompt(base string) string {
 	return strings.TrimSpace(base) + "\n\n" + suffix
 }
 
-func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evidence []critique.Evidence) string {
+func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evidence []critique.Evidence, in AggregateInput) string {
 	var b strings.Builder
 	b.WriteString("Original request:\n")
 	b.WriteString(original.UserPrompt)
@@ -382,7 +409,21 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evid
 			fmt.Fprintf(&b, "\n[%s]\n%s\n", e.Heading(), e.Content)
 		}
 	}
-	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger. Mark claims without ledger support as analysis or uncertainty. ")
+	if in.Sources != "" {
+		b.WriteString("\nSources of this run, from its captures and fetch stage (Text says what the store holds for each; Seen in lists the ledger items that saw it):\n\n")
+		b.WriteString(in.Sources)
+	}
+	if len(in.MCP) > 0 {
+		b.WriteString("\nYou have read-only researchguy tools. researchguy_find with run_id \"" + in.RunID + "\" searches the text fetched for this run; ")
+		b.WriteString("without run_id it searches prior research as well, whose reports come back marked as synthesis, not primary evidence. ")
+		b.WriteString("researchguy_passage and researchguy_document read around a hit, and researchguy_source shows a source's versions and fetches. ")
+		b.WriteString("Quote from passages you retrieve, not from memory.\n")
+	}
+	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger")
+	if in.Sources != "" || len(in.MCP) > 0 {
+		b.WriteString(" and the store. Cite a ledger item as [E12], a store passage as [P:<id>] and a source as [S:<id>]")
+	}
+	b.WriteString(". Put a direct quote in double quotes right before its citation, copied exactly, so it can be checked. Mark claims without support as analysis or uncertainty. ")
 	b.WriteString("Write the report between a " + reportBegin + " line and a " + reportEnd + " line.")
 	return b.String()
 }
@@ -702,6 +743,10 @@ type hybridState struct {
 	groundednessVerifierMetadata json.RawMessage
 	narrativeVerifierMetadata    json.RawMessage
 	storeErrors                  []string
+	sourcesTable                 bool
+	aggTools                     bool
+	beforeAggregateErr           string
+	citedPassages                int
 }
 
 // storeErr records failed run-record writes. They don't stop the run, but
@@ -745,6 +790,10 @@ func (r *hybridState) metadataJSON() string {
 		GroundednessVerifierMetadata json.RawMessage   `json:"groundedness_verifier_metadata,omitempty"`
 		NarrativeVerifierMetadata    json.RawMessage   `json:"narrative_verifier_metadata,omitempty"`
 		StoreErrors                  []string          `json:"store_errors,omitempty"`
+		SourcesTable                 bool              `json:"sources_table,omitempty"`
+		AggregatorTools              bool              `json:"aggregator_tools,omitempty"`
+		BeforeAggregateError         string            `json:"before_aggregate_error,omitempty"`
+		CitedPassages                int               `json:"cited_passages,omitempty"`
 		DurationMS                   int64             `json:"duration_ms"`
 	}{
 		Mode:                         "hybrid",
@@ -763,6 +812,10 @@ func (r *hybridState) metadataJSON() string {
 		GroundednessVerifierMetadata: r.groundednessVerifierMetadata,
 		NarrativeVerifierMetadata:    r.narrativeVerifierMetadata,
 		StoreErrors:                  r.storeErrors,
+		SourcesTable:                 r.sourcesTable,
+		AggregatorTools:              r.aggTools,
+		BeforeAggregateError:         r.beforeAggregateErr,
+		CitedPassages:                r.citedPassages,
 		DurationMS:                   time.Since(r.started).Milliseconds(),
 	}
 	for _, w := range r.workers {

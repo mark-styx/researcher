@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/critique"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/tools"
 )
@@ -77,6 +78,38 @@ type Request struct {
 	// already recorded what it collected. Providers that report Evidence
 	// call it; the hybrid backend sets it for each worker.
 	Capture CaptureFunc
+
+	// MCP lists MCP servers the call may use, with every tool they serve
+	// allowed. Only the Claude provider starts them.
+	MCP []MCPServer
+
+	// BeforeAggregate, when set, runs in the hybrid backend once the
+	// workers are recorded and unloaded, before the aggregator's prompt is
+	// built. The runner fetches and indexes the run there. An error is a
+	// warning, and the aggregator works from the ledger alone.
+	BeforeAggregate func(ctx context.Context) (AggregateInput, error)
+}
+
+// MCPServer is an MCP server started for one call.
+type MCPServer struct {
+	Name    string
+	Command string
+	Args    []string
+	Env     map[string]string
+}
+
+// AggregateInput is what Request.BeforeAggregate gives the hybrid
+// aggregator.
+type AggregateInput struct {
+	// RunID is the run the aggregator's tools search with run_id.
+	RunID string
+	// Sources is the run's sources table, for the prompt.
+	Sources string
+	// MCP is the servers the aggregator may call: the read profile.
+	MCP []MCPServer
+	// Cited returns the text of the store passages a draft cites
+	// ([P:<id>]), so the critics can judge those citations too.
+	Cited func(ctx context.Context, draft string) []critique.Evidence
 }
 
 // NewProvider creates an LLM provider based on config and optional overrides.

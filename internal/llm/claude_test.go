@@ -302,3 +302,84 @@ func TestClaude_Complete_FailureIncludesStdout(t *testing.T) {
 		t.Errorf("err = %v, want the CLI's stdout included", err)
 	}
 }
+
+func TestClaude_Args_MCP(t *testing.T) {
+	servers := []MCPServer{{Name: "researchguy", Command: "/bin/researchguy", Args: []string{"mcp", "--profile", "read"},
+		Env: map[string]string{"RESEARCHGUY_CONFIG_DIR": "/cfg"}}}
+	dir := t.TempDir()
+	c := &Claude{Model: "opus", IgnoreUserConfig: true}
+	args, err := c.args(dir, Request{MCP: servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := argIndex(args, "--mcp-config")
+	if i < 0 || args[i+1] != filepath.Join(dir, "mcp.json") {
+		t.Fatalf("no --mcp-config in %q", args)
+	}
+	b, err := os.ReadFile(args[i+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"mcpServers":{"researchguy":{"command":"/bin/researchguy","args":["mcp","--profile","read"],"env":{"RESEARCHGUY_CONFIG_DIR":"/cfg"}}}}`
+	if string(b) != want {
+		t.Errorf("mcp.json = %s", b)
+	}
+	// --safe-mode would turn the server off.
+	if argIndex(args, "--safe-mode") >= 0 || argIndex(args, "--strict-mcp-config") < 0 {
+		t.Errorf("isolation flags wrong: %q", args)
+	}
+	if j := argIndex(args, "--setting-sources"); j < 0 || args[j+1] != "" {
+		t.Errorf("want --setting-sources \"\" in %q", args)
+	}
+	if j := argIndex(args, "--tools"); args[j+1] != "" {
+		t.Errorf("built-in tools = %q, want none", args[j+1])
+	}
+	if j := argIndex(args, "--allowedTools"); j < 0 || args[j+1] != "mcp__researchguy" || argIndex(args, "--max-turns") < 0 {
+		t.Errorf("want the server allowed and a turn cap: %q", args)
+	}
+
+	c.IgnoreUserConfig = false
+	args, err = c.args(t.TempDir(), Request{MCP: servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argIndex(args, "--mcp-config") < 0 || argIndex(args, "--setting-sources") >= 0 || argIndex(args, "--safe-mode") >= 0 {
+		t.Errorf("user config kept: %q", args)
+	}
+}
+
+// fakeLoginClaude fails with the CLI's not-logged-in message when given
+// an MCP config, as it does without setting sources when the token is only
+// in settings.json, and answers otherwise.
+func fakeLoginClaude(t *testing.T) string {
+	t.Helper()
+	script := `#!/bin/sh
+cat > /dev/null
+for a in "$@"; do
+  if [ "$a" = "--mcp-config" ]; then echo 'Not logged in · Please run /login'; exit 1; fi
+done
+echo "answered: $*"
+`
+	bin := filepath.Join(t.TempDir(), "fake-claude")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func TestClaude_Complete_MCPRetriesWithoutWhenNotLoggedIn(t *testing.T) {
+	c := &Claude{Binary: fakeLoginClaude(t), Model: "opus", IgnoreUserConfig: true}
+	got, err := c.Complete(context.Background(), Request{UserPrompt: "q", MCP: []MCPServer{{Name: "researchguy", Command: "x"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "--safe-mode") || strings.Contains(got, "mcp__researchguy") {
+		t.Errorf("retry = %q, want --safe-mode and no MCP tools", got)
+	}
+
+	// With the user's config the failure isn't about setting sources.
+	c.IgnoreUserConfig = false
+	if _, err := c.Complete(context.Background(), Request{UserPrompt: "q", MCP: []MCPServer{{Name: "researchguy", Command: "x"}}}); err == nil || !strings.Contains(err.Error(), notLoggedIn) {
+		t.Errorf("err = %v, want the login failure", err)
+	}
+}

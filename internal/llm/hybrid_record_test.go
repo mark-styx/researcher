@@ -108,7 +108,7 @@ func TestAssignEvidenceIDs_NumbersAcrossWorkersIncludingFailed(t *testing.T) {
 
 	// The aggregator prompt cites those IDs, skipping the failed worker's E3.
 	ev, _ := buildLedger(workers, 1_000)
-	prompt := buildAggregationPrompt(Request{UserPrompt: "topic"}, workers, ev)
+	prompt := buildAggregationPrompt(Request{UserPrompt: "topic"}, workers, ev, AggregateInput{})
 	for _, want := range []string{"[E1 | shard: a | item 0]", "[E2 | shard: a | item 1]", "[E4 | shard: b | item 0]", "[E5 | shard: b | item 1]"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("aggregator prompt missing %q", want)
