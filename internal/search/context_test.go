@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ func TestBuildContextAcrossProjects(t *testing.T) {
 	})
 	cfg.Grepai.Binary = script
 
-	got, err := BuildContext(cfg, "topic", ContextOptions{MaxAge: "none", Projects: []string{"research", "the_book"}})
+	got, err := BuildContext(context.Background(), cfg, "topic", ContextOptions{MaxAge: "none", Projects: []string{"research", "the_book"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestBuildContextFreshnessDefault(t *testing.T) {
 	cfg.Grepai.Binary = script
 	cfg.Ask.MaxAge = "90d"
 
-	got, err := BuildContext(cfg, "t", ContextOptions{})
+	got, err := BuildContext(context.Background(), cfg, "t", ContextOptions{})
 	if err != nil || got.Count != 0 || got.Sources == nil {
 		t.Fatalf("stale hit should be filtered with a non-nil empty list: %+v, %v", got, err)
 	}
@@ -98,10 +99,10 @@ func TestBuildContextFreshnessDefault(t *testing.T) {
 
 func TestBuildContextErrors(t *testing.T) {
 	cfg := &config.Config{ResearchDir: t.TempDir(), Grepai: config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}}
-	if _, err := BuildContext(cfg, "t", ContextOptions{MaxAge: "5x"}); err == nil || !strings.Contains(err.Error(), "invalid max_age") {
+	if _, err := BuildContext(context.Background(), cfg, "t", ContextOptions{MaxAge: "5x"}); err == nil || !strings.Contains(err.Error(), "invalid max_age") {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := BuildContext(cfg, "t", ContextOptions{}); err == nil {
+	if _, err := BuildContext(context.Background(), cfg, "t", ContextOptions{}); err == nil {
 		t.Fatal("missing grepai should error")
 	}
 }
@@ -145,7 +146,7 @@ func TestBuildContextSkipsDuplicateText(t *testing.T) {
 	})
 	cfg.Grepai.Binary = script
 
-	got, err := BuildContext(cfg, "t", ContextOptions{MaxAge: "none"})
+	got, err := BuildContext(context.Background(), cfg, "t", ContextOptions{MaxAge: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}

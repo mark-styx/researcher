@@ -244,7 +244,7 @@ func (r *Runner) runAsk(ctx context.Context, task Task, run *store.Run) (RunResu
 	// Gather research context unless --no-research
 	researchContext := ""
 	if !task.NoResearch {
-		researchContext = r.gatherResearchContext(task)
+		researchContext = r.gatherResearchContext(ctx, task)
 	}
 
 	// Build system prompt (with or without research context)
@@ -289,25 +289,28 @@ func (r *Runner) runAsk(ctx context.Context, task Task, run *store.Run) (RunResu
 // gatherResearchContext searches existing research via grepai, filters by freshness,
 // reads contents, and returns a formatted context string.
 // Failures are non-fatal: warnings go to stderr, empty string returned on error.
-func (r *Runner) gatherResearchContext(task Task) string {
-	// Determine max age: task override > config default
-	maxAgeStr := r.cfg.Ask.MaxAge
-	if task.MaxAge != "" {
-		maxAgeStr = task.MaxAge
-	}
-	if _, err := search.ParseMaxAge(maxAgeStr); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: invalid max-age %q, using 90d default: %v\n", maxAgeStr, err)
-		maxAgeStr = "90d"
+func (r *Runner) gatherResearchContext(ctx context.Context, task Task) string {
+	// A task's max age overrides ask.max_age, and also limits store
+	// evidence, which the config default doesn't.
+	maxAge := task.MaxAge
+	if maxAge != "" {
+		if _, err := search.ParseMaxAge(maxAge); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid max-age %q, using the configured default: %v\n", maxAge, err)
+			maxAge = ""
+		}
 	}
 
-	result, err := search.BuildContext(r.cfg, task.Topic, search.ContextOptions{
+	result, err := search.BuildContext(ctx, r.cfg, task.Topic, search.ContextOptions{
 		Limit:    10,
-		MaxAge:   maxAgeStr,
+		MaxAge:   maxAge,
 		Projects: task.Projects,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: research search failed (continuing without context): %v\n", err)
 		return ""
+	}
+	for _, n := range result.Notes {
+		fmt.Fprintf(os.Stderr, "Note: %s\n", n)
 	}
 	return result.Context
 }
@@ -322,7 +325,7 @@ func (r *Runner) runDive(ctx context.Context, task Task, run *store.Run) (RunRes
 
 	researchContext := ""
 	if !task.NoResearch {
-		researchContext = r.gatherResearchContext(task)
+		researchContext = r.gatherResearchContext(ctx, task)
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{
@@ -411,7 +414,7 @@ func (r *Runner) runReview(ctx context.Context, task Task, run *store.Run) (RunR
 
 	researchContext := ""
 	if !task.NoResearch {
-		researchContext = r.gatherResearchContext(task)
+		researchContext = r.gatherResearchContext(ctx, task)
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{
@@ -505,7 +508,7 @@ func (r *Runner) runCompare(ctx context.Context, task Task, run *store.Run) (Run
 	// ("document comparison"), not a real query, so skip the context search.
 	researchContext := ""
 	if !task.NoResearch && len(task.Sources) < 2 {
-		researchContext = r.gatherResearchContext(task)
+		researchContext = r.gatherResearchContext(ctx, task)
 	}
 
 	resp, err := r.complete(ctx, run, llm.Request{

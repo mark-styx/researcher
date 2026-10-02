@@ -48,8 +48,7 @@ func (t *storeTools) retriever(ctx context.Context) (*retrieve.Retriever, error)
 
 // addStoreTools registers the retrieval tools, and with write the tool
 // that fetches into the store.
-func addStoreTools(s *server.MCPServer, cfg *config.Config, write bool) {
-	t := &storeTools{cfg: cfg}
+func addStoreTools(s *server.MCPServer, t *storeTools, write bool) {
 	s.AddTool(findTool(), t.findHandler)
 	s.AddTool(passageTool(), t.passageHandler)
 	s.AddTool(documentTool(), t.documentHandler)

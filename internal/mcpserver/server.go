@@ -27,11 +27,12 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(enrichTool(), enrichHandler(cfg, provider))
 	s.AddTool(critiqueTool(), critiqueHandler(cfg, provider))
 	s.AddTool(searchTool(), searchHandler(cfg))
-	s.AddTool(contextTool(), contextHandler(cfg))
+	st := &storeTools{cfg: cfg}
+	s.AddTool(contextTool(), contextHandler(cfg, st))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
 	addGraphTools(s, cfg, true)
-	addStoreTools(s, cfg, true)
+	addStoreTools(s, st, true)
 	return s
 }
 
@@ -42,11 +43,12 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 func NewRead(cfg *config.Config, version string) *server.MCPServer {
 	s := newServer(version)
 	s.AddTool(searchTool(), searchHandler(cfg))
-	s.AddTool(contextTool(), contextHandler(cfg))
+	st := &storeTools{cfg: cfg}
+	s.AddTool(contextTool(), contextHandler(cfg, st))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
 	addGraphTools(s, cfg, false)
-	addStoreTools(s, cfg, false)
+	addStoreTools(s, st, false)
 	return s
 }
 
@@ -339,26 +341,30 @@ func searchHandler(cfg *config.Config) server.ToolHandlerFunc {
 
 func contextTool() mcp.Tool {
 	return mcp.NewTool("researchguy_context",
-		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files, grepai project, and freshness metadata. Does not trigger an LLM call; purely retrieves and formats existing research. Large files contribute only their matched chunks."),
+		mcp.WithDescription("Get pre-formatted research context for a topic. Returns relevant excerpts with source files, grepai project, and freshness metadata, and with the store index on, evidence cards from fetched documents and reports (dated, labeled primary or synthesis, cited as [P:<id>]). Does not trigger an LLM call; purely retrieves and formats existing research. Large files contribute only their matched chunks."),
 		mcp.WithString("topic", mcp.Required(), mcp.Description("The topic to gather context for")),
-		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h, or none to include older research such as past book research). Default: from config or 90d")),
+		mcp.WithString("max_age", mcp.Description("Max age for freshness filter (e.g. 90d, 2w, 24h, or none to include older research such as past book research). Default: from config or 90d, for report files only; store evidence is only limited (by collection date) when this is given")),
 		mcp.WithNumber("limit", mcp.Description("Max search results to include (default 10)")),
 		projectsOption(),
 	)
 }
 
-func contextHandler(cfg *config.Config) server.ToolHandlerFunc {
+func contextHandler(cfg *config.Config, st *storeTools) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		topic, err := req.RequireString("topic")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		result, err := search.BuildContext(cfg, topic, search.ContextOptions{
+		opts := search.ContextOptions{
 			Limit:    req.GetInt("limit", 10),
 			MaxAge:   req.GetString("max_age", ""),
 			Projects: req.GetStringSlice("projects", nil),
-		})
+		}
+		if st != nil && strings.TrimSpace(cfg.Store.DSN) != "" {
+			opts.Retriever, _ = st.retriever(ctx)
+		}
+		result, err := search.BuildContext(ctx, cfg, topic, opts)
 		if err != nil {
 			if strings.HasPrefix(err.Error(), "invalid max_age") {
 				return mcp.NewToolResultError(err.Error()), nil
