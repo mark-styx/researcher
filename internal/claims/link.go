@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 )
+
+// maxNoteBytes caps a model's note on a link.
+const maxNoteBytes = 300
 
 // LinkOptions shape a linking pass (store.claims.link).
 type LinkOptions struct {
@@ -202,7 +206,7 @@ const linkSystemPrompt = `You label how pairs of claims from different sources r
 - refines: one is a more specific, qualified or corrected version of the other
 - supersedes: one is a later statement of the same changing fact (a newer count, a changed status) that replaces the other
 - unrelated: none of these
-For refines and supersedes, set "by" to the claim that refines or supersedes the other, "A" or "B". Use the dates given: a claim with a later date that gives a new value for the same fact supersedes the older one rather than contradicting it. Judge only from the claims as written; don't use what you know about the topic. Give a confidence from 0 to 1, and for anything but unrelated a one-sentence note on why.
+For refines and supersedes, set "by" to the claim that refines or supersedes the other, "A" or "B". Use the dates given: a claim with a later date that gives a new value for the same fact supersedes the older one rather than contradicting it. Judge only from the claims as written; don't use what you know about the topic. Give a confidence from 0 to 1, and for anything but unrelated a one-sentence note on why. The note is read later without the pair, so say what the claims say; don't call them A or B.
 Answer with JSON only, no prose: {"labels":[{"pair":1,"relation":"same","by":"","confidence":0.9,"note":"..."}]}`
 
 // linkPrompt lays the pairs out for the model.
@@ -277,8 +281,13 @@ func label(ctx context.Context, p llm.Provider, batch []pair, model string) ([]s
 			}
 		}
 		note := strings.TrimSpace(l.Note)
-		if len(note) > 300 {
-			note = note[:300]
+		if len(note) > maxNoteBytes {
+			// Cut at a character boundary.
+			cut := maxNoteBytes
+			for cut > 0 && !utf8.RuneStart(note[cut]) {
+				cut--
+			}
+			note = note[:cut]
 		}
 		link := store.Link{From: from, To: to, Relation: rel, Method: store.LinkModel, Model: model,
 			Confidence: max(0, min(1, l.Confidence)), Note: note, CreatedAt: now}

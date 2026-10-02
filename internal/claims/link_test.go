@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/store"
@@ -232,6 +233,12 @@ func TestLabel_ValidatesAnswers(t *testing.T) {
 	}
 	if links[1].From != 10 || links[1].To != 3 || links[1].Relation != "refines" || len(links[1].Note) != 300 {
 		t.Errorf("directed link = %+v", links[1])
+	}
+	// A long note is cut between characters, not inside one.
+	raw = `{"labels":[{"pair":1,"relation":"same","note":"a` + strings.Repeat("é", 200) + `"}]}`
+	links, _, err = label(context.Background(), &fakeLabeler{raw: raw}, batch[:1], "m")
+	if err != nil || len(links) != 1 || !utf8.ValidString(links[0].Note) || len(links[0].Note) != 299 {
+		t.Errorf("multibyte note = %q, %v", links[0].Note, err)
 	}
 }
 
