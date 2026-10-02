@@ -2,6 +2,7 @@ package research
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/embed"
+	"github.com/marklubin/researchguy/internal/fetch"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/search"
 	"github.com/marklubin/researchguy/internal/store"
@@ -67,6 +70,7 @@ func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
 	run := r.startRun(task)
 	result, err := do(ctx, task, run)
 	r.finishRun(run, result, err)
+	r.fetchRun(ctx, task, run)
 	r.indexRun(ctx, run)
 	result.RunID = run.ID()
 	result.RunDir = run.Dir()
@@ -151,26 +155,72 @@ func (r *Runner) finishRun(run *store.Run, result RunResult, runErr error) {
 	}
 }
 
+// fetchRun fetches the documents the run cited, opened and ranked highest
+// (store.fetch), within its budget. Asks are left to the daemon and
+// `researchguy store fetch`, so a quick answer doesn't wait on fetching;
+// so are canceled tasks. What the budget doesn't reach is fetched by the
+// next pass.
+func (r *Runner) fetchRun(ctx context.Context, task Task, run *store.Run) {
+	if run == nil || !r.cfg.Store.Fetch.Enabled || task.Type == TypeAsk || ctx.Err() != nil {
+		return
+	}
+	if !task.Quiet {
+		fmt.Fprintf(os.Stderr, "Fetching sources for run %s...\n", run.ID())
+	}
+	sum, err := fetch.NewStage(r.cfg.Store.Fetch, store.OfRunDir(run.Dir())).Run(ctx, run.ID(), false)
+	if errors.Is(err, store.ErrFetchBusy) {
+		return // the daemon got to it first
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: fetching sources for run %s (`researchguy store fetch` retries): %v\n", run.ID(), err)
+		return
+	}
+	if !task.Quiet {
+		msg := fmt.Sprintf("Fetched %d of %d sources (%d failed)", sum.Fetched, sum.Queued, sum.Failed)
+		if sum.Remaining > 0 {
+			msg += fmt.Sprintf(", %d left for the next pass", sum.Remaining)
+		}
+		fmt.Fprintln(os.Stderr, msg)
+	}
+}
+
 // indexTimeout bounds indexing one run when its task ends.
 const indexTimeout = 30 * time.Second
 
-// indexRun ingests the run into the index (store.dsn) once it has ended. A
-// down or missing index is a warning: the run is on disk, and `researchguy
-// store ingest` or the daemon adds it later. A canceled task is still
-// indexed.
+// indexRun ingests the run into the index (store.dsn) once it has ended,
+// then embeds its new passages within store.embed.budget. A down or
+// missing index is a warning: the run is on disk, and `researchguy store
+// ingest` or the daemon adds it later. So is a down embedding model, for
+// `researchguy store embed`. A canceled task is still indexed.
 func (r *Runner) indexRun(ctx context.Context, run *store.Run) {
 	if run == nil || r.cfg.Store.DSN == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), indexTimeout)
+	ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), indexTimeout)
 	defer cancel()
-	ix, err := index.Open(ctx, r.cfg.Store.DSN)
-	if err == nil {
-		_, err = ix.IngestRun(ctx, run.Dir(), false)
-		ix.Close()
-	}
+	ix, err := index.Open(ictx, r.cfg.Store.DSN)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: run %s is saved but not indexed (`researchguy store ingest` adds it): %v\n", run.ID(), err)
+		return
+	}
+	defer ix.Close()
+	emb := embed.New(r.cfg)
+	ix.SetEmbedModel(emb.Model())
+	stats, err := ix.IngestRun(ictx, run.Dir(), false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: run %s is saved but not indexed (`researchguy store ingest` adds it): %v\n", run.ID(), err)
+		return
+	}
+	if stats.Passages == stats.Embedded {
+		return
+	}
+	ectx, ecancel := context.WithoutCancel(ctx), context.CancelFunc(func() {})
+	if budget := r.cfg.Store.Embed.BudgetDuration(); budget > 0 {
+		ectx, ecancel = context.WithTimeout(ectx, budget)
+	}
+	defer ecancel()
+	if _, err := ix.Embed(ectx, store.OfRunDir(run.Dir()), emb); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: run %s is indexed but its passages aren't all embedded (`researchguy store embed` finishes): %v\n", run.ID(), err)
 	}
 }
 

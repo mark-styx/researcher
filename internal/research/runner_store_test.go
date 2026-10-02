@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/config"
@@ -296,5 +300,142 @@ func TestRun_UnreachableIndexWarnsAndContinues(t *testing.T) {
 	}
 	if rec, err := store.ReadRecord(res.RunDir); err != nil || rec.Status != store.StatusSucceeded {
 		t.Errorf("run record = %+v, %v", rec, err)
+	}
+}
+
+// sourceSite serves a long article and a fake Ollama /api/embed.
+func sourceSite(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var embeds atomic.Int32
+	text := strings.Repeat("A paragraph of the fetched article, long enough to be the document. ", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/article", "/cited":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<html><head><title>T</title></head><body><article><p>%s</p><p>%s</p></article></body></html>`, text, r.URL.Path)
+		case "/api/embed":
+			embeds.Add(1)
+			var req struct{ Input []string }
+			json.NewDecoder(r.Body).Decode(&req)
+			out := make([][]float32, len(req.Input))
+			for i := range out {
+				out[i] = make([]float32, index.Dims)
+				out[i][i%index.Dims] = 1
+			}
+			json.NewEncoder(w).Encode(map[string]any{"embeddings": out})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &embeds
+}
+
+func fetchConfig(t *testing.T, srv *httptest.Server) *config.Config {
+	t.Helper()
+	t.Setenv("RESEARCHGUY_ALLOW_PRIVATE_URLS", "true")
+	cfg := storeConfig(t)
+	cfg.Store.Fetch = config.StoreFetchConfig{Enabled: true, TopResults: 3, Concurrency: 2, Timeout: "5s", Budget: "30s"}
+	cfg.Store.Embed = config.StoreEmbedConfig{Model: "nomic-embed-text", Host: srv.URL}
+	return cfg
+}
+
+func TestRun_FetchesIndexesAndEmbedsSources(t *testing.T) {
+	srv, embeds := sourceSite(t)
+	cfg := fetchConfig(t, srv)
+	cfg.Store.DSN = indextest.DSN(t)
+	p := &evidenceProvider{
+		mockProvider: mockProvider{response: "The report cites " + srv.URL + "/cited."},
+		evidence: []llm.EvidenceRecord{{Label: "web_search", Content: "results",
+			Call: store.Call{Tool: "web_search", Action: "search", Query: "q",
+				Results: []store.CaptureResult{{Rank: 1, URL: srv.URL + "/article"}, {Rank: 2, URL: srv.URL + "/missing"}}}}},
+	}
+	res, err := NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeDive, Topic: "t", NoResearch: true, Quiet: true,
+		OutPath: filepath.Join(t.TempDir(), "report.md")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, ok, err := store.ReadFetchSummary(res.RunDir)
+	if err != nil || !ok || sum.Queued != 3 || sum.Fetched != 2 || sum.Failed != 1 || !sum.Done() {
+		t.Errorf("fetch summary = %+v, %v, %v; want the cited page, the article and a failure", sum, ok, err)
+	}
+	ix, err := index.Open(context.Background(), cfg.Store.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ix.SetEmbedModel("nomic-embed-text")
+	c, _ := ix.Counts(context.Background())
+	if c.Fetches != 3 || c.Documents != 2 || c.Passages < 2 || c.Unembedded != 0 {
+		t.Errorf("counts = %+v; want both documents split and embedded", c)
+	}
+	if embeds.Load() == 0 {
+		t.Error("the embedding model was never called")
+	}
+}
+
+func TestRun_AskAndNoDSNFetching(t *testing.T) {
+	srv, embeds := sourceSite(t)
+	cfg := fetchConfig(t, srv)
+	p := &evidenceProvider{
+		mockProvider: mockProvider{response: "answer"},
+		evidence: []llm.EvidenceRecord{{Label: "web_search", Content: "results",
+			Call: store.Call{Tool: "web_search", Action: "search", Query: "q", Results: []store.CaptureResult{{Rank: 1, URL: srv.URL + "/article"}}}}},
+	}
+	// An ask is left for the daemon.
+	res, err := NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeAsk, Topic: "q", NoSave: true, NoResearch: true, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := store.ReadFetchSummary(res.RunDir); ok {
+		t.Error("an ask fetched inline")
+	}
+	st, _ := store.Open(cfg.Store.Dir)
+	if pending, _ := st.PendingFetch(); len(pending) != 1 || pending[0] != res.RunID {
+		t.Errorf("PendingFetch = %v, want the ask", pending)
+	}
+	// A dive without an index still fetches; nothing embeds.
+	res, err = NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeDive, Topic: "t", NoResearch: true, Quiet: true,
+		OutPath: filepath.Join(t.TempDir(), "report.md")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum, ok, _ := store.ReadFetchSummary(res.RunDir); !ok || sum.Fetched != 1 {
+		t.Errorf("dive without dsn: fetch summary %+v, %v", sum, ok)
+	}
+	if embeds.Load() != 0 {
+		t.Error("embedded without an index")
+	}
+	// Fetching off: nothing fetched.
+	cfg.Store.Fetch.Enabled = false
+	res, _ = NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeDive, Topic: "t", NoResearch: true, Quiet: true,
+		OutPath: filepath.Join(t.TempDir(), "report2.md")})
+	if _, ok, _ := store.ReadFetchSummary(res.RunDir); ok {
+		t.Error("fetched with store.fetch.enabled false")
+	}
+}
+
+func TestRun_EmbeddingDownWarnsAndKeepsIndex(t *testing.T) {
+	srv, _ := sourceSite(t)
+	cfg := fetchConfig(t, srv)
+	cfg.Store.DSN = indextest.DSN(t)
+	cfg.Store.Embed.Host = "http://127.0.0.1:1"
+	p := &evidenceProvider{
+		mockProvider: mockProvider{response: "report"},
+		evidence: []llm.EvidenceRecord{{Label: "web_search", Content: "results",
+			Call: store.Call{Tool: "web_search", Action: "search", Query: "q", Results: []store.CaptureResult{{Rank: 1, URL: srv.URL + "/article"}}}}},
+	}
+	if _, err := NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeDive, Topic: "t", NoResearch: true, Quiet: true,
+		OutPath: filepath.Join(t.TempDir(), "report.md")}); err != nil {
+		t.Fatalf("a down embedding model shouldn't fail the task: %v", err)
+	}
+	ix, err := index.Open(context.Background(), cfg.Store.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	ix.SetEmbedModel("nomic-embed-text")
+	if c, _ := ix.Counts(context.Background()); c.Documents != 1 || c.Passages == 0 || c.Unembedded != c.Passages {
+		t.Errorf("counts = %+v; want the document indexed and its passages left for store embed", c)
 	}
 }
