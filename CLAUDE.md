@@ -75,6 +75,15 @@ extending it.
   files in `internal/store/index/migrations/`, never edits to an applied
   one. Index tests use `indextest.DSN`, which makes a throwaway database and
   skips without Postgres (`RESEARCHGUY_TEST_PG` points elsewhere).
+- The fetch stage (`internal/fetch`) writes every attempt, failures
+  included, to the run's `fetches.jsonl`, and text and vectors to the
+  store's `text/` and `vectors/`. Ingest builds documents and passages from
+  those files only, never from the network, so keep it that way. A blocked
+  fetch, paywall or bot challenge is recorded as a failure. Don't add code
+  that tries to get past one. The passage split must stay deterministic
+  (passage IDs hash the span). Fetch and embed tests use `httptest` with
+  `RESEARCHGUY_ALLOW_PRIVATE_URLS=true` (or `Client.AllowPrivate`) and a
+  fake `/api/embed`; no test reaches the internet or a real Ollama.
 - The Claude provider runs `claude -p` in an empty temp dir with the prompt
   on stdin, the system prompt in a file, an explicit `--tools` list and (by
   default) `--safe-mode`. Don't move prompts back onto argv (1 MiB

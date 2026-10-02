@@ -122,6 +122,8 @@ Off by default until it's had real use.
 | `link <path>` | Create a symlink to the research directory |
 | `store init` | Create the index database in `store.dsn` and apply its schema |
 | `store ingest [--run <id>] [--force]` | Mark dead runs interrupted, then index new or changed runs |
+| `store fetch [--run <id>] [--force] [--budget <d>]` | Fetch the sources of runs whose fetching isn't done, then index them |
+| `store embed [--budget <d>]` | Embed indexed passages that have no vector from `store.embed.model` |
 | `store rebuild` | Empty the index and re-index every run, in one transaction |
 | `store doctor` | Check the store and index for problems; changes nothing, exits non-zero on a problem |
 
@@ -242,6 +244,17 @@ graph:
 store:
   dir: ""
   dsn: ""   # e.g. postgres://localhost:5432/researchguy
+  fetch:              # fetch each run's cited, opened and top-ranked pages
+    enabled: true
+    top_results: 3    # per search
+    concurrency: 8
+    timeout: 20s      # per request
+    budget: 3m        # per run; "0" is no limit
+    openalex: true    # abstracts and open-access copies for blocked DOIs
+  embed:              # passage vectors, needs dsn and Ollama
+    model: nomic-embed-text
+    host: ""          # blank uses ollama.host
+    budget: 2m
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.
@@ -404,24 +417,37 @@ Every `ask`, `dive`, `review`, `compare`, `enrich` and `watch` task, from the CL
   workers.jsonl                  # hybrid: each worker's full draft, error and metadata
   aggregator-prompt.md           # hybrid: the exact system and user prompt the aggregator got
   aggregator-output.md           # hybrid: the aggregator's raw output, before the report was cut out
+  fetches.jsonl                  # one line per fetch attempt, failures included
+  fetch.json                     # the last fetch pass: queued, fetched, failed, remaining
+<store.dir>/blobs/sha256/<ab>/<hash>.gz         # raw fetched bytes, gzip
+<store.dir>/text/sha256/<ab>/<hash>.txt         # extracted text
+<store.dir>/vectors/<model>/<ab>/<hash>.f32     # embedding cache, keyed by passage text hash
 ```
 
 `run.json` is written as `running` when the task starts, with the process ID and host, and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed is marked `interrupted` by the next `store ingest` or daemon pass. Each tool result is appended as it arrives, so a worker killed mid-run keeps what it had collected. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept.
 
+### Fetched documents
+
+When a `dive`, `review`, `compare`, `enrich` or `watch` ends, researchguy fetches the run's sources itself (`store.fetch`): the URLs its report and worker drafts cite, the pages its workers opened, and the top 3 results of each search. Asks don't wait on this; the daemon or `researchguy store fetch` gets to them. The raw bytes and the extracted text are kept in full. HTML is reduced to its main content, and PDFs go through `pdftotext` (`brew install poppler`; without it PDFs are recorded as failures). A DOI whose publisher blocks the fetch is looked up on OpenAlex, which gives an abstract (stored as `content_kind: abstract`) and repository or open-access copies to try. Each document's publication date comes from the page's own metadata, the URL or OpenAlex, with where it came from and its precision. `Last-Modified` and PDF creation dates are marked weak, and an unknown date stays blank, never the fetch date.
+
+Every attempt goes in the run's `fetches.jsonl`, so a 403 or a timeout is recorded rather than lost. A fetch pass is capped by `store.fetch.budget`; what it doesn't reach is fetched by the next pass. The fetcher spaces requests to each host, retries 429s and 5xx with backoff, and refuses private addresses unless `RESEARCHGUY_ALLOW_PRIVATE_URLS=true`. It doesn't try to get past bot challenges: on 2026-10-02 PubMed started serving one (HTTP 203) to every request from this machine, and those fetches are recorded as failures.
+
 ### Index
 
-The store is the record of truth. With `store.dsn` set, runs are also indexed in Postgres: runs, captures, sources (one row per normalized URL) and sightings (each time a run saw a source, with its rank and whether it was opened or fetched). The index is derived, so `store rebuild` can always recreate it.
+The store is the record of truth. With `store.dsn` set, runs are also indexed in Postgres: runs, captures, sources (one row per normalized URL, classified `web`, `paper`, `video` or `court`), sightings (each time a run saw a source, with its rank and whether it was opened or fetched), every fetch attempt, documents (each distinct text of a source, with its publication date), and passages: each document split into ~1,500-character passages with character offsets, full-text indexed, and embedded with `store.embed.model` through Ollama (`ollama pull nomic-embed-text`). The index is derived, so `store rebuild` can always recreate it, and vectors are cached under `vectors/`, so a rebuild doesn't embed again.
 
 ```bash
 # store.dsn: postgres://localhost:5432/researchguy in config.yaml, then:
-researchguy store init      # create the database, apply the schema
+researchguy store init      # create the database, apply the schema (needs pgvector)
 researchguy store ingest    # index runs already in the store
+researchguy store fetch     # fetch sources for runs that haven't had them
+researchguy store embed     # embed passages without a vector
 researchguy store doctor    # check both
 ```
 
-Runs recorded before the index existed have captures but no structured tool calls, so they index without sources. A task indexes its run when it finishes. If the index is down, the run is still saved, a warning says so, and `researchguy daemon start` or `store ingest` catches it up later. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
+Runs recorded before the index existed have captures but no structured tool calls, so they index without sources. A task indexes its run when it finishes, then embeds its new passages within `store.embed.budget`. If the index or Ollama is down, the run is still saved, a warning says so, and `researchguy daemon start` or the `store` commands catch it up later. The daemon's pass fetches up to 4 runs still waiting on fetching, indexes what's new, then embeds. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
 
-This is phases 1 and 2 of `docs/research-store-design.md`. Fetching, passages and retrieval over the store come in later phases.
+This is phases 1-3 of `docs/research-store-design.md`. Retrieval over the store comes in phase 4.
 
 To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
 
@@ -503,4 +529,5 @@ Add to `~/.claude/settings.json`:
   scheduler.log        # Daemon log
   scheduler.pid        # Daemon PID file
   store/runs/          # Run records (store.dir), see "Run records"
+  store/blobs/ text/ vectors/  # Fetched bytes, extracted text, embedding cache
 ```

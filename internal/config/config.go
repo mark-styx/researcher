@@ -307,11 +307,12 @@ graph:
 store:
   dir: ""
   dsn: ""
-  # After a run ends, fetch the pages its workers opened, the URLs its
-  # drafts and report cite, and each search's top_results results, storing
-  # their raw bytes and text. budget caps one run's fetch ("0" is no limit);
-  # the rest waits for ` + "`researchguy store fetch`" + ` or the daemon. openalex
-  # looks DOIs up for abstracts and open-access copies of blocked papers.
+  # After a dive, review, compare, enrich or watch ends, fetch the pages its
+  # workers opened, the URLs its drafts and report cite, and each search's
+  # top_results results, storing their raw bytes and text. Asks wait for the
+  # daemon or ` + "`researchguy store fetch`" + `. budget caps one run's fetch
+  # ("0" is no limit); the rest waits for the next pass. openalex looks DOIs
+  # up for abstracts and open-access copies of blocked papers.
   fetch:
     enabled: true
     top_results: 3

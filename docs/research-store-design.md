@@ -1,7 +1,8 @@
 # Research store: design
 
-Status: phases 1 and 2 built 2026-10-02 (see "Phase 1 as built" and "Phase 2
-as built" under Phases); phases 3-7 proposed. Decisions accepted 2026-10-02.
+Status: phases 1-3 built 2026-10-02 (see "Phase 1 as built", "Phase 2 as
+built" and "Phase 3 as built" under Phases); phases 4-7 proposed. Decisions
+accepted 2026-10-02.
 Written 2026-10-02. "What exists today" describes the code before phase 1.
 
 researchguy collects evidence and then loses it. Workers' tool results live in
@@ -131,6 +132,8 @@ New Go dependencies: `github.com/jackc/pgx/v5` (added in phase 2) and
   runs/<run_id>/
     run.json                          run record and final metadata
     captures.jsonl                    one line per tool result, fsynced per line
+    fetches.jsonl                     one line per fetch attempt, fsynced per line
+    fetch.json                        the last fetch pass's summary
   blobs/sha256/<ab>/<hash>.gz         raw fetched bytes (HTML, PDF), gzip
   text/sha256/<ab>/<hash>.txt         extracted text
   vectors/<model>/<ab>/<hash>.f32     embedding cache keyed by text hash + model
@@ -595,6 +598,107 @@ Deviations from the plan above:
   Checked on the 2026-10-02 smoke run `20261002T170200Z-0ad1e9`: 14
   captures, 0 sources. Recovering their URLs means parsing the content,
   which phase 6's backfill can do.
+
+### Phase 3 as built
+
+Built 2026-10-02, `f8780c4` to `2d71534`.
+
+- **Fetch stage** (`internal/fetch`). For a finished run it plans, in
+  order, the URLs cited in worker drafts and in the report's own section
+  for the run (a watch file holds many runs), the pages workers opened or
+  fetched, and the top `store.fetch.top_results` (3) of each search,
+  deduplicated by `url_key`, skipping images, media and archives by
+  extension. Each target is fetched with bounded concurrency (8), per-host
+  spacing (250 ms) and a per-host limit (2), retries on network errors, 429
+  and 5xx (2 retries, backoff from 1 s, `Retry-After` up to 10 s), a 20 s
+  timeout and a 25 MB cap. Private addresses are refused in the dialer
+  unless `RESEARCHGUY_ALLOW_PRIVATE_URLS=true`.
+- **Extraction.** HTML: navigation, footers, asides, scripts, hidden
+  elements and unlikely class names are pruned, then the main content is
+  the longest `<article>` of 500+ chars, else `<main>`, else the best
+  paragraph cluster scored by text and link density, else the body. A meta
+  refresh is followed (2 hops). PDF: `pdftotext` for text, `pdfinfo` for
+  title and creation date. Text is cleaned of NULs and invalid UTF-8.
+- **DOI rescue.** When the direct fetch gives under 3,000 chars and the URL
+  has a DOI, OpenAlex gives the title, the publication date and the
+  abstract (a document with `content_kind = abstract`). Then up to 4 of
+  its locations are fetched, repository copies before other open-access
+  ones, until one gives usable text.
+- **Dates.** For a page: meta tags, most trusted first (`citation_*`, then
+  `article:published_time`, Dublin Core and `prism`, then JSON-LD
+  `datePublished` and generic date tags), then `<time pubdate>`, then a date
+  in the URL path, then `Last-Modified` (weak). For a PDF: the URL path,
+  then the creation date (weak). OpenAlex records take OpenAlex's date. Each date has its source and precision (year, month, day). A later
+  fetch with a strong date replaces a weak one; an unknown date stays null.
+- **Files.** Raw bytes go to `blobs/` gzipped, text to `text/`, and every
+  attempt to the run's `fetches.jsonl` (fsynced) with the reason, rank, how
+  it was reached (`direct`, `openalex`, `repository`, `open_access`),
+  attempts, status, error, final URL and the hashes. `fetch.json` holds the
+  pass's counts; a run is fetched when `remaining` is 0. A per-run
+  `fetch.lock` (non-blocking `flock`) keeps two processes from fetching the
+  same run.
+- **When runs are fetched.** The runner fetches after a dive, review,
+  compare, enrich or watch ends, within `store.fetch.budget` (3 m). Asks and
+  canceled tasks are left for the daemon, whose pass fetches up to 4 waiting
+  runs, newest first, then syncs the index, then embeds. `store fetch`
+  fetches every waiting run (or `--run`, with `--force` to try again) and
+  indexes them.
+- **Index.** Migration 2 enables `vector` and adds `documents`, `fetches`
+  and `passages`, plus `runs.fetch_bytes` so a grown fetch log makes a run
+  pending. Ingest reads the fetch log with the captures, upserts a source
+  for every fetched URL (a cited URL may be in no capture) and classifies
+  sources (`paper` for DOIs, arXiv and PubMed, `video`, `court`, else
+  `web`). Passages are cut only for documents that have none yet.
+- **Passages** are ~1,500 chars on paragraph boundaries (at most 2,000; a
+  short tail joins the previous one), with offsets into the stored text.
+  The split is deterministic, so passage IDs survive a rebuild.
+- **Embeddings** (`internal/embed`) go through Ollama's `/api/embed` with
+  `nomic-embed-text` and its `search_document:`/`search_query:` prefixes,
+  64 per request. `Index.Embed` takes passages without a vector (then ones
+  another model embedded) in batches locked with `SKIP LOCKED`, uses a
+  cached vector when there is one, and caches what the model makes. The
+  runner embeds within `store.embed.budget` (2 m); `store embed` runs until
+  done. Ingest attaches cached vectors to new passages, so a rebuild doesn't
+  call the model.
+- **Doctor** adds fetch, document and passage counts, passages without a
+  vector from the configured model, and runs waiting on fetching. The last
+  two are reported, not problems: both are normal between a run ending and
+  the daemon's next pass.
+
+Smoke run, 2026-10-02, a hand-made run of 6 real URLs: 8 attempts in 1.9 s,
+5 fetched. The SAGE DOI got a 403, then an OpenAlex abstract and a PubMed
+repository copy. The arXiv PDF extracted 39,902 chars with a weak
+`pdf-creation` date. 6 documents, 53 passages, embedded in 1.2 s (~44/s),
+and a rebuild reattached all 53 vectors from the cache.
+
+Deviations from the plan above:
+
+- **Fetch records live in each run,** in `fetches.jsonl`, not only in the
+  index, because the index must be rebuildable. A URL two runs both cite is
+  fetched by each; there's no cross-run fetch reuse yet.
+- **A document is identified by its text's hash,** not the raw bytes, so a
+  page whose markup changes but whose text doesn't is one document.
+  Offsets are characters (runes) into that text.
+- **The fetch runs after the run ends,** not between the workers and the
+  aggregator. Moving it before aggregation goes with aggregator retrieval in
+  phase 4.
+- **Retries are counted per record** (`attempts`), not one row per HTTP
+  try. One row per URL and route reads better and still shows a flaky host.
+- **Added:** meta refresh following, source kind classification, and
+  `store fetch`/`store embed`.
+- **Not done:** report documents (`origin = synthesis`) wait for phase 4's
+  citation check and phase 6's backfill; doctor doesn't look for blobs no
+  run references; snippets aren't stored as `content_kind = snippet`
+  documents (they stay in sightings).
+- **Found while testing:** PubMed began serving a proof-of-work challenge
+  (HTTP 203, `Cookies must be enabled`) to every request from this machine
+  on 2026-10-02, after it served 30 of 30 in the fetch measurement earlier
+  that day. The fetcher records
+  those as failures and doesn't try to pass the challenge; NCBI's
+  E-utilities are the sanctioned route and a follow-up. Passages of figure
+  labels (`<pad> <pad>` in an arXiv PDF) embed close to many queries, so
+  phase 4's ranking needs to discount low-information passages. A news
+  feature with a DOI is classified `paper`.
 
 ## Decisions
 
