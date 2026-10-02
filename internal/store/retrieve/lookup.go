@@ -293,3 +293,17 @@ func (r *Retriever) Source(ctx context.Context, ref string) (SourceResult, error
 	s.CitedBy, err = pgx.CollectRows(rows, pgx.RowTo[string])
 	return s, err
 }
+
+// DocumentText is a document's whole text and what kind of text it is.
+func (r *Retriever) DocumentText(ctx context.Context, id int64) (text, contentKind string, err error) {
+	var sha string
+	err = r.Index.Pool().QueryRow(ctx, `SELECT sha256, content_kind FROM documents WHERE id = $1`, id).Scan(&sha, &contentKind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", fmt.Errorf("document %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	text, err = r.Store.ReadText(sha)
+	return text, contentKind, err
+}
