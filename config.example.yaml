@@ -10,6 +10,9 @@ claude:
   model: opus
   max_tokens: 16000
   max_turns: 50
+  # Run with --safe-mode and no MCP servers, so your CLAUDE.md files, memory,
+  # hooks and MCP servers stay out of research calls. Auth is unaffected.
+  ignore_user_config: true
 
 # Ollama configuration
 ollama:
@@ -42,9 +45,10 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
-  # Cap on raw tool results passed to the aggregator, split evenly across
-  # shards. Raise it for a large-context aggregator such as claude.
-  max_evidence_chars: 80000
+  # Cap on raw tool results one aggregator or critic prompt receives, split
+  # evenly across shards. The full ledger is saved to the run record either
+  # way. 0 sizes it to the backend: ~2M chars for claude, 80k otherwise.
+  max_evidence_chars: 0
 
 # Tool use (web search, web fetch)
 tools:
@@ -77,3 +81,9 @@ graph:
   rollup:
     enabled: false
     max_per_cycle: 5
+
+# Research store. Every task writes a run record and the raw evidence it
+# collected under <dir>/runs/<run_id>/. Blank means <config dir>/store.
+# Point several config dirs at one store to keep all research together.
+store:
+  dir: ""

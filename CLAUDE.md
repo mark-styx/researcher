@@ -60,6 +60,18 @@ extending it.
   `BranchCount`. That's intentional, not a gap to fix. Codex
   (`internal/llm/codex.go`) is the hybrid worker option that isn't local:
   it parses `codex exec --json` so its web search results reach the ledger.
+- Every runner task writes a run record through `internal/store`
+  (`<store.dir>/runs/<id>/`): `run.json`, every raw tool result in
+  `captures.jsonl`, and for hybrid the worker drafts and the aggregator's
+  prompt and raw output. Prompt caps (`hybrid.max_evidence_chars`) limit
+  what one prompt sees, never what's kept: write captures before anything
+  that can fail, and don't add a path that drops collected evidence. Ledger
+  IDs (`E<seq>`) are the capture `seq`, and the report header names the run.
+- The Claude provider runs `claude -p` in an empty temp dir with the prompt
+  on stdin, the system prompt in a file, an explicit `--tools` list and (by
+  default) `--safe-mode`. Don't move prompts back onto argv (1 MiB
+  `ARG_MAX`). The hybrid aggregator's report is cut from between
+  `===BEGIN REPORT===`/`===END REPORT===`; keep that contract in its prompt.
 - Context retrieval lives in `search.BuildContext`; the MCP context tool,
   `researchguy context`, and the runner all use it. Keep it LLM-free.
 - Commands with `--json` must print nothing but the JSON on stdout. Send

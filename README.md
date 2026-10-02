@@ -19,6 +19,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Multi-backend**: supports Claude CLI, Codex CLI, Ollama, and hybrid worker aggregation
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
 - **Evidence-ledger critics**: hybrid verification checks the unchanged draft against raw successful tool results and reports flags instead of rewriting
+- **Run records**: every task writes what it collected (raw tool results, worker drafts, the aggregator's prompt and raw output, metadata) to `<store.dir>/runs/<run_id>/`, so evidence that didn't fit in a prompt is still on disk and a report's `[E12]` citations resolve to a captured item
 - **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researchguy graph`), instead of being re-derived per report
 
 ## Installation
@@ -162,6 +163,7 @@ claude:
   binary: claude
   model: opus
   max_tokens: 16000
+  ignore_user_config: true  # --safe-mode: no CLAUDE.md, memory, hooks or MCP servers
 
 # Ollama settings
 ollama:
@@ -190,7 +192,7 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
-  max_evidence_chars: 80000  # raw tool-result ledger cap, split across shards
+  max_evidence_chars: 0  # per-prompt ledger budget; 0 = ~2M chars for claude, 80k otherwise
 
 # Web search and tool use
 tools:
@@ -229,6 +231,11 @@ graph:
   rollup:
     enabled: false
     max_per_cycle: 5
+
+# Research store: run records under <dir>/runs/<run_id>/.
+# Blank means <config dir>/store.
+store:
+  dir: ""
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.
@@ -279,6 +286,8 @@ claude --version
 researchguy config set default_backend claude
 ```
 
+Each call runs `claude -p` in a fresh empty temp dir, removed afterwards, with the prompt on stdin and the system prompt in a file (`--system-prompt-file`), so prompt size isn't bound by the 1 MB argv limit. `--tools` names exactly the tools the request asked for (`WebSearch`, `WebFetch`), or none, so a call can't run commands or edit files. `ignore_user_config: true` (the default) adds `--safe-mode` and `--strict-mcp-config`, which keep your CLAUDE.md files, memory, hooks and MCP servers out of research calls; auth is unaffected. Calls use `--no-session-persistence`, so they don't show up in `claude --resume`.
+
 ### Ollama
 
 Uses a local [Ollama](https://ollama.com) instance. The default local stack uses a sparse worker for repeated tool calls, a dense model for one synthesis call, and a small utility model for categorization and optional verification:
@@ -323,10 +332,11 @@ hybrid:
   aggregator_backend: claude
   aggregator_model: opus
   max_parallel: 5
-  max_evidence_chars: 400000
+store:
+  dir: ~/.researchguy/store  # share the main config's store
 ```
 
-Keep that in its own config dir (`RESEARCHGUY_CONFIG_DIR=~/.researchguy/codex-hybrid researchguy dive ...`) if the MCP server should keep its default stack. A dive doesn't touch `tasks.db`, so a separate config dir is safe for it. Graph and scheduler commands do read `tasks.db` from the config dir, so run those with your main config.
+Keep that in its own config dir (`RESEARCHGUY_CONFIG_DIR=~/.researchguy/codex-hybrid researchguy dive ...`) if the MCP server should keep its default stack. A dive doesn't touch `tasks.db`, so a separate config dir is safe for it. Graph and scheduler commands do read `tasks.db` from the config dir, so run those with your main config. Set `store.dir` as above so its run records land in the same store as the main config's.
 
 ### Hybrid backend: modes and critics
 
@@ -342,7 +352,13 @@ researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 
 Without `--branches`, a named mode covers its complete role set: four branches for `landscape` and five for `inquiry`. General mode defaults to the number of configured worker models. Set `--branches` explicitly when cost or latency matters more than full role coverage.
 
-Worker prose is analysis, not evidence. Successful tool results form a capped evidence ledger that is passed separately to the aggregator and optional critics. `hybrid.max_evidence_chars` (default 80000) is the cap. It's split evenly across shards, and a shard that needs less than its share passes the rest to the others, so the first shard can't fill the ledger and starve the counter-evidence branches. Run metadata records `evidence_ledger` (items and chars captured vs. passed, and how many shards made it in). Search-heavy workers such as Codex capture far more than 80000 chars, so raise the cap when the aggregator has a large context window. The Claude backend passes the prompt as one argv string, so keep the whole aggregation prompt well under macOS's 1 MB `ARG_MAX`. Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
+Worker prose is analysis, not evidence. Successful tool results form an evidence ledger that is passed separately to the aggregator and optional critics. Every item gets an ID (`E1`, `E2`, ...) numbered across all workers, and the aggregator cites items by it (`[E12]`). The whole ledger is written to the run record (`captures.jsonl`, below) before aggregation, under the same IDs.
+
+`hybrid.max_evidence_chars` caps how much of the ledger one prompt receives. `0` (the default) sizes it to the backend that reads it: ~2M chars for claude, which is ~500-670k tokens and leaves room in Opus's 1M-token window for the drafts and the report, and 80000 for Ollama or Codex. Set it explicitly for a smaller-window claude model such as haiku. The cap is split evenly across shards, and a shard that needs less than its share passes the rest to the others, so the first shard can't fill the ledger and starve the counter-evidence branches. When the critics' backend has a smaller budget than the aggregator's, they get their own cut of the ledger. Run metadata records `evidence_ledger` (items and chars captured vs. passed, and how many shards made it in), plus `critic_evidence_ledger` when the critics got a different cut.
+
+The aggregator writes its report between a `===BEGIN REPORT===` line and an `===END REPORT===` line. Text outside them, such as status chatter or offers to save a file, is left out of the report and kept in the run record's `aggregator-output.md`. Metadata `aggregator_output.markers` is `ok`, `unterminated` (no end line, so everything after the begin line is kept), `missing` or `empty` (the whole output is kept), and a warning goes to stderr when it isn't `ok`.
+
+Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
 
 - **Groundedness critic**: flags factual claims that the raw evidence ledger does not support or that overstate it.
 - **Narrative-vs-evidence critic**: flags claims stated as settled or consensus that are not tied to a distinct ledger entry.
@@ -368,6 +384,25 @@ Research files are automatically categorized by `ollama.utility_model` into topi
     device-comparison.md
   .grepai/                     # Semantic search index
 ```
+
+Each report's header line names its run (`*Generated: ... | Backend: hybrid | Run: 20261002T153045Z-a1b2c3*`), which is where its evidence is.
+
+## Run records
+
+Every `ask`, `dive`, `review`, `compare`, `enrich` and `watch` task, from the CLI, the MCP server or the scheduler, gets a run directory in the research store (`store.dir`, default `<config dir>/store`):
+
+```
+<store.dir>/runs/<run_id>/       # run_id: UTC start time + random suffix
+  run.json                       # kind, topic, backend, mode, status, timing, report_path, metadata
+  captures.jsonl                 # one raw tool result per line: seq, worker, shard, backend, model, label, content
+  workers.jsonl                  # hybrid: each worker's full draft, error and metadata
+  aggregator-prompt.md           # hybrid: the exact system and user prompt the aggregator got
+  aggregator-output.md           # hybrid: the aggregator's raw output, before the report was cut out
+```
+
+`run.json` is written as `running` when the task starts and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed stays `running`. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept.
+
+This is phase 1 of `docs/research-store-design.md`. The index, fetching and retrieval over the store come in later phases.
 
 To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
 
@@ -448,4 +483,5 @@ Add to `~/.claude/settings.json`:
   tasks.db-wal/-shm    # WAL sidecars; back up with `sqlite3 tasks.db ".backup <dest>"`, not cp
   scheduler.log        # Daemon log
   scheduler.pid        # Daemon PID file
+  store/runs/          # Run records (store.dir), see "Run records"
 ```

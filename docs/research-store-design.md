@@ -1,6 +1,8 @@
 # Research store: design
 
-Status: proposed, not built. Written 2026-10-02.
+Status: phase 1 built 2026-10-02 (see "Phase 1 as built" under Phases); phases
+2-7 proposed. Written 2026-10-02. "What exists today" describes the code
+before phase 1.
 
 researchguy collects evidence and then loses it. Workers' tool results live in
 process memory, one aggregator prompt reads a capped slice of them, and the
@@ -466,6 +468,60 @@ against a scratch config.
 | 7 | deep_research and bookworm write through the store | Every producer captures the same way |
 
 Phase 1 is small and independent, and it fixes the drops on its own.
+
+### Phase 1 as built
+
+Built 2026-10-02 in `e35acd6`.
+
+- **Run records.** `internal/store` writes `runs/<run_id>/` for every runner
+  task (CLI, MCP, scheduler): `run.json` (written as `running` at start,
+  rewritten as `succeeded` or `failed` with the report path, error and
+  provider metadata), `captures.jsonl` (fsynced), and for hybrid
+  `workers.jsonl` (full drafts), `aggregator-prompt.md` and
+  `aggregator-output.md`. Run IDs are a UTC timestamp plus 6 random hex
+  characters. `--json` and the MCP research tools return `run_id` and
+  `run_dir`.
+- **Stable citations.** Ledger items are numbered `E1..En` across all
+  workers, failed ones included, and that number is the capture's `seq`. The
+  aggregator and both critics see the same IDs, and the report header names
+  the run (`| Run: <id>`), so `[E12]` resolves to a line in
+  `captures.jsonl`.
+- **Claude provider.** The prompt goes on stdin and the system prompt in a
+  file (`--system-prompt-file`), in an empty temp dir that is removed
+  afterwards, with `--no-session-persistence`, an explicit `--tools` list
+  (`""` when the request has no tools) and, under the new
+  `claude.ignore_user_config` (default true), `--safe-mode` and
+  `--strict-mcp-config`. Checked against the CLI (2.1.282): Opus reports a
+  1,000,000-token `contextWindow`; a probe's context fell from 15,290 to
+  3,912 tokens with `--safe-mode`, and its reply named no CLAUDE.md; with
+  `--tools ""` a request to run `touch` via Bash created no file. The model
+  still wrote "DONE", which is the chatter the markers below exist for.
+- **Output markers.** The aggregator writes between `===BEGIN REPORT===` and
+  `===END REPORT===`. The text between them is the report, and the raw
+  output is kept in the run. Metadata `aggregator_output` records
+  `markers` (`ok`, `unterminated`, `missing`, `empty`) and the discarded
+  character count.
+
+Deviations from the plan above:
+
+- **The cap is sized to the backend, not removed.** `max_evidence_chars: 0`
+  (the new default) means ~2M chars for a claude consumer, ~500-670k tokens
+  at 3-4 chars per token, and 80k otherwise. The 2026-10-02 dives captured
+  0.83-1.01M chars, so they would pass whole. An explicit cap still applies
+  to every consumer. The critics get their own cut of the ledger when their
+  backend's budget is smaller than the aggregator's, recorded as
+  `critic_evidence_ledger`; before, they shared the aggregator's.
+- **The store dir defaults to `<config dir>/store`,** not a fixed
+  `~/.researchguy/store`, so a scratch `RESEARCHGUY_CONFIG_DIR` (tests,
+  smoke runs) never writes into the real store. A config dir that should
+  share the main store sets `store.dir` (the codex-hybrid config does).
+- **Captures are written when the workers return,** not per tool call.
+  Codex output is still buffered until the worker exits (`codex.go:73`), so
+  a worker killed mid-run loses its own results. Streaming is phase 2.
+- **No YAML frontmatter yet.** The run ID goes in the existing header line.
+  Frontmatter is item 7 under "Changes to the hybrid pipeline".
+- **Not done:** marking crashed runs `interrupted` (they stay `running`),
+  and the Codex page-open label bug. Both are phase 2.
 
 ## Decisions needed
 
