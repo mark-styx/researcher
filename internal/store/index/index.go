@@ -75,6 +75,13 @@ func Connect(ctx context.Context, dsn string) (*Index, error) {
 	return &Index{pool: pool}, nil
 }
 
+// Pool is the index's connection pool, for packages that query it
+// (internal/store/retrieve).
+func (ix *Index) Pool() *pgxpool.Pool { return ix.pool }
+
+// EmbedModel is the model SetEmbedModel named.
+func (ix *Index) EmbedModel() string { return ix.embedModel }
+
 // Close releases the pool.
 func (ix *Index) Close() {
 	if ix != nil {
