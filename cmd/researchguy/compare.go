@@ -78,6 +78,7 @@ Document comparison: use --sources to compare two existing research documents.`,
 				return printJSON(result.Fields("comparison", provider.Name()))
 			}
 			fmt.Printf("Comparison saved to: %s\n", result.FilePath)
+			printRunRecord(cmd.OutOrStdout(), result.RunDir)
 			return nil
 		},
 	}

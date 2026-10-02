@@ -433,15 +433,16 @@ hybrid:
 }
 
 func TestHybridMaxEvidenceChars_DefaultsAndOverride(t *testing.T) {
-	if got := defaults().Hybrid.MaxEvidenceChars; got != 80_000 {
-		t.Errorf("defaults() Hybrid.MaxEvidenceChars = %d, want 80000", got)
+	// 0 lets the hybrid backend size the cap to the aggregator's backend.
+	if got := defaults().Hybrid.MaxEvidenceChars; got != 0 {
+		t.Errorf("defaults() Hybrid.MaxEvidenceChars = %d, want 0", got)
 	}
 	var parsed Config
 	if err := yaml.Unmarshal([]byte(DefaultYAML), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Hybrid.MaxEvidenceChars != 80_000 {
-		t.Errorf("DefaultYAML max_evidence_chars = %d, want 80000", parsed.Hybrid.MaxEvidenceChars)
+	if parsed.Hybrid.MaxEvidenceChars != 0 {
+		t.Errorf("DefaultYAML max_evidence_chars = %d, want 0", parsed.Hybrid.MaxEvidenceChars)
 	}
 
 	dir := t.TempDir()
@@ -455,5 +456,74 @@ func TestHybridMaxEvidenceChars_DefaultsAndOverride(t *testing.T) {
 	}
 	if cfg.Hybrid.MaxEvidenceChars != 400_000 {
 		t.Errorf("loaded max_evidence_chars = %d, want 400000", cfg.Hybrid.MaxEvidenceChars)
+	}
+}
+
+func TestStoreDir_BlankResolvesUnderConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+
+	// No config file at all.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "store"); cfg.Store.Dir != want {
+		t.Errorf("store dir with no config file = %q, want %q", cfg.Store.Dir, want)
+	}
+
+	// The default YAML leaves it blank too.
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(DefaultYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "store"); cfg.Store.Dir != want {
+		t.Errorf("store dir from DefaultYAML = %q, want %q", cfg.Store.Dir, want)
+	}
+}
+
+func TestStoreDir_ExplicitIsExpanded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("store:\n  dir: ~/shared-store\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	if want := filepath.Join(home, "shared-store"); cfg.Store.Dir != want {
+		t.Errorf("store dir = %q, want %q", cfg.Store.Dir, want)
+	}
+}
+
+func TestClaudeIgnoreUserConfig_DefaultsOnAndCanBeDisabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	// A claude block that doesn't mention the key keeps the default.
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("claude:\n  model: opus\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Claude.IgnoreUserConfig {
+		t.Error("claude.ignore_user_config should default to true")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("claude:\n  ignore_user_config: false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Claude.IgnoreUserConfig {
+		t.Error("claude.ignore_user_config: false should be honored")
 	}
 }

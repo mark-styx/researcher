@@ -69,6 +69,8 @@ or --max-age to control the freshness filter.`,
 			if result.FilePath != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Answer saved to: %s\n", result.FilePath)
 			}
+			// The answer itself is on stdout, so status lines go to stderr.
+			printRunRecord(cmd.ErrOrStderr(), result.RunDir)
 
 			return nil
 		},

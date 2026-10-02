@@ -20,10 +20,21 @@ import (
 )
 
 // Evidence is one labeled piece of source material a text is checked
-// against.
+// against. ID, when set, is the stable citation key ("E12") shown ahead of
+// the label, so a report's citations resolve against the run record.
 type Evidence struct {
+	ID      string
 	Label   string
 	Content string
+}
+
+// Heading is how an evidence item is introduced in a prompt: "ID | label"
+// when it has an ID, otherwise the label.
+func (e Evidence) Heading() string {
+	if e.ID == "" {
+		return e.Label
+	}
+	return e.ID + " | " + e.Label
 }
 
 // Sentinels the critics write when they have nothing to report.
@@ -75,7 +86,7 @@ func writeEvidence(b *strings.Builder, evidence []Evidence) {
 		if strings.TrimSpace(e.Content) == "" {
 			continue
 		}
-		fmt.Fprintf(b, "\n[%s]\n", e.Label)
+		fmt.Fprintf(b, "\n[%s]\n", e.Heading())
 		b.WriteString(e.Content)
 		b.WriteString("\n")
 	}

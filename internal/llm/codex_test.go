@@ -3,12 +3,14 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/tools"
 )
 
@@ -324,8 +326,8 @@ func TestHybrid_CodexWorkersClaudeAggregator(t *testing.T) {
 
 	claudeDir := t.TempDir()
 	claudeBin := filepath.Join(claudeDir, "fake-claude")
-	// Echo the -p prompt so the test can inspect what the aggregator saw.
-	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-p\" ]; then shift; printf '%s' \"$1\" > \"" + claudeDir + "/prompt.txt\"; fi\n  shift\ndone\necho 'aggregated report'\n"
+	// Save the stdin prompt so the test can inspect what the aggregator saw.
+	script := "#!/bin/sh\ncat > \"" + claudeDir + "/prompt.txt\"\necho 'aggregated report'\n"
 	if err := os.WriteFile(claudeBin, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +348,8 @@ func TestHybrid_CodexWorkersClaudeAggregator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.Complete(context.Background(), Request{UserPrompt: "topic", Mode: "inquiry", Tools: []tools.Tool{{Name: "web_search"}}})
+	run := openRun(t)
+	got, err := p.Complete(context.Background(), Request{UserPrompt: "topic", Mode: "inquiry", Tools: []tools.Tool{{Name: "web_search"}}, Run: run})
 	if err != nil {
 		t.Fatalf("Complete() error: %v", err)
 	}
@@ -360,6 +363,18 @@ func TestHybrid_CodexWorkersClaudeAggregator(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "| codex/gpt-worker | shard: ") || !strings.Contains(prompt, "https://doi.org/10.1177/0956797619856844") {
 		t.Errorf("aggregator prompt missing codex evidence ledger entries:\n%s", prompt)
+	}
+	captures, err := store.ReadCaptures(run.Dir())
+	if err != nil || len(captures) != len(branchSets["inquiry"]) {
+		t.Fatalf("run captured %d items (%v), want one per codex worker", len(captures), err)
+	}
+	for _, c := range captures {
+		if !strings.Contains(prompt, fmt.Sprintf("[E%d | %s]", c.Seq, c.Label)) {
+			t.Errorf("capture E%d isn't in the aggregator prompt under its ID", c.Seq)
+		}
+		if !strings.Contains(c.Content, "https://doi.org/10.1177/0956797619856844") {
+			t.Errorf("capture E%d content = %q, want the codex search result", c.Seq, c.Content)
+		}
 	}
 	if args := readFile(t, filepath.Join(codexDir, "args.txt")); !strings.Contains(args, "gpt-worker") {
 		t.Errorf("codex args %q should use the hybrid worker model", args)

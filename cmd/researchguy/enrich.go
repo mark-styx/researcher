@@ -61,6 +61,7 @@ a document from the research directory.`,
 			}
 
 			fmt.Printf("Enriched document: %s\n", result.FilePath)
+			printRunRecord(cmd.OutOrStdout(), result.RunDir)
 			return nil
 		},
 	}

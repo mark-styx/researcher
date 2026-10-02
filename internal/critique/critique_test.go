@@ -168,3 +168,25 @@ func TestFlagPromptAndNotes(t *testing.T) {
 		t.Errorf("narrative only: %q", got)
 	}
 }
+
+func TestEvidenceIDsReachPromptsAndSurviveLimit(t *testing.T) {
+	ev := []Evidence{
+		{ID: "E7", Label: "codex/m | shard: s | web_search: q", Content: "0123456789"},
+		{Label: "notes.md", Content: "no id"},
+	}
+	limited := LimitEvidence(ev, 5)
+	if len(limited) != 1 || limited[0].ID != "E7" {
+		t.Fatalf("LimitEvidence = %+v, want the cut item to keep ID E7", limited)
+	}
+	for name, p := range map[string]string{
+		"groundedness": BuildGroundednessFlagPrompt("draft", ev),
+		"narrative":    BuildNarrativePrompt("draft", ev),
+	} {
+		if !strings.Contains(p, "[E7 | codex/m | shard: s | web_search: q]\n0123456789") {
+			t.Errorf("%s prompt does not lead the item with its ID: %q", name, p)
+		}
+		if !strings.Contains(p, "[notes.md]\nno id") {
+			t.Errorf("%s prompt changed an item without an ID: %q", name, p)
+		}
+	}
+}

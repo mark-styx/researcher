@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/tools"
 )
 
@@ -48,6 +49,11 @@ type Request struct {
 	// Other backends ignore them.
 	Mode        string // "" (general), "landscape", or "inquiry" — selects the epistemic branch-role set
 	BranchCount int    // number of shards to plan; <= 0 defaults to len(worker models)
+
+	// Run is the store run this call belongs to. The hybrid backend writes
+	// its captures, worker drafts and aggregator prompt and output there.
+	// nil records nothing.
+	Run *store.Run
 }
 
 // NewProvider creates an LLM provider based on config and optional overrides.
@@ -64,10 +70,11 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			model = modelOverride
 		}
 		return &Claude{
-			Binary:       cfg.Claude.Binary,
-			Model:        model,
-			MaxBudgetUSD: cfg.Claude.MaxBudgetUSD,
-			MaxTurns:     cfg.Claude.MaxTurns,
+			Binary:           cfg.Claude.Binary,
+			Model:            model,
+			MaxBudgetUSD:     cfg.Claude.MaxBudgetUSD,
+			MaxTurns:         cfg.Claude.MaxTurns,
+			IgnoreUserConfig: cfg.Claude.IgnoreUserConfig,
 		}, nil
 
 	case "ollama":

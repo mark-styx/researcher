@@ -65,6 +65,7 @@ or --max-age to control the freshness filter.`,
 				return printJSON(result.Fields("report", provider.Name()))
 			}
 			fmt.Printf("Research saved to: %s\n", result.FilePath)
+			printRunRecord(cmd.OutOrStdout(), result.RunDir)
 			return nil
 		},
 	}

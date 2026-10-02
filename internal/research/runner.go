@@ -11,6 +11,7 @@ import (
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/search"
+	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/tools"
 )
 
@@ -40,24 +41,105 @@ func NewRunnerWithUtility(cfg *config.Config, provider, utilityProvider llm.Prov
 	return &Runner{cfg: cfg, provider: provider, utilityProvider: utilityProvider}
 }
 
-// Run executes a research task and returns the result.
+// Run executes a research task and returns the result. Each task gets a run
+// record in the store (store.dir) that holds what it collected, whether or
+// not it succeeds.
 func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
+	var do func(context.Context, Task, *store.Run) (RunResult, error)
 	switch task.Type {
 	case TypeAsk:
-		return r.runAsk(ctx, task)
+		do = r.runAsk
 	case TypeDive:
-		return r.runDive(ctx, task)
+		do = r.runDive
 	case TypeWatch:
-		return r.runWatch(ctx, task)
+		do = r.runWatch
 	case TypeReview:
-		return r.runReview(ctx, task)
+		do = r.runReview
 	case TypeEnrich:
-		return r.runEnrich(ctx, task)
+		do = r.runEnrich
 	case TypeCompare:
-		return r.runCompare(ctx, task)
+		do = r.runCompare
 	default:
 		return RunResult{}, fmt.Errorf("unknown task type: %q", task.Type)
 	}
+
+	run := r.startRun(task)
+	result, err := do(ctx, task, run)
+	r.finishRun(run, result, err)
+	result.RunID = run.ID()
+	result.RunDir = run.Dir()
+	return result, err
+}
+
+// startRun opens the task's run record. A store that can't be written is
+// a warning, not a failed task: the report is still produced, and the
+// warning says its evidence isn't being kept.
+func (r *Runner) startRun(task Task) *store.Run {
+	if r.cfg.Store.Dir == "" {
+		return nil
+	}
+	s, err := store.Open(r.cfg.Store.Dir)
+	if err == nil {
+		var run *store.Run
+		run, err = s.StartRun(store.RunRecord{
+			Kind:        task.Type,
+			Topic:       task.Topic,
+			Backend:     r.provider.Name(),
+			Mode:        task.Mode,
+			BranchCount: task.BranchCount,
+			Sources:     task.Sources,
+		})
+		if err == nil {
+			return run
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Warning: no run record for this task, its evidence won't be kept: %v\n", err)
+	return nil
+}
+
+// complete runs the provider and saves a single-shot provider's raw tool
+// results to the run straight away, before a later call on the same
+// provider (the categorizer, when no utility model is set) replaces them.
+// The hybrid backend writes its own captures while it runs.
+func (r *Runner) complete(ctx context.Context, run *store.Run, req llm.Request) (string, error) {
+	resp, err := r.provider.Complete(ctx, req)
+	if ep, ok := r.provider.(llm.EvidenceProvider); ok && run != nil {
+		var captures []store.Capture
+		for i, e := range ep.Evidence() {
+			captures = append(captures, store.Capture{Seq: i + 1, Backend: r.provider.Name(), Label: e.Label, Content: e.Content})
+		}
+		if cerr := run.Capture(captures...); cerr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", cerr)
+		}
+	}
+	return resp, err
+}
+
+// finishRun closes the run record with how the task ended.
+func (r *Runner) finishRun(run *store.Run, result RunResult, runErr error) {
+	if run == nil {
+		return
+	}
+	fin := store.Finish{Status: store.StatusSucceeded, ReportPath: result.FilePath, Metadata: result.Metadata}
+	if runErr != nil {
+		fin.Status = store.StatusFailed
+		fin.Error = runErr.Error()
+		if fin.Metadata == "" {
+			fin.Metadata = r.providerMetadata()
+		}
+	}
+	if err := run.Finish(fin); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", err)
+	}
+}
+
+// runTag is the report header's run reference, so a report's [E<n>]
+// citations can be resolved against <store.dir>/runs/<id>/captures.jsonl.
+func runTag(run *store.Run) string {
+	if run == nil {
+		return ""
+	}
+	return " | Run: " + run.ID()
 }
 
 func (r *Runner) defaultTools() []tools.Tool {
@@ -67,7 +149,7 @@ func (r *Runner) defaultTools() []tools.Tool {
 	return nil
 }
 
-func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runAsk(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	// Gather research context unless --no-research
 	researchContext := ""
 	if !task.NoResearch {
@@ -77,12 +159,13 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 	// Build system prompt (with or without research context)
 	sysPrompt := AskSystemPrompt(researchContext)
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: sysPrompt,
 		UserPrompt:   task.Topic,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -102,8 +185,8 @@ func (r *Runner) runAsk(ctx context.Context, task Task) (RunResult, error) {
 	if err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, err
 	}
-	header := fmt.Sprintf("# Ask: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
-		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+	header := fmt.Sprintf("# Ask: %s\n\n*Generated: %s | Backend: %s%s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name(), runTag(run))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
@@ -138,7 +221,7 @@ func (r *Runner) gatherResearchContext(task Task) string {
 	return result.Context
 }
 
-func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runDive(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	outPath, err := r.outputPath(ctx, task, "")
 	if err != nil {
 		return RunResult{}, err
@@ -151,21 +234,22 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 		researchContext = r.gatherResearchContext(task)
 	}
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: SystemPrompt(TypeDive, researchContext),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
 
-	header := fmt.Sprintf("# %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
-		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+	header := fmt.Sprintf("# %s\n\n*Generated: %s | Backend: %s%s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name(), runTag(run))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
@@ -174,7 +258,7 @@ func (r *Runner) runDive(ctx context.Context, task Task) (RunResult, error) {
 	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
-func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runWatch(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	outPath, err := r.outputPath(ctx, task, "-watch")
 	if err != nil {
 		return RunResult{}, err
@@ -182,21 +266,22 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 
 	prompt := fmt.Sprintf("Report on the latest developments regarding: %s", task.Topic)
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: SystemPrompt(TypeWatch, ""),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
 
-	entry := fmt.Sprintf("\n\n---\n\n## Update: %s\n\n*Backend: %s*\n\n%s\n",
-		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), resp)
+	entry := fmt.Sprintf("\n\n---\n\n## Update: %s\n\n*Backend: %s%s*\n\n%s\n",
+		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), runTag(run), resp)
 
 	// Append to existing file or create new
 	f, err := os.OpenFile(outPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -214,7 +299,7 @@ func (r *Runner) runWatch(ctx context.Context, task Task) (RunResult, error) {
 	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
-func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runReview(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	outPath, err := r.outputPath(ctx, task, "-review")
 	if err != nil {
 		return RunResult{}, err
@@ -238,21 +323,22 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 		researchContext = r.gatherResearchContext(task)
 	}
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: SystemPrompt(TypeReview, researchContext),
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
 
-	header := fmt.Sprintf("# Review: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
-		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+	header := fmt.Sprintf("# Review: %s\n\n*Generated: %s | Backend: %s%s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name(), runTag(run))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)
@@ -261,7 +347,7 @@ func (r *Runner) runReview(ctx context.Context, task Task) (RunResult, error) {
 	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
-func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runEnrich(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	if len(task.Sources) == 0 {
 		return RunResult{}, fmt.Errorf("enrich requires a source document path")
 	}
@@ -274,13 +360,14 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 
 	prompt := fmt.Sprintf("Enrich and expand the following research document:\n\n%s", string(content))
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: SystemPrompt(TypeEnrich, ""),
 		UserPrompt:   prompt,
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
@@ -292,8 +379,8 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 	base := strings.TrimSuffix(filepath.Base(docPath), filepath.Ext(docPath))
 	outPath := filepath.Join(dir, base+"-enriched.md")
 
-	header := fmt.Sprintf("*Enriched: %s | Backend: %s | Source: %s*\n\n---\n\n",
-		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), filepath.Base(docPath))
+	header := fmt.Sprintf("*Enriched: %s | Backend: %s | Source: %s%s*\n\n---\n\n",
+		time.Now().Format("2006-01-02 15:04"), r.provider.Name(), filepath.Base(docPath), runTag(run))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing enriched output: %w", err)
@@ -302,7 +389,7 @@ func (r *Runner) runEnrich(ctx context.Context, task Task) (RunResult, error) {
 	return RunResult{FilePath: outPath, Response: resp, Metadata: metadata}, nil
 }
 
-func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
+func (r *Runner) runCompare(ctx context.Context, task Task, run *store.Run) (RunResult, error) {
 	outPath, err := r.outputPath(ctx, task, "-comparison")
 	if err != nil {
 		return RunResult{}, err
@@ -330,21 +417,22 @@ func (r *Runner) runCompare(ctx context.Context, task Task) (RunResult, error) {
 		researchContext = r.gatherResearchContext(task)
 	}
 
-	resp, err := r.provider.Complete(ctx, llm.Request{
+	resp, err := r.complete(ctx, run, llm.Request{
 		SystemPrompt: SystemPrompt(TypeCompare, researchContext),
 		UserPrompt:   promptBuilder.String(),
 		MaxTokens:    r.cfg.Claude.MaxTokens,
 		Tools:        r.defaultTools(),
 		Mode:         task.Mode,
 		BranchCount:  task.BranchCount,
+		Run:          run,
 	})
 	if err != nil {
 		return RunResult{}, err
 	}
 	metadata := r.providerMetadata()
 
-	header := fmt.Sprintf("# Comparison: %s\n\n*Generated: %s | Backend: %s*\n\n---\n\n",
-		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name())
+	header := fmt.Sprintf("# Comparison: %s\n\n*Generated: %s | Backend: %s%s*\n\n---\n\n",
+		task.Topic, time.Now().Format("2006-01-02 15:04"), r.provider.Name(), runTag(run))
 
 	if err := os.WriteFile(outPath, []byte(header+resp), 0644); err != nil {
 		return RunResult{Response: resp, Metadata: metadata}, fmt.Errorf("writing output: %w", err)

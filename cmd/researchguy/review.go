@@ -67,6 +67,7 @@ is set. Output is saved as markdown in the research directory.`,
 				return printJSON(result.Fields("review", provider.Name()))
 			}
 			fmt.Printf("Review saved to: %s\n", result.FilePath)
+			printRunRecord(cmd.OutOrStdout(), result.RunDir)
 			return nil
 		},
 	}

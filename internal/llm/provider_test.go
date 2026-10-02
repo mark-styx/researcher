@@ -181,10 +181,26 @@ func TestNewProvider_HybridPassesEvidenceCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := p.(*Hybrid)
-	if h.MaxEvidenceChars != 400_000 || h.evidenceCap() != 400_000 {
-		t.Errorf("MaxEvidenceChars = %d, evidenceCap() = %d, want 400000", h.MaxEvidenceChars, h.evidenceCap())
+	// An explicit cap applies to every backend.
+	for _, backend := range []string{"claude", "ollama", "codex"} {
+		if h.MaxEvidenceChars != 400_000 || h.evidenceCapFor(backend) != 400_000 {
+			t.Errorf("MaxEvidenceChars = %d, evidenceCapFor(%s) = %d, want 400000", h.MaxEvidenceChars, backend, h.evidenceCapFor(backend))
+		}
 	}
-	if got := (&Hybrid{}).evidenceCap(); got != defaultHybridEvidenceChars {
-		t.Errorf("unset cap = %d, want default %d", got, defaultHybridEvidenceChars)
+}
+
+func TestHybridEvidenceCap_UnsetIsSizedToBackend(t *testing.T) {
+	h := &Hybrid{cfg: defaultTestConfig()}
+	h.cfg.Hybrid.MaxEvidenceChars = 0
+	if got := h.evidenceCapFor("claude"); got != claudeEvidenceChars {
+		t.Errorf("claude cap = %d, want %d", got, claudeEvidenceChars)
+	}
+	for _, backend := range []string{"ollama", "codex", ""} {
+		if got := h.evidenceCapFor(backend); got != defaultHybridEvidenceChars {
+			t.Errorf("%q cap = %d, want %d", backend, got, defaultHybridEvidenceChars)
+		}
+	}
+	if got := (&Hybrid{}).evidenceCapFor("ollama"); got != defaultHybridEvidenceChars {
+		t.Errorf("no config: cap = %d, want %d", got, defaultHybridEvidenceChars)
 	}
 }

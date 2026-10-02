@@ -1,21 +1,40 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/critique"
+	"github.com/marklubin/researchguy/internal/store"
 )
 
-// defaultHybridEvidenceChars caps the evidence ledger when neither
-// Hybrid.MaxEvidenceChars nor hybrid.max_evidence_chars sets a cap.
+// defaultHybridEvidenceChars caps the evidence ledger one prompt receives
+// when no cap is set and the consumer isn't claude.
 const defaultHybridEvidenceChars = 80_000
+
+// claudeEvidenceChars is the default ledger budget for a claude aggregator
+// or critic. At 3-4 chars per token it is ~500-670k tokens, which leaves
+// room in Opus's 1M-token window for the worker drafts, research context
+// and the report. The 2026-10-02 inquiry dives captured 0.83-1.01M chars,
+// so a run like those passes whole.
+const claudeEvidenceChars = 2_000_000
+
+// The aggregator writes its report between these lines. Anything outside
+// them (status chatter, offers to save files) is kept in the run record
+// and left out of the report.
+const (
+	reportBegin = "===BEGIN REPORT==="
+	reportEnd   = "===END REPORT==="
+)
 
 type hybridWorkerOutput struct {
 	Index    int
@@ -40,9 +59,11 @@ type Hybrid struct {
 	VerifierModel      string
 	EnableVerification bool
 	MaxParallel        int
-	// MaxEvidenceChars caps the raw evidence ledger across all workers. The
-	// cap is split evenly across shards. <= 0 falls back to
-	// hybrid.max_evidence_chars, then defaultHybridEvidenceChars.
+	// MaxEvidenceChars caps how much of the raw evidence ledger one prompt
+	// receives, split evenly across shards. <= 0 falls back to
+	// hybrid.max_evidence_chars, then a default for the consumer's backend
+	// (claudeEvidenceChars or defaultHybridEvidenceChars). The full ledger
+	// goes to the run record regardless.
 	MaxEvidenceChars int
 
 	makeProvider func(backend, model string) (Provider, error)
@@ -142,24 +163,33 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 		success++
 	}
+	// Number every captured item and write it, with the worker drafts, to
+	// the run record before anything else can fail. The numbers are the
+	// [E<seq>] IDs the aggregator and critics cite.
+	assignEvidenceIDs(results)
+	st := hybridState{req: req, shards: shards, workers: results, started: started}
+	st.storeErr(recordWorkers(req.Run, results)...)
+
 	if err := unloadWorkers(ctx, results); err != nil {
 		return "", fmt.Errorf("unloading hybrid workers before aggregation: %w", err)
 	}
 	if success == 0 {
+		h.setMetadata(st.metadataJSON())
 		return "", fmt.Errorf("all hybrid workers failed: %s", strings.Join(failures, "; "))
 	}
-	// One ledger for the aggregator and both critics, so they judge the
-	// draft against the same evidence it was written from.
-	evidence, ledger := buildLedger(results, h.evidenceCap())
 
-	aggregatorBackend := normalizeAggregatorBackend(h.AggregatorBackend)
-	aggregatorModel := h.AggregatorModel
-	if strings.TrimSpace(aggregatorModel) == "" {
-		aggregatorModel = h.cfg.Claude.Model
+	st.aggBackend = normalizeAggregatorBackend(h.AggregatorBackend)
+	st.aggModel = h.AggregatorModel
+	if strings.TrimSpace(st.aggModel) == "" {
+		st.aggModel = h.cfg.Claude.Model
 	}
+	aggCap := h.evidenceCapFor(st.aggBackend)
+	evidence, ledger := buildLedger(results, aggCap)
+	st.ledger = ledger
 
-	aggregator, err := makeProvider(aggregatorBackend, aggregatorModel)
+	aggregator, err := makeProvider(st.aggBackend, st.aggModel)
 	if err != nil {
+		h.setMetadata(st.metadataJSON())
 		return "", fmt.Errorf("creating hybrid aggregator provider: %w", err)
 	}
 
@@ -168,22 +198,26 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		UserPrompt:   buildAggregationPrompt(req, results, evidence),
 		MaxTokens:    req.MaxTokens,
 	}
-	draft, err := aggregator.Complete(ctx, aggReq)
+	st.storeErr(req.Run.WriteFile("aggregator-prompt.md", promptRecord(aggReq)))
+	raw, err := aggregator.Complete(ctx, aggReq)
 	if err != nil {
 		_ = unloadProvider(ctx, aggregator)
+		h.setMetadata(st.metadataJSON())
 		return "", err
 	}
-	aggregatorMetadata := providerMetadataJSON(aggregator)
+	st.storeErr(req.Run.WriteFile("aggregator-output.md", []byte(raw)))
+	draft, output := extractReport(raw)
+	st.output = &output
+	if output.Markers != markersOK {
+		fmt.Fprintf(os.Stderr, "Warning: hybrid aggregator report markers %s; kept %d chars as the report\n", output.Markers, output.ReportChars)
+	}
+	st.aggMetadata = providerMetadataJSON(aggregator)
 	if err := unloadProvider(ctx, aggregator); err != nil {
+		h.setMetadata(st.metadataJSON())
 		return "", fmt.Errorf("unloading hybrid aggregator before verification: %w", err)
 	}
 
 	final := draft
-	verified := false
-	var groundednessFlags string
-	var narrativeFlags string
-	var groundednessVerifierMetadata json.RawMessage
-	var narrativeVerifierMetadata json.RawMessage
 	if h.shouldVerify() {
 		verifierBackend := h.VerifierBackend
 		if strings.TrimSpace(verifierBackend) == "" && h.cfg != nil {
@@ -195,7 +229,15 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			verifierModel = strings.TrimSpace(h.cfg.Hybrid.VerifierModel)
 		}
 		if verifierModel == "" {
-			verifierModel = aggregatorModel
+			verifierModel = st.aggModel
+		}
+		// The critics judge the draft against the same ledger it was
+		// written from, unless their backend has a smaller budget.
+		criticEvidence := evidence
+		if criticCap := h.evidenceCapFor(verifierBackend); criticCap != aggCap {
+			var criticLedger ledgerStats
+			criticEvidence, criticLedger = buildLedger(results, criticCap)
+			st.criticLedger = &criticLedger
 		}
 		verifier, verr := makeProvider(verifierBackend, verifierModel)
 		if verr == nil {
@@ -204,16 +246,16 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			// source of truth.
 			groundReq := Request{
 				SystemPrompt: critique.GroundednessFlagSystemPrompt(),
-				UserPrompt:   critique.BuildGroundednessFlagPrompt(draft, evidence),
+				UserPrompt:   critique.BuildGroundednessFlagPrompt(draft, criticEvidence),
 				MaxTokens:    req.MaxTokens,
 			}
 			if raw, rerr := verifier.Complete(ctx, groundReq); rerr == nil && strings.TrimSpace(raw) != "" {
-				groundednessFlags = strings.TrimSpace(raw)
-				verified = true
+				st.groundednessFlags = strings.TrimSpace(raw)
+				st.verified = true
 			} else if rerr != nil {
-				groundednessFlags = fmt.Sprintf("Groundedness verification failed: %v", rerr)
+				st.groundednessFlags = fmt.Sprintf("Groundedness verification failed: %v", rerr)
 			}
-			groundednessVerifierMetadata = providerMetadataJSON(verifier)
+			st.groundednessVerifierMetadata = providerMetadataJSON(verifier)
 
 			// Narrative-detector critic: does not rewrite the draft. It flags
 			// claims presented as settled/consensus that aren't tied to
@@ -221,26 +263,26 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 			// what the evidence shows" from "here's what's widely repeated."
 			narrReq := Request{
 				SystemPrompt: critique.NarrativeSystemPrompt(),
-				UserPrompt:   critique.BuildNarrativePrompt(final, evidence),
+				UserPrompt:   critique.BuildNarrativePrompt(final, criticEvidence),
 				MaxTokens:    req.MaxTokens,
 			}
 			if flags, nerr := verifier.Complete(ctx, narrReq); nerr == nil {
-				narrativeFlags = strings.TrimSpace(flags)
+				st.narrativeFlags = strings.TrimSpace(flags)
 			} else {
-				narrativeFlags = fmt.Sprintf("Narrative verification failed: %v", nerr)
+				st.narrativeFlags = fmt.Sprintf("Narrative verification failed: %v", nerr)
 			}
-			narrativeVerifierMetadata = providerMetadataJSON(verifier)
+			st.narrativeVerifierMetadata = providerMetadataJSON(verifier)
 			if uerr := unloadProvider(ctx, verifier); uerr != nil {
-				narrativeFlags = strings.TrimSpace(narrativeFlags + "\nVerifier unload failed: " + uerr.Error())
+				st.narrativeFlags = strings.TrimSpace(st.narrativeFlags + "\nVerifier unload failed: " + uerr.Error())
 			}
 		} else {
-			groundednessFlags = fmt.Sprintf("Verification provider failed: %v", verr)
+			st.groundednessFlags = fmt.Sprintf("Verification provider failed: %v", verr)
 		}
 	}
 
-	final = critique.AppendNotes(final, groundednessFlags, narrativeFlags)
+	final = critique.AppendNotes(final, st.groundednessFlags, st.narrativeFlags)
 
-	h.setMetadata(buildHybridMetadataJSON(req, shards, results, aggregatorBackend, aggregatorModel, aggregatorMetadata, ledger, verified, groundednessFlags, narrativeFlags, groundednessVerifierMetadata, narrativeVerifierMetadata, time.Since(started)))
+	h.setMetadata(st.metadataJSON())
 	return final, nil
 }
 
@@ -299,7 +341,9 @@ func normalizeVerifierBackend(backend string) string {
 }
 
 func aggregationSystemPrompt(base string) string {
-	suffix := "You are the final aggregator. Synthesize the worker drafts, resolve conflicts, avoid duplication, and produce one coherent answer."
+	suffix := "You are the final aggregator. Synthesize the worker drafts, resolve conflicts, avoid duplication, and produce one coherent answer.\n\n" +
+		"Write the final report, and nothing else, between a line containing only " + reportBegin + " and a line containing only " + reportEnd + ". " +
+		"Everything outside those lines is discarded, so put no notes, status updates, offers or questions there. Do not describe saving or writing files: the report text is the whole deliverable."
 	if strings.TrimSpace(base) == "" {
 		return suffix
 	}
@@ -325,15 +369,16 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evid
 		b.WriteString(w.Content)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nEvidence ledger (raw successful tool results; cite ledger labels for factual claims):\n")
+	b.WriteString("\nEvidence ledger (raw successful tool results; cite an item by its ID, e.g. [E12], for factual claims):\n")
 	if len(evidence) == 0 {
 		b.WriteString("\n(no raw tool evidence captured)\n")
 	} else {
-		for i, e := range evidence {
-			fmt.Fprintf(&b, "\n[E%d | %s]\n%s\n", i+1, e.Label, e.Content)
+		for _, e := range evidence {
+			fmt.Fprintf(&b, "\n[%s]\n%s\n", e.Heading(), e.Content)
 		}
 	}
-	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger. Mark claims without ledger support as analysis or uncertainty.")
+	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger. Mark claims without ledger support as analysis or uncertainty. ")
+	b.WriteString("Write the report between a " + reportBegin + " line and a " + reportEnd + " line.")
 	return b.String()
 }
 
@@ -493,12 +538,17 @@ func fairShares(needs []int, total int) []int {
 	return alloc
 }
 
-func (h *Hybrid) evidenceCap() int {
+// evidenceCapFor is the ledger budget for one prompt sent to backend: an
+// explicit cap if one is set, otherwise sized to the backend's context.
+func (h *Hybrid) evidenceCapFor(backend string) int {
 	if h.MaxEvidenceChars > 0 {
 		return h.MaxEvidenceChars
 	}
 	if h.cfg != nil && h.cfg.Hybrid.MaxEvidenceChars > 0 {
 		return h.cfg.Hybrid.MaxEvidenceChars
+	}
+	if backend == "claude" {
+		return claudeEvidenceChars
 	}
 	return defaultHybridEvidenceChars
 }
@@ -575,7 +625,40 @@ func (h *Hybrid) setMetadata(s string) {
 	h.lastMetadata = s
 }
 
-func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorkerOutput, aggBackend, aggModel string, aggregatorMetadata json.RawMessage, ledger ledgerStats, verified bool, groundednessFlags, narrativeFlags string, groundednessVerifierMetadata, narrativeVerifierMetadata json.RawMessage, duration time.Duration) string {
+// hybridState accumulates what one Complete call did, for its metadata.
+type hybridState struct {
+	req                          Request
+	shards                       []string
+	workers                      []hybridWorkerOutput
+	started                      time.Time
+	aggBackend                   string
+	aggModel                     string
+	aggMetadata                  json.RawMessage
+	ledger                       ledgerStats
+	criticLedger                 *ledgerStats
+	output                       *aggregatorOutput
+	verified                     bool
+	groundednessFlags            string
+	narrativeFlags               string
+	groundednessVerifierMetadata json.RawMessage
+	narrativeVerifierMetadata    json.RawMessage
+	storeErrors                  []string
+}
+
+// storeErr records failed run-record writes. They don't stop the run, but
+// they're printed and kept in the metadata, because they mean evidence
+// that should be on disk isn't.
+func (r *hybridState) storeErr(errs ...error) {
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", err)
+		r.storeErrors = append(r.storeErrors, err.Error())
+	}
+}
+
+func (r *hybridState) metadataJSON() string {
 	type workerMeta struct {
 		Backend       string          `json:"backend"`
 		Model         string          `json:"model"`
@@ -586,38 +669,44 @@ func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorke
 		LLMMetadata   json.RawMessage `json:"llm_metadata,omitempty"`
 	}
 	meta := struct {
-		Mode                         string          `json:"mode"`
-		BranchMode                   string          `json:"branch_mode,omitempty"`
-		OriginalPrompt               string          `json:"original_prompt"`
-		Shards                       []string        `json:"shards"`
-		Workers                      []workerMeta    `json:"workers"`
-		AggregatorBackend            string          `json:"aggregator_backend"`
-		AggregatorModel              string          `json:"aggregator_model"`
-		AggregatorMetadata           json.RawMessage `json:"aggregator_metadata,omitempty"`
-		EvidenceLedger               ledgerStats     `json:"evidence_ledger"`
-		Verified                     bool            `json:"verified"`
-		GroundednessFlags            string          `json:"groundedness_flags,omitempty"`
-		NarrativeFlags               string          `json:"narrative_flags,omitempty"`
-		GroundednessVerifierMetadata json.RawMessage `json:"groundedness_verifier_metadata,omitempty"`
-		NarrativeVerifierMetadata    json.RawMessage `json:"narrative_verifier_metadata,omitempty"`
-		DurationMS                   int64           `json:"duration_ms"`
+		Mode                         string            `json:"mode"`
+		BranchMode                   string            `json:"branch_mode,omitempty"`
+		OriginalPrompt               string            `json:"original_prompt"`
+		Shards                       []string          `json:"shards"`
+		Workers                      []workerMeta      `json:"workers"`
+		AggregatorBackend            string            `json:"aggregator_backend"`
+		AggregatorModel              string            `json:"aggregator_model"`
+		AggregatorMetadata           json.RawMessage   `json:"aggregator_metadata,omitempty"`
+		AggregatorOutput             *aggregatorOutput `json:"aggregator_output,omitempty"`
+		EvidenceLedger               ledgerStats       `json:"evidence_ledger"`
+		CriticEvidenceLedger         *ledgerStats      `json:"critic_evidence_ledger,omitempty"`
+		Verified                     bool              `json:"verified"`
+		GroundednessFlags            string            `json:"groundedness_flags,omitempty"`
+		NarrativeFlags               string            `json:"narrative_flags,omitempty"`
+		GroundednessVerifierMetadata json.RawMessage   `json:"groundedness_verifier_metadata,omitempty"`
+		NarrativeVerifierMetadata    json.RawMessage   `json:"narrative_verifier_metadata,omitempty"`
+		StoreErrors                  []string          `json:"store_errors,omitempty"`
+		DurationMS                   int64             `json:"duration_ms"`
 	}{
 		Mode:                         "hybrid",
-		BranchMode:                   req.Mode,
-		OriginalPrompt:               truncateForMetadata(req.UserPrompt, 2000),
-		Shards:                       shards,
-		AggregatorBackend:            aggBackend,
-		AggregatorModel:              aggModel,
-		AggregatorMetadata:           aggregatorMetadata,
-		EvidenceLedger:               ledger,
-		Verified:                     verified,
-		GroundednessFlags:            truncateForMetadata(groundednessFlags, 2000),
-		NarrativeFlags:               truncateForMetadata(narrativeFlags, 2000),
-		GroundednessVerifierMetadata: groundednessVerifierMetadata,
-		NarrativeVerifierMetadata:    narrativeVerifierMetadata,
-		DurationMS:                   duration.Milliseconds(),
+		BranchMode:                   r.req.Mode,
+		OriginalPrompt:               truncateForMetadata(r.req.UserPrompt, 2000),
+		Shards:                       r.shards,
+		AggregatorBackend:            r.aggBackend,
+		AggregatorModel:              r.aggModel,
+		AggregatorMetadata:           r.aggMetadata,
+		AggregatorOutput:             r.output,
+		EvidenceLedger:               r.ledger,
+		CriticEvidenceLedger:         r.criticLedger,
+		Verified:                     r.verified,
+		GroundednessFlags:            truncateForMetadata(r.groundednessFlags, 2000),
+		NarrativeFlags:               truncateForMetadata(r.narrativeFlags, 2000),
+		GroundednessVerifierMetadata: r.groundednessVerifierMetadata,
+		NarrativeVerifierMetadata:    r.narrativeVerifierMetadata,
+		StoreErrors:                  r.storeErrors,
+		DurationMS:                   time.Since(r.started).Milliseconds(),
 	}
-	for _, w := range workers {
+	for _, w := range r.workers {
 		m := workerMeta{
 			Backend:       w.Backend,
 			Model:         w.Model,
@@ -636,6 +725,127 @@ func buildHybridMetadataJSON(req Request, shards []string, workers []hybridWorke
 		return ""
 	}
 	return string(b)
+}
+
+// assignEvidenceIDs numbers every captured item E1..En in worker order,
+// failed workers included, so the IDs match captures.jsonl.
+func assignEvidenceIDs(workers []hybridWorkerOutput) {
+	seq := 0
+	for wi := range workers {
+		for ei := range workers[wi].Evidence {
+			seq++
+			workers[wi].Evidence[ei].ID = fmt.Sprintf("E%d", seq)
+		}
+	}
+}
+
+// recordWorkers writes every worker's captures and full draft to the run.
+// Evidence must already carry its IDs.
+func recordWorkers(run *store.Run, workers []hybridWorkerOutput) []error {
+	if run == nil {
+		return nil
+	}
+	var captures []store.Capture
+	var drafts bytes.Buffer
+	enc := json.NewEncoder(&drafts)
+	for _, w := range workers {
+		var werr string
+		if w.Err != nil {
+			werr = w.Err.Error()
+		}
+		for _, e := range w.Evidence {
+			seq, _ := strconv.Atoi(strings.TrimPrefix(e.ID, "E"))
+			captures = append(captures, store.Capture{
+				Seq:         seq,
+				Worker:      w.Index + 1,
+				Shard:       w.Shard,
+				Backend:     w.Backend,
+				Model:       w.Model,
+				WorkerError: werr,
+				Label:       e.Label,
+				Content:     e.Content,
+			})
+		}
+		_ = enc.Encode(struct {
+			Worker        int             `json:"worker"`
+			Backend       string          `json:"backend"`
+			Model         string          `json:"model"`
+			Shard         string          `json:"shard"`
+			Error         string          `json:"error,omitempty"`
+			EvidenceItems int             `json:"evidence_items"`
+			Content       string          `json:"content"`
+			Metadata      json.RawMessage `json:"metadata,omitempty"`
+		}{w.Index + 1, w.Backend, w.Model, w.Shard, werr, len(w.Evidence), w.Content, w.Metadata})
+	}
+	return []error{run.Capture(captures...), run.WriteFile("workers.jsonl", drafts.Bytes())}
+}
+
+// promptRecord is how an aggregator prompt is saved in the run record.
+func promptRecord(req Request) []byte {
+	return []byte("# System prompt\n\n" + req.SystemPrompt + "\n\n# User prompt\n\n" + req.UserPrompt + "\n")
+}
+
+const (
+	markersOK           = "ok"
+	markersUnterminated = "unterminated"
+	markersMissing      = "missing"
+	markersEmpty        = "empty"
+)
+
+// aggregatorOutput says how the report was cut out of the aggregator's raw
+// output, which the run record keeps whole.
+type aggregatorOutput struct {
+	Markers        string `json:"markers"`
+	ReportChars    int    `json:"report_chars"`
+	DiscardedChars int    `json:"discarded_chars"`
+}
+
+// extractReport returns the text between the first begin marker and the
+// last end marker after it. With no end marker it keeps everything after
+// the begin marker; with no begin marker, or nothing between the markers,
+// it keeps the whole output, so a model that ignores the contract still
+// yields a report.
+func extractReport(raw string) (string, aggregatorOutput) {
+	lines := strings.Split(raw, "\n")
+	begin, end := -1, -1
+	for i, l := range lines {
+		if isMarker(l, reportBegin) {
+			begin = i
+			break
+		}
+	}
+	if begin >= 0 {
+		for i := len(lines) - 1; i > begin; i-- {
+			if isMarker(lines[i], reportEnd) {
+				end = i
+				break
+			}
+		}
+	}
+	whole := strings.TrimSpace(raw)
+	if begin < 0 {
+		return whole, aggregatorOutput{Markers: markersMissing, ReportChars: len(whole)}
+	}
+	before := strings.TrimSpace(strings.Join(lines[:begin], "\n"))
+	var report, after string
+	status := markersOK
+	if end < 0 {
+		status = markersUnterminated
+		report = strings.TrimSpace(strings.Join(lines[begin+1:], "\n"))
+	} else {
+		report = strings.TrimSpace(strings.Join(lines[begin+1:end], "\n"))
+		after = strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
+	}
+	if report == "" {
+		return whole, aggregatorOutput{Markers: markersEmpty, ReportChars: len(whole)}
+	}
+	return report, aggregatorOutput{Markers: status, ReportChars: len(report), DiscardedChars: len(before) + len(after)}
+}
+
+// isMarker matches a marker line, tolerating markdown decoration a model
+// may add around it (bold, code, heading).
+func isMarker(line, marker string) bool {
+	return strings.Trim(line, " \t\r*`#>_") == marker
 }
 
 func truncateForMetadata(s string, max int) string {

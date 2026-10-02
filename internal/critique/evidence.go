@@ -41,7 +41,7 @@ func LimitEvidence(evidence []Evidence, maxChars int) []Evidence {
 		if content == "" {
 			break
 		}
-		out = append(out, Evidence{Label: item.Label, Content: content})
+		out = append(out, Evidence{ID: item.ID, Label: item.Label, Content: content})
 		remaining -= len(content)
 		if truncated {
 			break

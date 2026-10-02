@@ -21,6 +21,7 @@ type Config struct {
 	Grepai         GrepaiConfig    `yaml:"grepai"`
 	Ask            AskConfig       `yaml:"ask"`
 	Graph          GraphConfig     `yaml:"graph"`
+	Store          StoreConfig     `yaml:"store"`
 	// ReadRoots are extra directories researchguy_read may open besides
 	// research_dir (for example book repos searched through grepai.projects).
 	ReadRoots []string `yaml:"read_roots,omitempty"`
@@ -38,6 +39,13 @@ type GraphRollupConfig struct {
 	MaxPerCycle int  `yaml:"max_per_cycle"`
 }
 
+// StoreConfig locates the on-disk research store, where every task writes
+// a run record and the evidence it collected (internal/store). A blank Dir
+// resolves to <config dir>/store when the config is loaded.
+type StoreConfig struct {
+	Dir string `yaml:"dir"`
+}
+
 type AskConfig struct {
 	MaxAge string `yaml:"max_age"`
 }
@@ -48,6 +56,10 @@ type ClaudeConfig struct {
 	MaxTokens    int     `yaml:"max_tokens"`     // Deprecated: Claude CLI no longer supports --max-tokens.
 	MaxBudgetUSD float64 `yaml:"max_budget_usd"` // Optional max spend per call (--max-budget-usd).
 	MaxTurns     int     `yaml:"max_turns"`      // Max agentic turns for tool-using calls (--max-turns).
+	// IgnoreUserConfig runs the CLI with --safe-mode and --strict-mcp-config,
+	// so ~/.claude CLAUDE.md files, memory, hooks and MCP servers stay out of
+	// research calls. Auth is unaffected.
+	IgnoreUserConfig bool `yaml:"ignore_user_config"`
 }
 
 type OllamaConfig struct {
@@ -80,9 +92,11 @@ type HybridConfig struct {
 	VerifierModel      string   `yaml:"verifier_model"`
 	EnableVerification bool     `yaml:"enable_verification"`
 	MaxParallel        int      `yaml:"max_parallel"`
-	// MaxEvidenceChars caps the raw tool-result ledger handed to the
-	// aggregator and critics, split evenly across shards. Raise it for an
-	// aggregator with a large context window (e.g. claude).
+	// MaxEvidenceChars caps how much of the raw tool-result ledger one
+	// aggregator or critic prompt receives, split evenly across shards. The
+	// full ledger is saved to the run record either way. 0 sizes it to the
+	// backend: ~2M chars for claude (Opus has a 1M-token window), 80k
+	// otherwise. Set it for a smaller-window claude model.
 	MaxEvidenceChars int `yaml:"max_evidence_chars"`
 }
 
@@ -136,6 +150,9 @@ claude:
   model: opus
   max_tokens: 16000
   max_turns: 50
+  # Run with --safe-mode and no MCP servers, so your CLAUDE.md files, memory,
+  # hooks and MCP servers stay out of research calls. Auth is unaffected.
+  ignore_user_config: true
 
 # Ollama configuration
 ollama:
@@ -168,9 +185,10 @@ hybrid:
   verifier_model: qwen3.5:9b
   enable_verification: false
   max_parallel: 1
-  # Cap on raw tool results passed to the aggregator, split evenly across
-  # shards. Raise it for a large-context aggregator such as claude.
-  max_evidence_chars: 80000
+  # Cap on raw tool results one aggregator or critic prompt receives, split
+  # evenly across shards. The full ledger is saved to the run record either
+  # way. 0 sizes it to the backend: ~2M chars for claude, 80k otherwise.
+  max_evidence_chars: 0
 
 # Tool use (web search, web fetch)
 tools:
@@ -216,6 +234,12 @@ graph:
   rollup:
     enabled: false
     max_per_cycle: 5
+
+# Research store. Every task writes a run record and the raw evidence it
+# collected under <dir>/runs/<run_id>/. Blank means <config dir>/store.
+# Point several config dirs at one store to keep all research together.
+store:
+  dir: ""
 `
 
 func Dir() string {
@@ -251,7 +275,9 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaults(), nil
+			cfg := defaults()
+			resolveStoreDir(cfg)
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
@@ -260,8 +286,18 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
-
+	resolveStoreDir(cfg)
 	return cfg, nil
+}
+
+// resolveStoreDir fills a blank store.dir with <config dir>/store and
+// expands a leading ~/.
+func resolveStoreDir(cfg *Config) {
+	if strings.TrimSpace(cfg.Store.Dir) == "" {
+		cfg.Store.Dir = filepath.Join(Dir(), "store")
+		return
+	}
+	cfg.Store.Dir = ExpandPath(cfg.Store.Dir)
 }
 
 func defaults() *Config {
@@ -269,10 +305,11 @@ func defaults() *Config {
 		ResearchDir:    "~/sentinel/research",
 		DefaultBackend: "claude",
 		Claude: ClaudeConfig{
-			Binary:    "claude",
-			Model:     "opus",
-			MaxTokens: 16000,
-			MaxTurns:  50,
+			Binary:           "claude",
+			Model:            "opus",
+			MaxTokens:        16000,
+			MaxTurns:         50,
+			IgnoreUserConfig: true,
 		},
 		Ollama: OllamaConfig{
 			Host:          "http://localhost:11434",
@@ -296,7 +333,7 @@ func defaults() *Config {
 			VerifierModel:      "qwen3.5:9b",
 			EnableVerification: false,
 			MaxParallel:        1,
-			MaxEvidenceChars:   80_000,
+			MaxEvidenceChars:   0,
 		},
 		Tools: ToolsConfig{
 			Enabled:       true,
