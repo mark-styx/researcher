@@ -120,6 +120,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(scheduleCmd())
 	root.AddCommand(daemonCmd())
 	root.AddCommand(migrateCmd())
+	root.AddCommand(storeCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(mcpCmd())
