@@ -223,16 +223,19 @@ raw and 8.5 KB text; PDF 1.1 MB raw and 77 KB text. The whole set took 52 s,
 The fetcher therefore needs a scholarly path, because the blocked sources are
 mostly the papers reports lean on. For the 92 unusable URLs with a DOI,
 OpenAlex (`api.openalex.org/works/doi:<doi>`, no key) returned metadata and a
-publication date for all 92 and an abstract for 88. Its open-access
-locations were a poor rescue: 50 had one, and only 6 yielded usable text,
-because most point back to the same blocking publishers. None of the 92
-had a PMC ID. So for DOI sources the fetcher:
+publication date for all 92 and an abstract for 88. Its single "best"
+open-access location was a poor rescue: 50 had one, and only 6 yielded
+usable text, because most point back to the same blocking publishers.
+Repository copies did better: 37 of the 92 listed an open-access copy in a
+repository (PubMed Central, university repositories, Figshare), and 20 of
+those yielded usable text. So for DOI sources the fetcher:
 
 - resolves the DOI through OpenAlex for title, authors, venue and
   `publication_date` (`published_from = openalex`, precision from the date);
 - stores the abstract as a document with `content_kind = abstract`;
-- tries the publisher page, then the open-access location, then PMC or
-  arXiv when IDs exist, and stores full text when one works.
+- tries the publisher page, then every repository location OpenAlex
+  lists, then the remaining open-access locations, and stores full text when
+  one works. That still leaves ~70 of the 92 abstract-only.
 
 Claims and quotes on an abstract-only source are labeled abstract-only. A
 quote the citation check can't find in an abstract-only or snippet-only
