@@ -197,6 +197,9 @@ func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, f
 	if err := ix.ingestFetches(ctx, tx, snap, &stats); err != nil {
 		return stats, fmt.Errorf("writing fetches for run %s: %w", rec.ID, err)
 	}
+	if err := ix.ingestReport(ctx, tx, snap, &stats); err != nil {
+		return stats, fmt.Errorf("writing the report of run %s: %w", rec.ID, err)
+	}
 	return stats, nil
 }
 

@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -490,5 +492,80 @@ func TestPublishedCols(t *testing.T) {
 	at, precision, from, weak := publishedCols(&store.Published{Date: "2024-05", Precision: "month", From: "x", Weak: true})
 	if at.(time.Time).Format("2006-01-02") != "2024-05-01" || precision != "month" || from != "x" || !weak {
 		t.Errorf("publishedCols = %v %v %v %v", at, precision, from, weak)
+	}
+}
+
+// reportRun is a finished run whose report the store holds.
+func reportRun(t *testing.T, st *store.Store, report string) *store.Run {
+	t.Helper()
+	run, err := st.StartRun(store.RunRecord{Kind: "dive", Topic: "go generics", Backend: "hybrid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "report.md")
+	if err := os.WriteFile(path, []byte(report), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Finish(store.Finish{Status: store.StatusSucceeded, ReportPath: path}); err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+func TestIngestRun_ReportIsASynthesisDocument(t *testing.T) {
+	ix, _ := openIndex(t)
+	ctx := context.Background()
+	st := newStore(t)
+	run := reportRun(t, st, "# Go generics\n\nGo 1.18 added type parameters [E1].")
+	stats, err := ix.IngestRun(ctx, run.Dir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Documents != 1 || stats.Passages != 1 {
+		t.Errorf("stats = %+v, want the report's document and passage", stats)
+	}
+	var origin, kind, domain, url, from string
+	var docID int64
+	var published time.Time
+	err = ix.pool.QueryRow(ctx, `SELECT d.id, d.origin, s.kind, s.domain, s.url, d.published_from, d.published_at
+		FROM runs r JOIN documents d ON d.id = r.report_document_id JOIN sources s ON s.id = d.source_id WHERE r.id = $1`, run.ID()).
+		Scan(&docID, &origin, &kind, &domain, &url, &from, &published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := run.Record()
+	if origin != "synthesis" || kind != "report" || domain != "researchguy" || url != ReportKey(run.ID()) || from != "run" ||
+		docID != DocumentID(ReportKey(run.ID()), rec.ReportSHA256) || published.Format(time.DateOnly) != rec.FinishedAt.Format(time.DateOnly) {
+		t.Errorf("report document = %d %s %s %s %s %s %s", docID, origin, kind, domain, url, from, published)
+	}
+
+	// Forced re-ingest and a rebuild find the same document.
+	again, err := ix.IngestRun(ctx, run.Dir(), true)
+	if err != nil || again.Documents != 0 || again.Passages != 0 {
+		t.Errorf("re-ingest = %+v, %v", again, err)
+	}
+	if _, err := ix.Rebuild(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	var rebuilt int64
+	ix.pool.QueryRow(ctx, `SELECT report_document_id FROM runs WHERE id = $1`, run.ID()).Scan(&rebuilt)
+	if rebuilt != docID {
+		t.Errorf("after rebuild the run points at %d, want %d", rebuilt, docID)
+	}
+
+	// A report whose text left the store points at nothing.
+	gone := reportRun(t, st, "# Another\n\nText.")
+	sha := gone.Record().ReportSHA256
+	if err := os.Remove(filepath.Join(st.Dir(), "text", "sha256", sha[:2], sha+".txt")); err != nil {
+		t.Fatal(err)
+	}
+	stats, err = ix.IngestRun(ctx, gone.Dir(), false)
+	if err != nil || stats.MissingTexts != 1 {
+		t.Errorf("missing report text = %+v, %v", stats, err)
+	}
+	var none *int64
+	ix.pool.QueryRow(ctx, `SELECT report_document_id FROM runs WHERE id = $1`, gone.ID()).Scan(&none)
+	if none != nil {
+		t.Errorf("run without its report text points at %d", *none)
 	}
 }

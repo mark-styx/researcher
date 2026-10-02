@@ -48,7 +48,7 @@ func sampleRun(t *testing.T, st *store.Store) *store.Run {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := run.Finish(store.Finish{Status: store.StatusSucceeded, ReportPath: "/r/report.md", Metadata: `{"mode":"inquiry"}`}); err != nil {
+	if err := run.Finish(store.Finish{Status: store.StatusSucceeded, Metadata: `{"mode":"inquiry"}`}); err != nil {
 		t.Fatal(err)
 	}
 	return run

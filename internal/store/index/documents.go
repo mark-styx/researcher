@@ -230,23 +230,85 @@ func (ix *Index) ingestFetches(ctx context.Context, tx pgx.Tx, snap snapshot, st
 			stats.MissingTexts++
 			continue
 		}
-		for _, p := range store.Passages(text) {
-			sha := store.HashText(p.Text)
-			var vec, model any
-			if ix.embedModel != "" {
-				if v, ok, err := snap.store.ReadVector(ix.embedModel, sha); err == nil && ok && len(v) == Dims {
-					vec, model = pgvector.NewVector(v), ix.embedModel
-					stats.Embedded++
-				}
-			}
-			q = append(q, queued{`
-				INSERT INTO passages (id, document_id, ord, char_start, char_end, text, text_sha256, embedding, embed_model)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-				ON CONFLICT (id) DO NOTHING`,
-				[]any{PassageID(id, p.Start, p.End), id, p.Ord, p.Start, p.End, p.Text, sha, vec, model}})
-			stats.Passages++
-		}
+		q = append(q, ix.passageRows(snap.store, id, text, stats)...)
 	}
+	return sendAll(ctx, tx, q)
+}
+
+// passageRows splits a document's text into passage inserts, with cached
+// vectors for the embed model attached.
+func (ix *Index) passageRows(st *store.Store, docID int64, text string, stats *RunStats) []queued {
+	var q []queued
+	for _, p := range store.Passages(text) {
+		sha := store.HashText(p.Text)
+		var vec, model any
+		if ix.embedModel != "" {
+			if v, ok, err := st.ReadVector(ix.embedModel, sha); err == nil && ok && len(v) == Dims {
+				vec, model = pgvector.NewVector(v), ix.embedModel
+				stats.Embedded++
+			}
+		}
+		q = append(q, queued{`
+			INSERT INTO passages (id, document_id, ord, char_start, char_end, text, text_sha256, embedding, embed_model)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (id) DO NOTHING`,
+			[]any{PassageID(docID, p.Start, p.End), docID, p.Ord, p.Start, p.End, p.Text, sha, vec, model}})
+		stats.Passages++
+	}
+	return q
+}
+
+// ReportKey is the url_key of run id's report as a source.
+func ReportKey(runID string) string { return "researchguy:run/" + runID }
+
+// ingestReport indexes a run's report as a synthesis document of a source
+// of its own (domain researchguy, kind report), so find can return it
+// labeled as synthesis, and points the run at it. A run without a stored
+// report section points at nothing.
+func (ix *Index) ingestReport(ctx context.Context, tx pgx.Tx, snap snapshot, stats *RunStats) error {
+	rec := snap.rec
+	if rec.ReportSHA256 == "" {
+		_, err := tx.Exec(ctx, `UPDATE runs SET report_document_id = NULL WHERE id = $1`, rec.ID)
+		return err
+	}
+	text, err := snap.store.ReadText(rec.ReportSHA256)
+	if err != nil {
+		stats.MissingTexts++
+		_, err := tx.Exec(ctx, `UPDATE runs SET report_document_id = NULL WHERE id = $1`, rec.ID)
+		return err
+	}
+	key := ReportKey(rec.ID)
+	srcID, docID := SourceID(key), DocumentID(key, rec.ReportSHA256)
+	written := rec.StartedAt
+	if rec.FinishedAt != nil {
+		written = *rec.FinishedAt
+	}
+	written = written.UTC()
+	var split bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM passages WHERE document_id = $1)`, docID).Scan(&split); err != nil {
+		return err
+	}
+	var isNew bool
+	if err := tx.QueryRow(ctx, `SELECT NOT EXISTS (SELECT 1 FROM documents WHERE id = $1)`, docID).Scan(&isNew); err != nil {
+		return err
+	}
+	q := []queued{{`
+		INSERT INTO sources (id, url_key, url, domain, title, kind, first_seen_at, last_seen_at)
+		VALUES ($1, $2, $2, 'researchguy', $3, 'report', $4, $4)
+		ON CONFLICT (url_key) DO UPDATE SET title = EXCLUDED.title`,
+		[]any{srcID, key, rec.Topic, written}}, {`
+		INSERT INTO documents (id, source_id, sha256, content_kind, origin, content_type, title, text_chars,
+			first_fetched_at, last_fetched_at, published_at, published_precision, published_from)
+		VALUES ($1, $2, $3, 'full', 'synthesis', 'text/markdown', $4, $5, $6, $6, $7, 'day', 'run')
+		ON CONFLICT (id) DO NOTHING`,
+		[]any{docID, srcID, rec.ReportSHA256, rec.Topic, len([]rune(text)), written, written.Truncate(24 * time.Hour)}}}
+	if isNew {
+		stats.Documents++
+	}
+	if !split {
+		q = append(q, ix.passageRows(snap.store, docID, text, stats)...)
+	}
+	q = append(q, queued{`UPDATE runs SET report_document_id = $2 WHERE id = $1`, []any{rec.ID, docID}})
 	return sendAll(ctx, tx, q)
 }
 

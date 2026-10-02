@@ -366,8 +366,14 @@ func TestRun_FetchesIndexesAndEmbedsSources(t *testing.T) {
 	defer ix.Close()
 	ix.SetEmbedModel("nomic-embed-text")
 	c, _ := ix.Counts(context.Background())
-	if c.Fetches != 3 || c.Documents != 2 || c.Passages < 2 || c.Unembedded != 0 {
-		t.Errorf("counts = %+v; want both documents split and embedded", c)
+	// The two fetched documents and the run's report.
+	if c.Fetches != 3 || c.Documents != 3 || c.Passages < 3 || c.Unembedded != 0 {
+		t.Errorf("counts = %+v; want both documents and the report split and embedded", c)
+	}
+	var origin string
+	if err := ix.Pool().QueryRow(context.Background(), `SELECT d.origin FROM runs r JOIN documents d ON d.id = r.report_document_id WHERE r.id = $1`,
+		filepath.Base(res.RunDir)).Scan(&origin); err != nil || origin != "synthesis" {
+		t.Errorf("report document origin = %q, %v", origin, err)
 	}
 	if embeds.Load() == 0 {
 		t.Error("the embedding model was never called")
@@ -435,7 +441,7 @@ func TestRun_EmbeddingDownWarnsAndKeepsIndex(t *testing.T) {
 	}
 	defer ix.Close()
 	ix.SetEmbedModel("nomic-embed-text")
-	if c, _ := ix.Counts(context.Background()); c.Documents != 1 || c.Passages == 0 || c.Unembedded != c.Passages {
-		t.Errorf("counts = %+v; want the document indexed and its passages left for store embed", c)
+	if c, _ := ix.Counts(context.Background()); c.Documents != 2 || c.Passages == 0 || c.Unembedded != c.Passages {
+		t.Errorf("counts = %+v; want the document and the report indexed and their passages left for store embed", c)
 	}
 }
