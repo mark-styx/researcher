@@ -33,7 +33,8 @@ var ErrNoDatabase = errors.New("index database does not exist; run `researchguy 
 
 // Index is an open connection pool to the index database.
 type Index struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	embedModel string
 }
 
 // Open connects to dsn and applies any pending migrations.

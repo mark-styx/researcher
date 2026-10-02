@@ -68,7 +68,7 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 		return stats, err
 	}
 	err = pgx.BeginFunc(ctx, ix.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `TRUNCATE sightings, captures, sources, runs`); err != nil {
+		if _, err := tx.Exec(ctx, `TRUNCATE passages, fetches, documents, sightings, captures, sources, runs`); err != nil {
 			return fmt.Errorf("emptying index: %w", err)
 		}
 		for _, id := range ids {
@@ -81,7 +81,7 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 				stats.Failed[id] = err.Error()
 				continue
 			}
-			rs, err := ingestSnapshot(ctx, tx, snap, true)
+			rs, err := ix.ingestSnapshot(ctx, tx, snap, true)
 			if err != nil {
 				return err
 			}
@@ -96,23 +96,27 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 }
 
 // Pending lists the runs in st that the index doesn't have, or has as they
-// were before their record or capture log last changed, and how many runs
+// were before their record, capture log or fetch log last changed, and how many runs
 // with a record the store holds. Run dirs without a run.json are skipped;
 // store.Check reports them.
 func (ix *Index) Pending(ctx context.Context, st *store.Store) ([]string, int, error) {
-	indexed := map[string][2]any{}
-	rows, err := ix.pool.Query(ctx, `SELECT id, record_sha256, capture_bytes FROM runs`)
+	type ingested struct {
+		sha               string
+		captures, fetches int64
+	}
+	indexed := map[string]ingested{}
+	rows, err := ix.pool.Query(ctx, `SELECT id, record_sha256, capture_bytes, fetch_bytes FROM runs`)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing indexed runs: %w", err)
 	}
 	for rows.Next() {
-		var id, sha string
-		var size int64
-		if err := rows.Scan(&id, &sha, &size); err != nil {
+		var id string
+		var got ingested
+		if err := rows.Scan(&id, &got.sha, &got.captures, &got.fetches); err != nil {
 			rows.Close()
 			return nil, 0, err
 		}
-		indexed[id] = [2]any{sha, size}
+		indexed[id] = got
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -138,19 +142,24 @@ func (ix *Index) Pending(ctx context.Context, st *store.Store) ([]string, int, e
 			size = info.Size()
 		}
 		got, ok := indexed[id]
-		if !ok || got[0] != hex.EncodeToString(sum[:]) || got[1] != size {
+		if !ok || got.sha != hex.EncodeToString(sum[:]) || got.captures != size || got.fetches != store.FetchSize(dir) {
 			pending = append(pending, id)
 		}
 	}
 	return pending, total, nil
 }
 
-// Counts is how many rows each index table holds.
+// Counts is how many rows each index table holds. Unembedded counts
+// passages without a vector from the configured model.
 type Counts struct {
-	Runs      int64 `json:"runs"`
-	Captures  int64 `json:"captures"`
-	Sources   int64 `json:"sources"`
-	Sightings int64 `json:"sightings"`
+	Runs       int64 `json:"runs"`
+	Captures   int64 `json:"captures"`
+	Sources    int64 `json:"sources"`
+	Sightings  int64 `json:"sightings"`
+	Fetches    int64 `json:"fetches"`
+	Documents  int64 `json:"documents"`
+	Passages   int64 `json:"passages"`
+	Unembedded int64 `json:"unembedded"`
 }
 
 // Counts counts the index's rows.
@@ -158,7 +167,10 @@ func (ix *Index) Counts(ctx context.Context) (Counts, error) {
 	var c Counts
 	err := ix.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM runs), (SELECT count(*) FROM captures),
-		(SELECT count(*) FROM sources), (SELECT count(*) FROM sightings)`).
-		Scan(&c.Runs, &c.Captures, &c.Sources, &c.Sightings)
+		(SELECT count(*) FROM sources), (SELECT count(*) FROM sightings),
+		(SELECT count(*) FROM fetches), (SELECT count(*) FROM documents),
+		(SELECT count(*) FROM passages),
+		(SELECT count(*) FROM passages WHERE `+unembedded+`)`, ix.embedModel).
+		Scan(&c.Runs, &c.Captures, &c.Sources, &c.Sightings, &c.Fetches, &c.Documents, &c.Passages, &c.Unembedded)
 	return c, err
 }

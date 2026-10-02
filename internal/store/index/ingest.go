@@ -33,6 +33,14 @@ type RunStats struct {
 	BadURLs  int   `json:"bad_urls,omitempty"`
 	BadLines []int `json:"bad_lines,omitempty"`
 	Partial  bool  `json:"partial,omitempty"`
+	// Fetches are fetch log records; Documents and Passages count those
+	// new to the index, Embedded the new passages whose vector was cached.
+	Fetches       int   `json:"fetches"`
+	Documents     int   `json:"documents"`
+	Passages      int   `json:"passages"`
+	Embedded      int   `json:"embedded"`
+	FetchBadLines []int `json:"fetch_bad_lines,omitempty"`
+	MissingTexts  int   `json:"missing_texts,omitempty"`
 }
 
 // snapshot is a run directory as read for ingest.
@@ -40,6 +48,8 @@ type snapshot struct {
 	rec       store.RunRecord
 	recordSHA string
 	log       store.CaptureLog
+	fetches   store.FetchLogScan
+	store     *store.Store
 }
 
 func readSnapshot(dir string) (snapshot, error) {
@@ -59,12 +69,18 @@ func readSnapshot(dir string) (snapshot, error) {
 	if snap.log, err = store.ScanCaptures(dir); err != nil {
 		return snapshot{}, err
 	}
+	if snap.fetches, err = store.ScanFetches(dir); err != nil {
+		return snapshot{}, err
+	}
+	snap.store = store.OfRunDir(dir)
 	return snap, nil
 }
 
 // IngestRun indexes one run directory. Ingest is idempotent: captures and
-// sightings are keyed by (run, seq), and a run whose record and capture log
-// haven't changed since it was last ingested is skipped unless force is set.
+// sightings are keyed by (run, seq), fetches by (run, seq), documents by
+// source and text, and a run whose record, capture log and fetch log
+// haven't changed since it was last ingested is skipped unless force is
+// set.
 func (ix *Index) IngestRun(ctx context.Context, dir string, force bool) (RunStats, error) {
 	snap, err := readSnapshot(dir)
 	if err != nil {
@@ -73,15 +89,16 @@ func (ix *Index) IngestRun(ctx context.Context, dir string, force bool) (RunStat
 	var stats RunStats
 	err = pgx.BeginFunc(ctx, ix.pool, func(tx pgx.Tx) error {
 		var e error
-		stats, e = ingestSnapshot(ctx, tx, snap, force)
+		stats, e = ix.ingestSnapshot(ctx, tx, snap, force)
 		return e
 	})
 	return stats, err
 }
 
-func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (RunStats, error) {
+func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (RunStats, error) {
 	rec := snap.rec
-	stats := RunStats{RunID: rec.ID, Captures: len(snap.log.Captures), BadLines: snap.log.BadLines, Partial: snap.log.Partial}
+	stats := RunStats{RunID: rec.ID, Captures: len(snap.log.Captures), BadLines: snap.log.BadLines, Partial: snap.log.Partial,
+		Fetches: len(snap.fetches.Records), FetchBadLines: snap.fetches.BadLines}
 
 	// Two processes ingesting one run (the runner when it finishes and the
 	// daemon catching up) take turns.
@@ -90,9 +107,9 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 	}
 	if !force {
 		var sha string
-		var size int64
-		err := tx.QueryRow(ctx, `SELECT record_sha256, capture_bytes FROM runs WHERE id = $1`, rec.ID).Scan(&sha, &size)
-		if err == nil && sha == snap.recordSHA && size == snap.log.Size {
+		var size, fetchSize int64
+		err := tx.QueryRow(ctx, `SELECT record_sha256, capture_bytes, fetch_bytes FROM runs WHERE id = $1`, rec.ID).Scan(&sha, &size, &fetchSize)
+		if err == nil && sha == snap.recordSHA && size == snap.log.Size && fetchSize == snap.fetches.Size {
 			stats.Skipped = true
 			return stats, nil
 		}
@@ -107,8 +124,8 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO runs (id, kind, topic, mode, backend, branch_count, status, error,
-			started_at, finished_at, report_path, meta, record_sha256, capture_bytes, ingested_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, now())
+			started_at, finished_at, report_path, meta, record_sha256, capture_bytes, fetch_bytes, ingested_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, now())
 		ON CONFLICT (id) DO UPDATE SET
 			kind = EXCLUDED.kind, topic = EXCLUDED.topic, mode = EXCLUDED.mode,
 			backend = EXCLUDED.backend, branch_count = EXCLUDED.branch_count,
@@ -116,9 +133,9 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 			started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at,
 			report_path = EXCLUDED.report_path, meta = EXCLUDED.meta,
 			record_sha256 = EXCLUDED.record_sha256, capture_bytes = EXCLUDED.capture_bytes,
-			ingested_at = EXCLUDED.ingested_at`,
+			fetch_bytes = EXCLUDED.fetch_bytes, ingested_at = EXCLUDED.ingested_at`,
 		rec.ID, rec.Kind, rec.Topic, rec.Mode, rec.Backend, rec.BranchCount, rec.Status, rec.Error,
-		rec.StartedAt, rec.FinishedAt, rec.ReportPath, meta, snap.recordSHA, snap.log.Size,
+		rec.StartedAt, rec.FinishedAt, rec.ReportPath, meta, snap.recordSHA, snap.log.Size, snap.fetches.Size,
 	); err != nil {
 		return stats, fmt.Errorf("writing run %s: %w", rec.ID, err)
 	}
@@ -142,6 +159,7 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 	}
 
 	sources, sightings, bad := sightingsOf(snap.log.Captures)
+	addFetchSources(sources, snap.fetches.Records)
 	stats.BadURLs = bad
 	stats.Sources = len(sources)
 	stats.Sightings = len(sightings)
@@ -156,14 +174,15 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 	for _, k := range keys {
 		s := sources[k]
 		q = append(q, queued{`
-			INSERT INTO sources (id, url_key, url, domain, title, doi, first_seen_at, last_seen_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO sources (id, url_key, url, domain, title, kind, doi, first_seen_at, last_seen_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT (url_key) DO UPDATE SET
 				title = CASE WHEN sources.title = '' THEN EXCLUDED.title ELSE sources.title END,
+				kind = CASE WHEN sources.kind = 'web' THEN EXCLUDED.kind ELSE sources.kind END,
 				doi = COALESCE(sources.doi, EXCLUDED.doi),
 				first_seen_at = LEAST(sources.first_seen_at, EXCLUDED.first_seen_at),
 				last_seen_at = GREATEST(sources.last_seen_at, EXCLUDED.last_seen_at)`,
-			[]any{SourceID(k), k, s.url, s.domain, s.title, s.doi, s.first, s.last}})
+			[]any{SourceID(k), k, s.url, s.domain, s.title, sourceKind(k, s.doi), s.doi, s.first, s.last}})
 	}
 	for _, s := range sightings {
 		q = append(q, queued{`
@@ -174,6 +193,9 @@ func ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, force bool) (
 	}
 	if err := sendAll(ctx, tx, q); err != nil {
 		return stats, fmt.Errorf("writing sources for run %s: %w", rec.ID, err)
+	}
+	if err := ix.ingestFetches(ctx, tx, snap, &stats); err != nil {
+		return stats, fmt.Errorf("writing fetches for run %s: %w", rec.ID, err)
 	}
 	return stats, nil
 }
