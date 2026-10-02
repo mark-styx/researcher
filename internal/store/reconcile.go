@@ -106,3 +106,9 @@ func lastModified(dir string) time.Time {
 	}
 	return newest.UTC()
 }
+
+// OfRunDir is the store holding the run directory dir
+// (<store.dir>/runs/<id>).
+func OfRunDir(dir string) *Store {
+	return &Store{dir: filepath.Dir(filepath.Dir(filepath.Clean(dir)))}
+}

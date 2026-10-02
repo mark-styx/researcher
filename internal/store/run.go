@@ -277,13 +277,17 @@ func (r *Run) appendLines(buf []byte) (int, error) {
 
 var runFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// reservedFiles are the run files the store writes itself.
+var reservedFiles = []string{recordFile, captureFile, fetchFile, fetchSummaryFile, fetchLockFile}
+
 // WriteFile atomically writes a file in the run directory. name is a plain
-// file name; run.json and captures.jsonl are reserved.
+// file name; the store's own files (run.json, captures.jsonl, the fetch
+// log) are reserved.
 func (r *Run) WriteFile(name string, data []byte) error {
 	if r == nil {
 		return nil
 	}
-	if !runFileName.MatchString(name) || name == recordFile || name == captureFile {
+	if !runFileName.MatchString(name) || slices.Contains(reservedFiles, name) {
 		return fmt.Errorf("invalid run file name %q", name)
 	}
 	r.mu.Lock()
