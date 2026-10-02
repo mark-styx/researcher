@@ -36,6 +36,12 @@ type Retriever struct {
 	// Now is the clock age labels and recency weighting use; nil is
 	// time.Now.
 	Now func() time.Time
+	// VolatileMaxAge is how old a volatile claim's date can be before it's
+	// flagged possibly outdated (default 30 days). VolatileHalfLife is the
+	// recency weighting volatile claims get when a query sets none
+	// (default a year).
+	VolatileMaxAge   time.Duration
+	VolatileHalfLife time.Duration
 }
 
 func (r *Retriever) now() time.Time {
@@ -49,6 +55,9 @@ func (r *Retriever) now() time.Time {
 const (
 	KindPassage = "passage" // from a fetched document: primary evidence
 	KindReport  = "report"  // from a research report: synthesis, never primary evidence
+	// KindClaim is one checkable assertion extracted from a fetched
+	// document, with the words in the document that state it.
+	KindClaim = "claim"
 )
 
 // Date fields a query can filter on.
@@ -60,7 +69,7 @@ const (
 // Query is a find request. Only Text is required.
 type Query struct {
 	Text  string   `json:"query"`
-	Kinds []string `json:"kinds,omitempty"` // KindPassage, KindReport; empty is both
+	Kinds []string `json:"kinds,omitempty"` // KindPassage, KindReport, KindClaim; empty is all three
 	// Since and Until bound DateField (default published). A published
 	// bound leaves out undated documents.
 	Since     *time.Time `json:"since,omitempty"`
@@ -73,7 +82,8 @@ type Query struct {
 	AsOf *time.Time `json:"as_of,omitempty"`
 	// PreferRecent halves a card's score every PreferRecent of age (from
 	// its published date, else its collection date). Zero is off: an old
-	// primary source isn't worse evidence for being old.
+	// primary source isn't worse evidence for being old. Volatile claims
+	// get Retriever.VolatileHalfLife when it's zero.
 	PreferRecent time.Duration `json:"prefer_recent,omitempty"`
 	// MinSimilarity drops vector matches less similar than this (cosine,
 	// 0-1). Zero keeps the nearest whatever their distance, so a query
@@ -93,9 +103,26 @@ type Date struct {
 
 // Card is one ranked piece of evidence.
 type Card struct {
-	// Ref is what a report cites for this passage: P:<passage id>.
-	Ref         string    `json:"ref"`
-	Kind        string    `json:"kind"`
+	// Ref is what a report cites: P:<passage id>, or C:<claim id> for a
+	// claim.
+	Ref  string `json:"ref"`
+	Kind string `json:"kind"`
+	// A claim's id, what it says (Text), whether its quote was found in the
+	// document and the quote as the document has it. A claim whose quote
+	// wasn't found has no Quote and is never shown as quoted.
+	ClaimID       int64  `json:"claim_id,omitempty"`
+	QuoteVerified bool   `json:"quote_verified,omitempty"`
+	Quote         string `json:"quote,omitempty"`
+	// AsOf is when the document says the claim is true as of; Volatile is
+	// a claim whose truth changes with time.
+	AsOf     string `json:"as_of,omitempty"`
+	Volatile bool   `json:"volatile,omitempty"`
+	// Flags and Cluster say how other claims bear on a claim (see
+	// Cluster).
+	Flags   []string `json:"flags,omitempty"`
+	Cluster *Cluster `json:"cluster,omitempty"`
+	// PassageID is the passage, or for a claim the passage its quote
+	// starts in (0 when none).
 	PassageID   int64     `json:"passage_id"`
 	DocumentID  int64     `json:"document_id"`
 	SourceID    int64     `json:"source_id"`
@@ -195,56 +222,85 @@ func (r *Retriever) Find(ctx context.Context, q Query) (Result, error) {
 	}
 
 	k := max(limit*5, 50)
-	type ranked struct {
-		text, vector int
-		similarity   float64
-	}
-	ranks := map[int64]*ranked{}
+	wantPassages, wantClaims, origin := q.arms()
+	ranks := map[int64]*ranked{}      // passages
+	claimRanks := map[int64]*ranked{} // claims
 	err := pgx.BeginTxFunc(ctx, r.Index.Pool(), pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		ids, err := r.textArm(ctx, tx, q, k)
-		if err != nil {
-			return fmt.Errorf("full-text search: %w", err)
-		}
-		for i, id := range ids {
-			ranks[id] = &ranked{text: i + 1}
-		}
-		if vec == nil {
-			return nil
-		}
-		hits, err := r.vectorArm(ctx, tx, q, vec, res.EmbedModel, k)
-		if err != nil {
-			return fmt.Errorf("vector search: %w", err)
-		}
-		for i, h := range hits {
-			if h.similarity < q.MinSimilarity {
-				break
+		if vec != nil {
+			if _, err := tx.Exec(ctx, `SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true), set_config('hnsw.ef_search', $1, true)`,
+				strconv.Itoa(max(k, 100))); err != nil {
+				return err
 			}
-			if ranks[h.id] == nil {
-				ranks[h.id] = &ranked{}
+		}
+		arms := []struct {
+			want   bool
+			table  string
+			joins  string
+			where  string
+			origin string
+			into   map[int64]*ranked
+		}{
+			{wantPassages, "p", passageJoins, "", origin, ranks},
+			{wantClaims, "c", claimJoins, "c.quote_verified AND ", "", claimRanks},
+		}
+		for _, arm := range arms {
+			if !arm.want {
+				continue
 			}
-			ranks[h.id].vector, ranks[h.id].similarity = i+1, h.similarity
+			ids, err := textArm(ctx, tx, q, arm.table, arm.joins, arm.where, arm.origin, k)
+			if err != nil {
+				return fmt.Errorf("full-text search: %w", err)
+			}
+			for i, id := range ids {
+				arm.into[id] = &ranked{text: i + 1}
+			}
+			if vec == nil {
+				continue
+			}
+			hits, err := vectorArm(ctx, tx, q, arm.table, arm.joins, arm.where, arm.origin, vec, res.EmbedModel, k)
+			if err != nil {
+				return fmt.Errorf("vector search: %w", err)
+			}
+			for i, h := range hits {
+				if h.similarity < q.MinSimilarity {
+					break
+				}
+				if arm.into[h.id] == nil {
+					arm.into[h.id] = &ranked{}
+				}
+				arm.into[h.id].vector, arm.into[h.id].similarity = i+1, h.similarity
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		return res, err
 	}
-	if len(ranks) == 0 {
+	if len(ranks)+len(claimRanks) == 0 {
 		res.TookMS = time.Since(started).Milliseconds()
 		return res, nil
 	}
-	ids := make([]int64, 0, len(ranks))
-	for id := range ranks {
-		ids = append(ids, id)
+	var cards []Card
+	if len(ranks) > 0 {
+		cards, err = r.cards(ctx, keys(ranks))
+		if err != nil {
+			return res, err
+		}
 	}
-	cards, err := r.cards(ctx, ids)
-	if err != nil {
-		return res, err
+	if len(claimRanks) > 0 {
+		cs, err := r.claimCards(ctx, keys(claimRanks))
+		if err != nil {
+			return res, err
+		}
+		cards = append(cards, cs...)
 	}
 	now := r.now()
 	for i := range cards {
 		c := &cards[i]
 		rk := ranks[c.PassageID]
+		if c.Kind == KindClaim {
+			rk = claimRanks[c.ClaimID]
+		}
 		c.TextRank, c.VectorRank = rk.text, rk.vector
 		c.Similarity = math.Round(rk.similarity*1e4) / 1e4
 		if rk.text > 0 {
@@ -253,9 +309,15 @@ func (r *Retriever) Find(ctx context.Context, q Query) (Result, error) {
 		if rk.vector > 0 {
 			c.Score += 1 / float64(rrfK+rk.vector)
 		}
-		c.Score *= informative(c.Text)
-		if q.PreferRecent > 0 {
-			c.Score *= math.Pow(0.5, float64(now.Sub(c.dated()))/float64(q.PreferRecent))
+		if c.Kind != KindClaim {
+			c.Score *= informative(c.Text)
+		}
+		halfLife := q.PreferRecent
+		if halfLife == 0 && c.Volatile {
+			halfLife = r.volatileHalfLife()
+		}
+		if halfLife > 0 {
+			c.Score *= math.Pow(0.5, float64(now.Sub(c.dated()))/float64(halfLife))
 		}
 		c.Age = ageLabel(c, now)
 	}
@@ -266,22 +328,76 @@ func (r *Retriever) Find(ctx context.Context, q Query) (Result, error) {
 			}
 			return 1
 		}
-		return compareInt(a.PassageID, b.PassageID)
+		if a.Kind != b.Kind {
+			return strings.Compare(a.Kind, b.Kind)
+		}
+		return compareInt(a.PassageID+a.ClaimID, b.PassageID+b.ClaimID)
 	})
-	perDoc := map[int64]int{}
+	// Twice the limit is picked so that collapsing superseded claims under
+	// the claims that supersede them still leaves enough.
+	type docKind struct {
+		doc  int64
+		kind string
+	}
+	perDoc := map[docKind]int{}
+	var picked []Card
 	for _, c := range cards {
-		if perDoc[c.DocumentID] == perDocument {
+		key := docKind{c.DocumentID, c.Kind}
+		if perDoc[key] == perDocument {
 			continue
 		}
-		perDoc[c.DocumentID]++
+		perDoc[key]++
 		c.Score = math.Round(c.Score*1e6) / 1e6
-		res.Cards = append(res.Cards, c)
-		if len(res.Cards) == limit {
+		picked = append(picked, c)
+		if len(picked) == 2*limit {
 			break
 		}
 	}
+	if err := r.attachClusters(ctx, picked, q.AsOf); err != nil {
+		return res, err
+	}
+	res.Cards = append(res.Cards, collapseSuperseded(picked)...)
+	if len(res.Cards) > limit {
+		res.Cards = res.Cards[:limit]
+	}
 	res.TookMS = time.Since(started).Milliseconds()
 	return res, nil
+}
+
+type ranked struct {
+	text, vector int
+	similarity   float64
+}
+
+func keys[V any](m map[int64]V) []int64 {
+	out := make([]int64, 0, len(m))
+	for id := range m {
+		out = append(out, id)
+	}
+	return out
+}
+
+// arms says what q searches: passages (with the document origin to keep,
+// blank for both) and claims.
+func (q Query) arms() (passages, claims bool, origin string) {
+	if len(q.Kinds) == 0 {
+		return true, true, ""
+	}
+	primary, report := slices.Contains(q.Kinds, KindPassage), slices.Contains(q.Kinds, KindReport)
+	switch {
+	case primary && !report:
+		origin = "primary"
+	case report && !primary:
+		origin = "synthesis"
+	}
+	return primary || report, slices.Contains(q.Kinds, KindClaim), origin
+}
+
+func (r *Retriever) volatileHalfLife() time.Duration {
+	if r.VolatileHalfLife > 0 {
+		return r.VolatileHalfLife
+	}
+	return 365 * 24 * time.Hour
 }
 
 func compareInt(a, b int64) int {
@@ -296,8 +412,8 @@ func compareInt(a, b int64) int {
 
 func (q Query) check() error {
 	for _, k := range q.Kinds {
-		if k != KindPassage && k != KindReport {
-			return fmt.Errorf("unknown kind %q (want %s or %s)", k, KindPassage, KindReport)
+		if k != KindPassage && k != KindReport && k != KindClaim {
+			return fmt.Errorf("unknown kind %q (want %s, %s or %s)", k, KindPassage, KindReport, KindClaim)
 		}
 	}
 	if q.DateField != "" && q.DateField != DatePublished && q.DateField != DateCollected {
@@ -323,15 +439,11 @@ func (a *args) add(v any) string {
 	return "$" + strconv.Itoa(len(*a))
 }
 
-// filters is q's WHERE conditions over passages p, documents d and
-// sources s, each starting with AND.
-func filters(q Query, a *args) string {
+// filters is q's WHERE conditions over documents d and sources s, each
+// starting with AND; origin, when set, keeps documents of that origin.
+func filters(q Query, a *args, origin string) string {
 	var b strings.Builder
-	if len(q.Kinds) == 1 {
-		origin := "primary"
-		if q.Kinds[0] == KindReport {
-			origin = "synthesis"
-		}
+	if origin != "" {
 		b.WriteString(" AND d.origin = " + a.add(origin))
 	}
 	col := "d.published_at"
@@ -361,15 +473,18 @@ func filters(q Query, a *args) string {
 
 const passageJoins = ` FROM passages p JOIN documents d ON d.id = p.document_id JOIN sources s ON s.id = d.source_id`
 
-// textArm ranks passages by full-text match. Query terms are ORed, so a
-// passage matching some of a natural-language question still ranks, with
+const claimJoins = ` FROM claims c JOIN documents d ON d.id = c.document_id JOIN sources s ON s.id = d.source_id`
+
+// textArm ranks the rows of table t (passages p or claims c, with their
+// joins and an extra condition) by full-text match. Query terms are ORed,
+// so a row matching some of a natural-language question still ranks, with
 // more matches ranking higher.
-func (r *Retriever) textArm(ctx context.Context, tx pgx.Tx, q Query, k int) ([]int64, error) {
+func textArm(ctx context.Context, tx pgx.Tx, q Query, t, joins, where, origin string, k int) ([]int64, error) {
 	a := args{}
 	tsq := "replace(plainto_tsquery('english', " + a.add(q.Text) + ")::text, '&', '|')::tsquery"
-	sql := `SELECT p.id` + passageJoins + `, (SELECT ` + tsq + ` AS q) query
-		WHERE p.tsv @@ query.q` + filters(q, &a) + `
-		ORDER BY ts_rank_cd(p.tsv, query.q) DESC, p.id LIMIT ` + a.add(k)
+	sql := `SELECT ` + t + `.id` + joins + `, (SELECT ` + tsq + ` AS q) query
+		WHERE ` + where + t + `.tsv @@ query.q` + filters(q, &a, origin) + `
+		ORDER BY ts_rank_cd(` + t + `.tsv, query.q) DESC, ` + t + `.id LIMIT ` + a.add(k)
 	return queryIDs(ctx, tx, sql, a)
 }
 
@@ -378,18 +493,15 @@ type vectorHit struct {
 	similarity float64
 }
 
-// vectorArm ranks passages embedded with model by cosine distance to vec.
-// Iterative scans keep a filtered query from coming back short.
-func (r *Retriever) vectorArm(ctx context.Context, tx pgx.Tx, q Query, vec []float32, model string, k int) ([]vectorHit, error) {
-	if _, err := tx.Exec(ctx, `SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true), set_config('hnsw.ef_search', $1, true)`,
-		strconv.Itoa(max(k, 100))); err != nil {
-		return nil, err
-	}
+// vectorArm ranks the rows of table t embedded with model by cosine
+// distance to vec. The transaction's iterative scans keep a filtered query
+// from coming back short.
+func vectorArm(ctx context.Context, tx pgx.Tx, q Query, t, joins, where, origin string, vec []float32, model string, k int) ([]vectorHit, error) {
 	a := args{}
 	v := a.add(pgvector.NewVector(vec))
-	sql := `SELECT p.id, 1 - (p.embedding <=> ` + v + `)` + passageJoins + `
-		WHERE p.embedding IS NOT NULL AND p.embed_model = ` + a.add(model) + filters(q, &a) + `
-		ORDER BY p.embedding <=> ` + v + ` LIMIT ` + a.add(k)
+	sql := `SELECT ` + t + `.id, 1 - (` + t + `.embedding <=> ` + v + `)` + joins + `
+		WHERE ` + where + t + `.embedding IS NOT NULL AND ` + t + `.embed_model = ` + a.add(model) + filters(q, &a, origin) + `
+		ORDER BY ` + t + `.embedding <=> ` + v + ` LIMIT ` + a.add(k)
 	rows, err := tx.Query(ctx, sql, a...)
 	if err != nil {
 		return nil, err
@@ -409,13 +521,16 @@ func queryIDs(ctx context.Context, tx pgx.Tx, sql string, a args) ([]int64, erro
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
-// cardColumns are the columns scanCard reads, over passages p, documents d
-// and sources s.
-const cardColumns = `p.id, p.document_id, p.char_start, p.char_end, p.text,
-	d.source_id, d.content_kind, d.origin, d.published_at, d.published_precision, d.published_from, d.published_weak,
+// docCardColumns are the document and source columns docScan reads, over
+// documents d and sources s.
+const docCardColumns = `d.source_id, d.content_kind, d.origin, d.published_at, d.published_precision, d.published_from, d.published_weak,
 	d.first_fetched_at, d.last_fetched_at, d.title, s.url, s.domain, s.title, s.kind, s.doi,
 	ARRAY(SELECT DISTINCT f.run_id FROM fetches f WHERE f.document_id = d.id ORDER BY f.run_id DESC LIMIT 5) ||
 	ARRAY(SELECT r.id FROM runs r WHERE r.report_document_id = d.id ORDER BY r.id DESC LIMIT 5)`
+
+// cardColumns are the columns scanCard reads, over passages p, documents d
+// and sources s.
+const cardColumns = `p.id, p.document_id, p.char_start, p.char_end, p.text, ` + docCardColumns
 
 func (r *Retriever) cards(ctx context.Context, ids []int64) ([]Card, error) {
 	rows, err := r.Index.Pool().Query(ctx, `SELECT `+cardColumns+passageJoins+` WHERE p.id = ANY($1)`, ids)
@@ -427,30 +542,46 @@ func (r *Retriever) cards(ctx context.Context, ids []int64) ([]Card, error) {
 
 func scanCard(row pgx.CollectableRow) (Card, error) {
 	var c Card
-	var origin, docTitle, srcTitle string
-	var pubAt *time.Time
-	var precision, from, doi *string
-	var weak bool
-	err := row.Scan(&c.PassageID, &c.DocumentID, &c.CharStart, &c.CharEnd, &c.Text,
-		&c.SourceID, &c.ContentKind, &origin, &pubAt, &precision, &from, &weak,
-		&c.Collected, &c.LastFetched, &docTitle, &c.URL, &c.Domain, &srcTitle, &c.SourceKind, &doi, &c.Runs)
+	var d docScan
+	err := row.Scan(append([]any{&c.PassageID, &c.DocumentID, &c.CharStart, &c.CharEnd, &c.Text}, d.targets(&c)...)...)
 	if err != nil {
 		return c, err
 	}
 	c.Ref = PassageRef(c.PassageID)
-	c.Kind = KindPassage
-	if origin == "synthesis" {
-		c.Kind = KindReport
-	}
-	c.Title = docTitle
-	if c.Title == "" {
-		c.Title = srcTitle
-	}
-	if doi != nil {
-		c.DOI = *doi
-	}
-	c.Published = dateOf(pubAt, precision, from, weak)
+	d.finish(&c)
 	return c, nil
+}
+
+// docScan reads docCardColumns into a card.
+type docScan struct {
+	origin, docTitle, srcTitle string
+	pubAt                      *time.Time
+	precision, from, doi       *string
+	weak                       bool
+}
+
+func (d *docScan) targets(c *Card) []any {
+	return []any{&c.SourceID, &c.ContentKind, &d.origin, &d.pubAt, &d.precision, &d.from, &d.weak,
+		&c.Collected, &c.LastFetched, &d.docTitle, &c.URL, &c.Domain, &d.srcTitle, &c.SourceKind, &d.doi, &c.Runs}
+}
+
+// finish sets the card's kind (a passage's, unless it's already a claim),
+// title, DOI and publication date.
+func (d *docScan) finish(c *Card) {
+	if c.Kind == "" {
+		c.Kind = KindPassage
+		if d.origin == "synthesis" {
+			c.Kind = KindReport
+		}
+	}
+	c.Title = d.docTitle
+	if c.Title == "" {
+		c.Title = d.srcTitle
+	}
+	if d.doi != nil {
+		c.DOI = *d.doi
+	}
+	c.Published = dateOf(d.pubAt, d.precision, d.from, d.weak)
 }
 
 // dateOf turns the documents date columns back into a Date at its
@@ -470,9 +601,13 @@ func dateOf(at *time.Time, precision, from *string, weak bool) *Date {
 	return d
 }
 
-// dated is the time a card's age is measured from: its publication date,
+// dated is the time a card's age is measured from: for a claim, the date
+// it's true as of when the document says; otherwise its publication date,
 // else when it was collected.
 func (c Card) dated() time.Time {
+	if t, ok := parseDate(c.AsOf); ok {
+		return t
+	}
 	if c.Published != nil {
 		if t, err := time.Parse(dateLayouts[c.Published.Precision], c.Published.Date); err == nil {
 			return t
@@ -486,10 +621,15 @@ var dateLayouts = map[string]string{"year": "2006", "month": "2006-01", "day": "
 // ageLabel describes how old a card's evidence is.
 func ageLabel(c *Card, now time.Time) string {
 	collected := c.Collected.Format(time.DateOnly)
-	if c.Published == nil {
-		return "undated; collected " + collected
+	label := ""
+	if t, ok := parseDate(c.AsOf); ok {
+		label = "true as of " + c.AsOf + " (" + since(t, now) + "); "
 	}
-	label := "published " + c.Published.Date + " (" + since(c.dated(), now) + ")"
+	if c.Published == nil {
+		return label + "undated; collected " + collected
+	}
+	pub, _ := time.Parse(dateLayouts[c.Published.Precision], c.Published.Date)
+	label += "published " + c.Published.Date + " (" + since(pub, now) + ")"
 	if c.Published.Weak {
 		label += ", date weak (" + c.Published.From + ")"
 	}

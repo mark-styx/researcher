@@ -45,7 +45,7 @@ func TestFindAndLookups(t *testing.T) {
 	if none := decode[retrieve.Result](t, mustStdout(t, "find", "fetched article", "--kind", "report", "--json")); len(none.Cards) != 0 {
 		t.Errorf("report-only find = %+v", none.Cards)
 	}
-	if _, _, err := runCmdStdout(t, "find", "x", "--kind", "claim"); err == nil {
+	if _, _, err := runCmdStdout(t, "find", "x", "--kind", "tweet"); err == nil {
 		t.Error("bad --kind accepted")
 	}
 

@@ -29,7 +29,7 @@ func Open(ctx context.Context, cfg *config.Config) (*Retriever, error) {
 	}
 	emb := embed.New(cfg)
 	ix.SetEmbedModel(emb.Model())
-	return &Retriever{Index: ix, Store: st, Embed: emb}, nil
+	return &Retriever{Index: ix, Store: st, Embed: emb, VolatileMaxAge: cfg.Store.VolatileMaxAgeDuration()}, nil
 }
 
 // Close closes the retriever's index.

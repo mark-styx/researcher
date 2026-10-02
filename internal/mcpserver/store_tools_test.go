@@ -146,7 +146,7 @@ func TestStoreTools_IngestFindAndLookups(t *testing.T) {
 		args map[string]any
 	}{
 		{"researchguy_find", map[string]any{"query": "x", "since": "soon"}},
-		{"researchguy_find", map[string]any{"query": "x", "kinds": []any{"claim"}}},
+		{"researchguy_find", map[string]any{"query": "x", "kinds": []any{"tweet"}}},
 		{"researchguy_passage", map[string]any{"id": "P:abc"}},
 		{"researchguy_passage", map[string]any{"id": "123"}},
 		{"researchguy_document", map[string]any{"id": "0"}},

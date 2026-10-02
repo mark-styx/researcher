@@ -413,7 +413,7 @@ func TestFind_BadQueries(t *testing.T) {
 	since, until := now, now.Add(-time.Hour)
 	for name, q := range map[string]Query{
 		"empty":         {Text: "  "},
-		"kind":          {Text: "x", Kinds: []string{"claim"}},
+		"kind":          {Text: "x", Kinds: []string{"tweet"}},
 		"date field":    {Text: "x", DateField: "modified"},
 		"until < since": {Text: "x", Since: &since, Until: &until},
 		"recency":       {Text: "x", PreferRecent: -time.Hour},
