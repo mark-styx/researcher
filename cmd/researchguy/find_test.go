@@ -4,26 +4,17 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
 	"github.com/marklubin/researchguy/internal/store/retrieve"
 )
 
-func TestFindFlags_Query(t *testing.T) {
-	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	q, err := findFlags{since: "2020", until: "2021-06", asOf: "30d", preferRecent: "1y", kinds: []string{"passage"}, runID: " r1 ", limit: 3}.query("q", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if q.Since.Format(time.DateOnly) != "2020-01-01" || q.Until.Format(time.DateOnly) != "2021-06-30" || q.AsOf.Format(time.DateOnly) != "2026-09-02" ||
-		q.PreferRecent != 365*24*time.Hour || q.RunID != "r1" || q.Limit != 3 || q.Kinds[0] != "passage" {
-		t.Errorf("query = %+v", q)
-	}
-	for _, f := range []findFlags{{since: "soon"}, {until: "2020-13"}, {asOf: "x"}, {preferRecent: "fast"}} {
-		if _, err := f.query("q", now); err == nil {
-			t.Errorf("%+v accepted", f)
+func TestFind_BadFlags(t *testing.T) {
+	storeSetup(t, "postgres://localhost:1/none")
+	for _, args := range [][]string{{"find", "x", "--since", "soon"}, {"find", "x", "--prefer-recent", "fast"}} {
+		if _, _, err := runCmdStdout(t, args...); err == nil || (!strings.Contains(err.Error(), "since") && !strings.Contains(err.Error(), "prefer_recent")) {
+			t.Errorf("%v: err = %v", args, err)
 		}
 	}
 }

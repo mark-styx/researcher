@@ -85,3 +85,44 @@ func ParseBound(s string, now time.Time, end bool) (time.Time, error) {
 	}
 	return time.Time{}, fmt.Errorf("invalid date %q (want YYYY, YYYY-MM, YYYY-MM-DD or an age such as 90d)", s)
 }
+
+// Args are a find request's filters as text, the way the CLI and the MCP
+// tools take them.
+type Args struct {
+	Kinds              []string
+	Since, Until, AsOf string
+	DateField          string
+	RunID, Domain      string
+	PreferRecent       string
+	MinSimilarity      float64
+	Limit              int
+}
+
+// Query parses a into a Query for text, reading dates and ages relative
+// to now.
+func (a Args) Query(text string, now time.Time) (Query, error) {
+	q := Query{Text: text, Kinds: a.Kinds, DateField: strings.TrimSpace(a.DateField), RunID: strings.TrimSpace(a.RunID),
+		Domain: a.Domain, MinSimilarity: a.MinSimilarity, Limit: a.Limit}
+	for _, b := range []struct {
+		name, val string
+		end       bool
+		dst       **time.Time
+	}{{"since", a.Since, false, &q.Since}, {"until", a.Until, true, &q.Until}, {"as_of", a.AsOf, true, &q.AsOf}} {
+		if strings.TrimSpace(b.val) == "" {
+			continue
+		}
+		t, err := ParseBound(b.val, now, b.end)
+		if err != nil {
+			return q, fmt.Errorf("%s: %w", b.name, err)
+		}
+		*b.dst = &t
+	}
+	if strings.TrimSpace(a.PreferRecent) != "" {
+		d, err := ParseAge(a.PreferRecent)
+		if err != nil {
+			return q, fmt.Errorf("prefer_recent: %w", err)
+		}
+		q.PreferRecent = d
+	}
+	return q, nil
+}

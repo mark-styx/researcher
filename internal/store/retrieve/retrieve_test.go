@@ -521,3 +521,19 @@ func TestParseBound(t *testing.T) {
 		t.Errorf("ParseAge(2w) = %v, %v", d, err)
 	}
 }
+
+func TestArgs_Query(t *testing.T) {
+	q, err := Args{Since: "2020", Until: "2021-06", AsOf: "30d", PreferRecent: "1y", Kinds: []string{"passage"}, RunID: " r1 ", Limit: 3}.Query("q", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Text != "q" || q.Since.Format(time.DateOnly) != "2020-01-01" || q.Until.Format(time.DateOnly) != "2021-06-30" ||
+		q.AsOf.Format(time.DateOnly) != "2026-09-02" || q.PreferRecent != 365*24*time.Hour || q.RunID != "r1" || q.Limit != 3 || q.Kinds[0] != "passage" {
+		t.Errorf("query = %+v", q)
+	}
+	for _, a := range []Args{{Since: "soon"}, {Until: "2020-13"}, {AsOf: "x"}, {PreferRecent: "fast"}} {
+		if _, err := a.Query("q", now); err == nil {
+			t.Errorf("%+v accepted", a)
+		}
+	}
+}

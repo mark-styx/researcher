@@ -12,43 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// findFlags are find's filters, shared by the CLI and its tests.
+// findFlags are find's flags.
 type findFlags struct {
-	kinds                    []string
-	since, until, asOf       string
-	dateField, runID, domain string
-	preferRecent             string
-	minSimilarity            float64
-	limit                    int
-	jsonOut                  bool
-}
-
-// query turns the flags into a retrieve.Query.
-func (f findFlags) query(text string, now time.Time) (retrieve.Query, error) {
-	q := retrieve.Query{Text: text, Kinds: f.kinds, DateField: f.dateField, RunID: strings.TrimSpace(f.runID),
-		Domain: f.domain, MinSimilarity: f.minSimilarity, Limit: f.limit}
-	for _, b := range []struct {
-		flag, val string
-		end       bool
-		dst       **time.Time
-	}{{"--since", f.since, false, &q.Since}, {"--until", f.until, true, &q.Until}, {"--as-of", f.asOf, true, &q.AsOf}} {
-		if b.val == "" {
-			continue
-		}
-		t, err := retrieve.ParseBound(b.val, now, b.end)
-		if err != nil {
-			return q, fmt.Errorf("%s: %w", b.flag, err)
-		}
-		*b.dst = &t
-	}
-	if f.preferRecent != "" {
-		d, err := retrieve.ParseAge(f.preferRecent)
-		if err != nil {
-			return q, fmt.Errorf("--prefer-recent: %w", err)
-		}
-		q.PreferRecent = d
-	}
-	return q, nil
+	retrieve.Args
+	jsonOut bool
 }
 
 func findCmd() *cobra.Command {
@@ -86,7 +53,7 @@ by then.`,
 			if err := requireDSN(cfg); err != nil {
 				return err
 			}
-			q, err := f.query(args[0], time.Now())
+			q, err := f.Query(args[0], time.Now())
 			if err != nil {
 				return err
 			}
@@ -107,16 +74,16 @@ by then.`,
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringSliceVar(&f.kinds, "kind", nil, "passage (fetched documents) or report (researchguy's synthesis); default both")
-	fl.StringVar(&f.since, "since", "", "Earliest date (YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y)")
-	fl.StringVar(&f.until, "until", "", "Latest date, inclusive")
-	fl.StringVar(&f.dateField, "date", "", "Date --since/--until bound: published (default) or collected")
-	fl.StringVar(&f.asOf, "as-of", "", "Only what had been collected by this date")
-	fl.StringVar(&f.runID, "run", "", "Only documents this run fetched, and its report")
-	fl.StringVar(&f.domain, "domain", "", "Only this domain and its subdomains")
-	fl.StringVar(&f.preferRecent, "prefer-recent", "", "Halve a card's score per this much age (such as 1y); off by default")
-	fl.Float64Var(&f.minSimilarity, "min-similarity", 0, "Drop meaning matches less similar than this (0-1)")
-	fl.IntVar(&f.limit, "limit", 10, "Cards to return (at most 100)")
+	fl.StringSliceVar(&f.Kinds, "kind", nil, "passage (fetched documents) or report (researchguy's synthesis); default both")
+	fl.StringVar(&f.Since, "since", "", "Earliest date (YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y)")
+	fl.StringVar(&f.Until, "until", "", "Latest date, inclusive")
+	fl.StringVar(&f.DateField, "date", "", "Date --since/--until bound: published (default) or collected")
+	fl.StringVar(&f.AsOf, "as-of", "", "Only what had been collected by this date")
+	fl.StringVar(&f.RunID, "run", "", "Only documents this run fetched, and its report")
+	fl.StringVar(&f.Domain, "domain", "", "Only this domain and its subdomains")
+	fl.StringVar(&f.PreferRecent, "prefer-recent", "", "Halve a card's score per this much age (such as 1y); off by default")
+	fl.Float64Var(&f.MinSimilarity, "min-similarity", 0, "Drop meaning matches less similar than this (0-1)")
+	fl.IntVar(&f.Limit, "limit", 10, "Cards to return (at most 100)")
 	fl.BoolVar(&f.jsonOut, "json", false, "Print JSON: {query, mode, embed_model, note, cards, took_ms}")
 	return cmd
 }
