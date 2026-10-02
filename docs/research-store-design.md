@@ -829,6 +829,85 @@ Deviations from the plan above:
   codex's parallel workers each rewrite one `args.txt`, so a read can see
   interleaved writes.
 
+### Phase 5 as built
+
+Built 2026-10-02, `6f8a406` to `795eccf`.
+
+- **Extraction** (`internal/claims`, `researchguy store extract`, the
+  daemon). `qwen3.5:9b` through Ollama `/api/chat` with a JSON schema,
+  thinking off, temperature 0. A document is split into chunks of up to
+  6,000 characters at paragraph and sentence breaks, at most 8 per
+  document, at most 15 claims per chunk. The prompt skips references,
+  navigation, captions and garbled text and forbids ellipses. Extractor
+  names carry a prompt version (`qwen3.5:9b/claims-v1`), and each
+  extractor's files are kept apart under `claims/<extractor>/`, so a new
+  model or prompt extracts again without touching the old results.
+  Documents a report cites go first, then the most recently fetched.
+  Extractions are written as they finish. A chunk the model fails on is
+  retried on later passes, up to 3 attempts; a transport error or a 4xx
+  stops the pass without spending an attempt. The daemon doesn't start
+  extracting while a task holds a slot, stops before the next chunk when
+  one starts, and unloads the model when it's done.
+- **Quote check** (`internal/quote`). Matching ignores case, punctuation,
+  spacing and footnote markers (`[12]`); an ellipsis may skip up to 400
+  characters. A found quote gets rune offsets and the passage holding it.
+  The card shows the document's text at those offsets, never the model's
+  quote.
+- **Links** (`researchguy store link`, the daemon). A separate pass over
+  claims the linker hasn't checked (verified and embedded), rather than at
+  ingest. Neighbors are the 5 nearest claims from other origins with the
+  same embedding model, at least 0.75 cosine, no existing link either way,
+  and sharing a word of 4+ letters or a number. Pairs go to `claude/sonnet`
+  20 at a time, at most 500 a day. An answer that isn't JSON marks the
+  claims checked, so they aren't asked about again; a provider error
+  leaves them unchecked. Two verified claims whose quotes share a key of 6+
+  words are linked `same` by rule, with no model. `store link set` logs a
+  person's label, which outranks model and rule labels, and `unrelated`
+  overrules one.
+- **Origins.** A document is grouped with others by the same source,
+  final URL, DOI, a `same` link, or a SimHash within 3 bits on texts of
+  1,000+ characters. The group's origin is its lowest document id.
+- **Flags** are computed in Go from the links SQL returns, one link away,
+  with no transitive closure. A claim's date is its `as_of`, else its
+  document's publication date, else the collection date, and
+  `newer_contradiction` compares those, not publication dates alone.
+  `last_confirmed` is the latest fetch of the claim's document or of any
+  `same` or `supports` claim's document. `superseded` claims are collapsed
+  only when the claim superseding them is in the same result.
+- **Retrieval.** `find` has claim arms next to the passage arms, fused the
+  same way; a claim card needs a verified quote. Volatile claims get a
+  1-year half-life (`Retriever.VolatileHalfLife`, not in config) unless
+  `prefer_recent` sets one. `researchguy_claim`/`store claim` and
+  `researchguy_timeline`/`timeline` are in the CLI and the read profile.
+  `[C:<id>]` is a citation: the check matches a quote against the text
+  around the claim's passage (the whole document when the quote wasn't
+  found) and notes when the claim is contested, superseded or possibly
+  outdated. The critics get the passage of each cited claim.
+- **Deviations:** migration `0005` was edited twice after it was written
+  (`claims.link_checked_at`, and `claim` in `citations.target_kind`) before
+  any persistent database had it; it's applied now and frozen.
+  `link_checked_at` lives only in the index, so after a rebuild the linker
+  re-checks every claim, but every labeled pair is in `links.jsonl` and
+  isn't asked again: on the smoke store, 14 claims took 43 ms and sent 0
+  pairs. `store embed` and the daemon's embed step embed claims after
+  passages, so a claim pass that couldn't embed is caught up.
+- **Smoke test** (2026-10-02, scratch store). On the Okapi BM25 Wikipedia
+  page (6,494 chars, 2 chunks, 38 s) `qwen3.5:9b` gave 11 claims and 6
+  quotes were found. All 5 misses weren't verbatim: 3 dropped a
+  parenthetical or footnote and 2 filled in math the extracted text
+  doesn't have ("0.75 and 1.2", "b=0"), which the check rightly rejects.
+  On the Stanford IR book's BM25 page (4,774 chars, 1 chunk, 38 s) 8 of 8
+  were found. `claude/sonnet` labeled 15 pairs in one 37 s call: 2
+  `supports` at 0.55 and 13 `unrelated`. Two documents is too few to put a
+  number on recall or label quality, and cost isn't measured.
+- **Found while testing:** the model's notes called the claims "A" and
+  "B", which mean nothing once stored, and a long note was cut at a byte,
+  which can split a character. Both are fixed. Asking for shorter verbatim
+  spans could recover the dropped-parenthetical misses; that's a
+  `claims-v2` prompt to measure on a sample before switching.
+- **Not done:** the real store has no runs yet, so nothing is extracted
+  there. Claims in reports and book research wait for phase 6's backfill.
+
 ## Decisions
 
 Accepted 2026-10-02 as recommended: Postgres + pgvector in a new

@@ -106,6 +106,17 @@ extending it.
   Keep it LLM-free; the query embedding is its only model call. A run's
   report is indexed as an `origin = synthesis` document, and anything that
   shows one must label it synthesis, not primary evidence.
+- Claims (`internal/claims`) are extracted by a local model through Ollama
+  and written to `<store.dir>/claims/<extractor>/`; the index checks each
+  quote against the document's text (`internal/quote`) and never shows an
+  unfound one as quoted. Keep that check mechanical, and don't let a card
+  show the model's quote in place of the document's span. Change the
+  extraction prompt only with a new `PromptVersion`, so old and new
+  extractions stay apart. Claim links live in the append-only
+  `<store.dir>/links.jsonl` (rule, model or human, human outranking the
+  rest); anything that shows a model-labeled link must say it's one. The
+  daemon's claim passes yield to research tasks (`len(s.sem) > 0`), since
+  both want the GPU.
 - The citation check (`internal/cite`) is deterministic: no model reads the
   report. It writes the run's `citations.jsonl` (the index's `citations`
   table comes from that file) and appends its notes to the report file.

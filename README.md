@@ -20,6 +20,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
 - **Evidence-ledger critics**: hybrid verification checks the unchanged draft against raw successful tool results and reports flags instead of rewriting
 - **Run records**: every task writes what it collected (raw tool results, worker drafts, the aggregator's prompt and raw output, metadata) to `<store.dir>/runs/<run_id>/`, so evidence that didn't fit in a prompt is still on disk and a report's `[E12]` citations resolve to a captured item
+- **Claims**: checkable claims extracted from fetched documents by a local model, each with a quote checked against the document's text, linked across independent origins, and flagged when contested, superseded, single-origin or possibly outdated
 - **Knowledge graph** — entities, sources, claims, funding-pattern observations, and reports persist as referenceable nodes with typed edges (`researchguy graph`), instead of being re-derived per report
 
 ## Installation
@@ -72,7 +73,8 @@ researchguy search "entanglement"
 | `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
 | `context <topic>` | Existing research on a topic, formatted as an ask/dive would see it. Never calls an LLM |
-| `find <query>` | Search the passages of fetched documents and reports in the index, with publication and collection dates. Needs `store.dsn`; see [Retrieval](#retrieval) |
+| `find <query>` | Search the passages and claims of fetched documents, and reports, in the index, with publication and collection dates. Needs `store.dsn`; see [Retrieval](#retrieval) |
+| `timeline <query \| C:id>` | The claims on a question and their linked claims, oldest first, marking where a later claim supersedes or contradicts an earlier one. Never calls an LLM |
 
 `dive`/`review`/`compare` accept `--no-research` (skip searching existing research for context) and `--max-age` (freshness filter, e.g. `90d`), same as `ask`. With the hybrid backend, they also accept `--mode` (`landscape`, `inquiry`) and `--branches` (effort/breadth dial) — see [Hybrid Backend](#hybrid-backend-modes-and-critics) below.
 
@@ -124,7 +126,11 @@ Off by default until it's had real use.
 | `store init` | Create the index database in `store.dsn` and apply its schema |
 | `store ingest [--run <id>] [--force]` | Mark dead runs interrupted, then index new or changed runs |
 | `store fetch [--run <id>] [--force] [--budget <d>]` | Fetch the sources of runs whose fetching isn't done, then index them |
-| `store embed [--budget <d>]` | Embed indexed passages that have no vector from `store.embed.model` |
+| `store embed [--budget <d>]` | Embed indexed passages, then claims, that have no vector from `store.embed.model` |
+| `store extract [--budget <d>] [--limit <n>]` | Extract claims from indexed documents that have none from `store.claims.model` yet |
+| `store link [--budget <d>]` | Label how unchecked claims relate to their nearest claims from other origins |
+| `store link set <from> <to> <relation> [--note <s>]` | Record your own label for a pair of claims, over the model's |
+| `store claim <C:id>` | A claim with its quote, passage, flags and linked claims |
 | `store rebuild` | Empty the index and re-index every run, in one transaction |
 | `store doctor` | Check the store and index for problems; changes nothing, exits non-zero on a problem |
 
@@ -256,6 +262,23 @@ store:
     model: nomic-embed-text
     host: ""          # blank uses ollama.host
     budget: 2m
+  claims:             # claim extraction through Ollama, between tasks
+    enabled: true
+    model: ""         # blank uses ollama.utility_model, then ollama.model
+    host: ""          # blank uses ollama.host
+    budget: 10m       # per daemon pass
+    chunk_chars: 6000
+    max_chunks: 8     # per document
+    max_attempts: 3   # per chunk the model fails on
+    link:             # labeling how claims relate, through an llm backend
+      enabled: true
+      backend: claude
+      model: sonnet
+      neighbors: 5
+      min_similarity: 0.75
+      batch_size: 20  # pairs per call
+      max_pairs_per_day: 500
+  volatile_max_age: 30d   # older volatile claims are flagged possibly_outdated
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.
@@ -428,13 +451,15 @@ Every `ask`, `dive`, `review`, `compare`, `enrich` and `watch` task, from the CL
 <store.dir>/blobs/sha256/<ab>/<hash>.gz         # raw fetched bytes, gzip
 <store.dir>/text/sha256/<ab>/<hash>.txt         # extracted text
 <store.dir>/vectors/<model>/<ab>/<hash>.f32     # embedding cache, keyed by passage text hash
+<store.dir>/claims/<extractor>/<ab>/<hash>.json # claims extracted from a text, keyed by its hash
+<store.dir>/links.jsonl                         # append-only log of how claims relate: by rule, model or person
 ```
 
 `run.json` is written as `running` when the task starts, with the process ID and host, and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed is marked `interrupted` by the next `store ingest` or daemon pass. Each tool result is appended as it arrives, so a worker killed mid-run keeps what it had collected. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept. When a run succeeds, its section of the report is copied into `text/` as well (`report_sha256` in `run.json`), so the index has it even if the file moves or changes.
 
 ### Citation check
 
-After a task writes its report, every citation in the run's section of it is checked, with no model involved: `[E<n>]` against the run's captures, `[P:<id>]` and `[S:<id>]` against the index. A double-quoted string of 4 or more words right before a citation is checked against the cited text, ignoring case, punctuation and spacing, and `...` may skip text. Citations in one bracket, or in adjacent brackets, share the quote, and it passes when any of them holds it. A quote missing from a search result's snippets, an abstract-only document or a source with no stored text is `unverifiable`, not `not_found`, because the worker may have read more than the store has. Results go to the run's `citations.jsonl` and the index's `citations` table. Citations that don't resolve, and quotes none of their citations hold, are listed under `## Citation Check` at the end of the report (under `## Critic Notes` when it has them). Without an index, passages and sources are left unchecked.
+After a task writes its report, every citation in the run's section of it is checked, with no model involved: `[E<n>]` against the run's captures, `[P:<id>]`, `[C:<id>]` and `[S:<id>]` against the index. A quote cited to a claim is checked against the document text around it, not the claim's wording, and the citation's note says when the claim is contested, superseded or possibly outdated. A double-quoted string of 4 or more words right before a citation is checked against the cited text, ignoring case, punctuation and spacing, and `...` may skip text. Citations in one bracket, or in adjacent brackets, share the quote, and it passes when any of them holds it. A quote missing from a search result's snippets, an abstract-only document or a source with no stored text is `unverifiable`, not `not_found`, because the worker may have read more than the store has. Results go to the run's `citations.jsonl` and the index's `citations` table. Citations that don't resolve, and quotes none of their citations hold, are listed under `## Citation Check` at the end of the report (under `## Critic Notes` when it has them). Without an index, passages and sources are left unchecked.
 
 ### Fetched documents
 
@@ -451,13 +476,23 @@ The store is the record of truth. With `store.dsn` set, runs are also indexed in
 researchguy store init      # create the database, apply the schema (needs pgvector)
 researchguy store ingest    # index runs already in the store
 researchguy store fetch     # fetch sources for runs that haven't had them
-researchguy store embed     # embed passages without a vector
-researchguy store doctor    # check both, and count failed report citations
+researchguy store embed     # embed passages and claims without a vector
+researchguy store extract   # extract claims from documents waiting on them
+researchguy store link      # label how claims from different sources relate
+researchguy store doctor    # check both, count failed report citations and claim work waiting
 ```
 
 Runs recorded before the index existed have captures but no structured tool calls, so they index without sources. A task indexes its run when it finishes, then embeds its new passages within `store.embed.budget`. If the index or Ollama is down, the run is still saved, a warning says so, and `researchguy daemon start` or the `store` commands catch it up later. The daemon's pass fetches up to 4 runs still waiting on fetching, indexes what's new, then embeds. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
 
-This is phases 1-4 of `docs/research-store-design.md`. Claims, claim links and cluster flags come in phase 5.
+This is phases 1-5 of `docs/research-store-design.md`.
+
+### Claims
+
+`researchguy store extract` asks a local model (`store.claims.model`, else `ollama.utility_model`, else `ollama.model`) for the checkable claims in each indexed primary document, documents a report cites first. Each claim comes with the quote the model says states it, an `as_of` date when the text gives one, and whether it's volatile (a status, a count to date, a price). The index looks the quote up in the document's text and records its character span and passage; a claim whose quote isn't there is kept but never shown as quoted, since a model that drops a parenthetical or fills in a number the text doesn't have isn't quoting. Extractions are written to `claims/` as they finish, so `--budget` or a stop keeps the work done, and a chunk the model fails on is retried up to `store.claims.max_attempts`.
+
+`researchguy store link` compares each claim with its nearest claims from other origins (at least `min_similarity` close and sharing a word) and has `store.claims.link.model` label each pair `same`, `supports`, `contradicts`, `refines`, `supersedes` or `unrelated`, at most `max_pairs_per_day` pairs a day. Two claims quoting the same words are linked `same` by rule, with no model. Documents that are one origin repeated (versions of a source, mirrors, wire copy, near-duplicates) are grouped, so ten pages repeating one press release count once. Labels go to `links.jsonl`; `researchguy store link set C:123 C:456 supersedes` records your own, which outranks the model's, and `unrelated` overrules a wrong one.
+
+The daemon extracts and links between research tasks: it doesn't start while a task runs, stops extracting before its next chunk when one starts, and unloads the extraction model when it's done.
 
 ### Retrieval
 
@@ -469,6 +504,14 @@ researchguy store passage P:4821193310755112 --neighbors 2   # the text around a
 researchguy store document 7075171269261622582 --offset 8000 # a document, paged, with its versions and fetches
 researchguy store source https://doi.org/10.1145/3290605.3300830
 researchguy store ingest-url https://example.org/paper       # fetch one URL into the store now
+```
+
+Claims come back as `claim` cards with their `C:<id>` ref, the quote as it appears in the document, and flags from the claims linked to them: `reinforced` (two or more independent origins say it), `single_origin` (however many pages repeat it, it traces to one), `contested`, `newer_contradiction` (the newest contradiction is dated after the newest support), `superseded` (shown under the claim that supersedes it) and `possibly_outdated` (volatile and older than `store.volatile_max_age`). Each linked claim is listed with how the link was made, and a model's label says it's model-labeled: it's an inference. Volatile claims are ranked with a 1-year half-life unless `--prefer-recent` sets one. `researchguy store claim C:<id>` shows a claim with its passage and every linked claim, and `researchguy timeline <query | C:id>` lays out the claims on a question and their linked claims oldest first, marking where a later claim supersedes or contradicts an earlier one.
+
+```bash
+researchguy find "bridge toll price" --kind claim
+researchguy store claim C:3517454840306805788
+researchguy timeline "bridge toll price" --since 2020
 ```
 
 `researchguy context`, `researchguy_context` and the runner's research context include store evidence from `find` next to the grepai report excerpts, each labeled primary evidence or synthesis, with its dates. Store evidence is only filtered by age when a max age is passed explicitly.
@@ -520,8 +563,10 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researchguy_list` | List research files by category |
 | `researchguy_read` | Read a research document, a search hit's `file_path`, or a file under `read_roots`. Capped at 100KB; `start_line`/`end_line` read part of a large file |
-| `researchguy_find` | Ranked passages from fetched documents and reports, with dates; params match `find`'s flags (needs `store.dsn`) |
+| `researchguy_find` | Ranked passages and claims from fetched documents, and report passages, with dates and claim flags; params match `find`'s flags (needs `store.dsn`) |
 | `researchguy_passage` | A passage (`P:<id>`) with up to 5 passages on each side |
+| `researchguy_claim` | A claim (`C:<id>`) with its quote, its passage, its flags and every linked claim, with how each link was made |
+| `researchguy_timeline` | The claims on a query, or around a `C:<id>`, and their linked claims, oldest first, with where the evidence changed |
 | `researchguy_document` | A document's text from `offset`, up to 50,000 chars, with its versions and fetch attempts |
 | `researchguy_source` | A source by URL, id or `S:<id>`: its documents, sightings, fetches and the runs that cited it |
 | `researchguy_ingest_url` | Fetch a URL into the store now, attached to `run_id` or a new `manual` run, and index and embed it |
@@ -531,7 +576,7 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_graph_add_node` | Create a node |
 | `researchguy_graph_add_edge` | Create an edge between existing nodes |
 
-`researchguy mcp --profile read` serves only the tools that read: search, context, list, read, graph list/show/find, find, passage, document and source. It can't start research or write anything; the hybrid aggregator gets this profile.
+`researchguy mcp --profile read` serves only the tools that read: search, context, list, read, graph list/show/find, find, passage, claim, timeline, document and source. It can't start research or write anything; the hybrid aggregator gets this profile.
 
 `researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `codex`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 
