@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,10 +47,64 @@ type GraphRollupConfig struct {
 // Postgres index derived from it (internal/store/index); blank means no
 // index, and runs are only written to disk.
 type StoreConfig struct {
-	Dir   string           `yaml:"dir"`
-	DSN   string           `yaml:"dsn"`
-	Fetch StoreFetchConfig `yaml:"fetch"`
-	Embed StoreEmbedConfig `yaml:"embed"`
+	Dir    string            `yaml:"dir"`
+	DSN    string            `yaml:"dsn"`
+	Fetch  StoreFetchConfig  `yaml:"fetch"`
+	Embed  StoreEmbedConfig  `yaml:"embed"`
+	Claims StoreClaimsConfig `yaml:"claims"`
+	// VolatileMaxAge is how old a volatile claim's date can be before
+	// retrieval flags it possibly outdated.
+	VolatileMaxAge string `yaml:"volatile_max_age"`
+}
+
+// VolatileMaxAgeDuration is VolatileMaxAge parsed (Go durations, or
+// days, weeks and years such as 30d), 30 days when blank or invalid.
+func (s StoreConfig) VolatileMaxAgeDuration() time.Duration {
+	return ageOr(s.VolatileMaxAge, 30*24*time.Hour)
+}
+
+// StoreClaimsConfig drives claims (internal/claims): the daemon extracts
+// checkable claims from fetched documents with a local model, documents
+// reports cite first, and has a stronger model label how each new claim
+// relates to its nearest claims.
+type StoreClaimsConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Model extracts claims through Ollama; blank uses
+	// ollama.utility_model. Host blank uses ollama.host.
+	Model string `yaml:"model"`
+	Host  string `yaml:"host"`
+	// Budget caps one daemon pass of extraction; `researchguy store
+	// extract` runs until done unless given one.
+	Budget string `yaml:"budget"`
+	// A document is extracted in chunks of up to ChunkChars characters,
+	// at most MaxChunks of them. A chunk the model fails on is tried again
+	// on later passes, up to MaxAttempts.
+	ChunkChars  int             `yaml:"chunk_chars"`
+	MaxChunks   int             `yaml:"max_chunks"`
+	MaxAttempts int             `yaml:"max_attempts"`
+	Link        StoreLinkConfig `yaml:"link"`
+}
+
+// BudgetDuration is Budget parsed, 10m when blank or invalid.
+func (c StoreClaimsConfig) BudgetDuration() time.Duration {
+	return durationOr(c.Budget, 10*time.Minute)
+}
+
+// StoreLinkConfig drives claim linking: each claim's nearest claims from
+// other origins are labeled same, supports, contradicts, refines,
+// supersedes or unrelated by Backend (claude or ollama) and Model.
+type StoreLinkConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Backend string `yaml:"backend"`
+	Model   string `yaml:"model"`
+	// Neighbors is how many nearest claims each claim is compared with,
+	// MinSimilarity how close (cosine, 0-1) they must be.
+	Neighbors     int     `yaml:"neighbors"`
+	MinSimilarity float64 `yaml:"min_similarity"`
+	// BatchSize pairs go in one model call, at most MaxPairsPerDay pairs a
+	// day.
+	BatchSize      int `yaml:"batch_size"`
+	MaxPairsPerDay int `yaml:"max_pairs_per_day"`
 }
 
 // StoreFetchConfig drives the fetch stage (internal/fetch): after a run
@@ -99,6 +154,19 @@ type StoreEmbedConfig struct {
 // BudgetDuration is Budget parsed, 2m when blank or invalid.
 func (e StoreEmbedConfig) BudgetDuration() time.Duration {
 	return durationOr(e.Budget, 2*time.Minute)
+}
+
+// ageOr parses s as a Go duration or a number of days, weeks or years
+// (30d, 2w, 1y), def when blank or invalid.
+func ageOr(s string, def time.Duration) time.Duration {
+	s = strings.TrimSpace(s)
+	if len(s) > 1 {
+		unit := map[byte]time.Duration{'d': 24 * time.Hour, 'w': 7 * 24 * time.Hour, 'y': 365 * 24 * time.Hour}[s[len(s)-1]]
+		if n, err := strconv.Atoi(s[:len(s)-1]); unit > 0 && err == nil && n > 0 {
+			return time.Duration(n) * unit
+		}
+	}
+	return durationOr(s, def)
 }
 
 func durationOr(s string, def time.Duration) time.Duration {
@@ -333,6 +401,31 @@ store:
     model: nomic-embed-text
     host: ""
     budget: 2m
+  # Claims: the daemon extracts checkable claims, each with a quote that's
+  # checked against the document's text, from fetched documents (cited ones
+  # first) with a local model (blank model uses ollama.utility_model),
+  # within budget per pass and only while no task is running. link has a
+  # stronger model label how each claim relates to its nearest claims from
+  # other origins, at most max_pairs_per_day pairs a day.
+  claims:
+    enabled: true
+    model: ""
+    host: ""
+    budget: 10m
+    chunk_chars: 6000
+    max_chunks: 8
+    max_attempts: 3
+    link:
+      enabled: true
+      backend: claude
+      model: sonnet
+      neighbors: 5
+      min_similarity: 0.75
+      batch_size: 20
+      max_pairs_per_day: 500
+  # A volatile claim (a status, a count to date, a price) dated older than
+  # this is flagged possibly outdated.
+  volatile_max_age: 30d
 `
 
 func Dir() string {
@@ -467,6 +560,23 @@ func defaults() *Config {
 				Model:  "nomic-embed-text",
 				Budget: "2m",
 			},
+			Claims: StoreClaimsConfig{
+				Enabled:     true,
+				Budget:      "10m",
+				ChunkChars:  6000,
+				MaxChunks:   8,
+				MaxAttempts: 3,
+				Link: StoreLinkConfig{
+					Enabled:        true,
+					Backend:        "claude",
+					Model:          "sonnet",
+					Neighbors:      5,
+					MinSimilarity:  0.75,
+					BatchSize:      20,
+					MaxPairsPerDay: 500,
+				},
+			},
+			VolatileMaxAge: "30d",
 		},
 	}
 }

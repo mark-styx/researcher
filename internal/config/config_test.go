@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -525,5 +526,36 @@ func TestClaudeIgnoreUserConfig_DefaultsOnAndCanBeDisabled(t *testing.T) {
 	}
 	if cfg.Claude.IgnoreUserConfig {
 		t.Error("claude.ignore_user_config: false should be honored")
+	}
+}
+
+func TestStoreClaimsDefaults(t *testing.T) {
+	var fromYAML Config
+	if err := yaml.Unmarshal([]byte(DefaultYAML), &fromYAML); err != nil {
+		t.Fatal(err)
+	}
+	def := defaults()
+	for name, c := range map[string]StoreConfig{"template": fromYAML.Store, "defaults": def.Store} {
+		cl := c.Claims
+		if !cl.Enabled || cl.Model != "" || cl.BudgetDuration() != 10*time.Minute || cl.ChunkChars != 6000 || cl.MaxChunks != 8 || cl.MaxAttempts != 3 {
+			t.Errorf("%s claims = %+v", name, cl)
+		}
+		l := cl.Link
+		if !l.Enabled || l.Backend != "claude" || l.Model != "sonnet" || l.Neighbors != 5 || l.MinSimilarity != 0.75 || l.BatchSize != 20 || l.MaxPairsPerDay != 500 {
+			t.Errorf("%s link = %+v", name, l)
+		}
+		if c.VolatileMaxAgeDuration() != 30*24*time.Hour {
+			t.Errorf("%s volatile_max_age = %v", name, c.VolatileMaxAgeDuration())
+		}
+	}
+}
+
+func TestAgeOr(t *testing.T) {
+	day := 24 * time.Hour
+	tests := map[string]time.Duration{"30d": 30 * day, "2w": 14 * day, "1y": 365 * day, "36h": 36 * time.Hour, "": 7 * day, "0d": 7 * day, "x": 7 * day, "-3d": 7 * day}
+	for in, want := range tests {
+		if got := ageOr(in, 7*day); got != want {
+			t.Errorf("ageOr(%q) = %v, want %v", in, got, want)
+		}
 	}
 }

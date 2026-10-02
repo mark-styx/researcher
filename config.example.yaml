@@ -113,3 +113,28 @@ store:
     model: nomic-embed-text
     host: ""
     budget: 2m
+  # Claims: the daemon extracts checkable claims, each with a quote that's
+  # checked against the document's text, from fetched documents (cited ones
+  # first) with a local model (blank model uses ollama.utility_model),
+  # within budget per pass and only while no task is running. link has a
+  # stronger model label how each claim relates to its nearest claims from
+  # other origins, at most max_pairs_per_day pairs a day.
+  claims:
+    enabled: true
+    model: ""
+    host: ""
+    budget: 10m
+    chunk_chars: 6000
+    max_chunks: 8
+    max_attempts: 3
+    link:
+      enabled: true
+      backend: claude
+      model: sonnet
+      neighbors: 5
+      min_similarity: 0.75
+      batch_size: 20
+      max_pairs_per_day: 500
+  # A volatile claim (a status, a count to date, a price) dated older than
+  # this is flagged possibly outdated.
+  volatile_max_age: 30d
