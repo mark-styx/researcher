@@ -98,7 +98,8 @@ func decode[T any](t *testing.T, stdout string) T {
 
 func TestStoreCmd_WithoutDSN(t *testing.T) {
 	storeSetup(t, "")
-	for _, args := range [][]string{{"store", "init"}, {"store", "ingest"}, {"store", "embed"}, {"store", "rebuild"}} {
+	for _, args := range [][]string{{"store", "init"}, {"store", "ingest"}, {"store", "embed"}, {"store", "rebuild"},
+		{"find", "x"}, {"store", "passage", "1"}, {"store", "document", "1"}, {"store", "source", "S:1"}, {"store", "ingest-url", "https://x.example"}} {
 		_, stderr, err := runCmdStdout(t, args...)
 		if err == nil || !strings.Contains(err.Error(), "store.dsn is not set") {
 			t.Fatalf("%v: want a store.dsn error, got %v\n%s", args, err, stderr)

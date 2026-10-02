@@ -44,6 +44,7 @@ Get started:
 	root.AddCommand(critiqueCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(contextCmd())
+	root.AddCommand(findCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())
 	root.AddCommand(linkCmd())

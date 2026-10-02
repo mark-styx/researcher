@@ -1,0 +1,165 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/store/retrieve"
+	"github.com/spf13/cobra"
+)
+
+// findFlags are find's filters, shared by the CLI and its tests.
+type findFlags struct {
+	kinds                    []string
+	since, until, asOf       string
+	dateField, runID, domain string
+	preferRecent             string
+	minSimilarity            float64
+	limit                    int
+	jsonOut                  bool
+}
+
+// query turns the flags into a retrieve.Query.
+func (f findFlags) query(text string, now time.Time) (retrieve.Query, error) {
+	q := retrieve.Query{Text: text, Kinds: f.kinds, DateField: f.dateField, RunID: strings.TrimSpace(f.runID),
+		Domain: f.domain, MinSimilarity: f.minSimilarity, Limit: f.limit}
+	for _, b := range []struct {
+		flag, val string
+		end       bool
+		dst       **time.Time
+	}{{"--since", f.since, false, &q.Since}, {"--until", f.until, true, &q.Until}, {"--as-of", f.asOf, true, &q.AsOf}} {
+		if b.val == "" {
+			continue
+		}
+		t, err := retrieve.ParseBound(b.val, now, b.end)
+		if err != nil {
+			return q, fmt.Errorf("%s: %w", b.flag, err)
+		}
+		*b.dst = &t
+	}
+	if f.preferRecent != "" {
+		d, err := retrieve.ParseAge(f.preferRecent)
+		if err != nil {
+			return q, fmt.Errorf("--prefer-recent: %w", err)
+		}
+		q.PreferRecent = d
+	}
+	return q, nil
+}
+
+func findCmd() *cobra.Command {
+	var f findFlags
+	cmd := &cobra.Command{
+		Use:   "find <query>",
+		Short: "Search fetched documents and reports in the store index (no LLM call)",
+		Long: `Find searches the passages of every document the fetch stage got and of
+every report, ranking by full-text match and by meaning (store.embed.model
+through Ollama), fused. Each card has its source, publication date (when the
+source states one), when it was collected, and whether it is primary
+evidence (passage) or researchguy's own synthesis (report). Nothing is left
+out for its age unless a filter asks.
+
+When the embedding model is unavailable the search is full-text only, and
+it says so. Cite a card as [P:<id>] in a report; ` + "`researchguy store passage`" + `
+shows the text around it and ` + "`researchguy store document`" + ` the whole document.
+
+Dates take YYYY, YYYY-MM, YYYY-MM-DD or an age (90d, 2w, 1y). --since and
+--until bound the publication date unless --date collected; a publication
+bound leaves out undated documents. --as-of keeps what had been collected
+by then.`,
+		Example: `  researchguy find "nicotine patch trial outcomes"
+  researchguy find "court ruling on data brokers" --since 2023 --kind passage
+  researchguy find "funding sources" --run 20261002T174145Z-7761e0 --json
+  researchguy find "pfas regulation" --prefer-recent 1y --domain epa.gov`,
+		GroupID: "research",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("loading config: %w", err)
+			}
+			if err := requireDSN(cfg); err != nil {
+				return err
+			}
+			q, err := f.query(args[0], time.Now())
+			if err != nil {
+				return err
+			}
+			r, err := retrieve.Open(cmd.Context(), cfg)
+			if err != nil {
+				return err
+			}
+			defer r.Close()
+			res, err := r.Find(cmd.Context(), q)
+			if err != nil {
+				return err
+			}
+			if f.jsonOut {
+				return printJSON(res)
+			}
+			printFind(res)
+			return nil
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringSliceVar(&f.kinds, "kind", nil, "passage (fetched documents) or report (researchguy's synthesis); default both")
+	fl.StringVar(&f.since, "since", "", "Earliest date (YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y)")
+	fl.StringVar(&f.until, "until", "", "Latest date, inclusive")
+	fl.StringVar(&f.dateField, "date", "", "Date --since/--until bound: published (default) or collected")
+	fl.StringVar(&f.asOf, "as-of", "", "Only what had been collected by this date")
+	fl.StringVar(&f.runID, "run", "", "Only documents this run fetched, and its report")
+	fl.StringVar(&f.domain, "domain", "", "Only this domain and its subdomains")
+	fl.StringVar(&f.preferRecent, "prefer-recent", "", "Halve a card's score per this much age (such as 1y); off by default")
+	fl.Float64Var(&f.minSimilarity, "min-similarity", 0, "Drop meaning matches less similar than this (0-1)")
+	fl.IntVar(&f.limit, "limit", 10, "Cards to return (at most 100)")
+	fl.BoolVar(&f.jsonOut, "json", false, "Print JSON: {query, mode, embed_model, note, cards, took_ms}")
+	return cmd
+}
+
+// printFind prints find's cards for a person.
+func printFind(res retrieve.Result) {
+	if res.Note != "" {
+		fmt.Fprintln(os.Stderr, "Note: "+res.Note)
+	}
+	if len(res.Cards) == 0 {
+		fmt.Println("No matches.")
+		return
+	}
+	for i, c := range res.Cards {
+		title := c.Title
+		if title == "" {
+			title = c.URL
+		}
+		kind := c.Kind
+		if c.ContentKind == "abstract" {
+			kind += ", abstract only"
+		}
+		fmt.Printf("%d. [%s] %s (%s, %s)\n", i+1, c.Ref, title, c.Domain, kind)
+		fmt.Printf("   %s\n", c.Age)
+		if !strings.HasPrefix(c.URL, "researchguy:") {
+			fmt.Printf("   %s\n", c.URL)
+		} else if len(c.Runs) > 0 {
+			fmt.Printf("   report of run %s\n", c.Runs[0])
+		}
+		fmt.Printf("   %s\n\n", excerpt(c.Text, 300))
+	}
+	mode := "full-text and meaning"
+	if res.Mode == retrieve.ModeFullText {
+		mode = "full-text only"
+	}
+	fmt.Printf("%d card(s), %s, %dms\n", len(res.Cards), mode, res.TookMS)
+}
+
+// excerpt is the first n characters of s on one line.
+func excerpt(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "..."
+}
