@@ -417,11 +417,13 @@ func buildAggregationPrompt(original Request, workers []hybridWorkerOutput, evid
 		b.WriteString("\nYou have read-only researchguy tools. researchguy_find with run_id \"" + in.RunID + "\" searches the text fetched for this run; ")
 		b.WriteString("without run_id it searches prior research as well, whose reports come back marked as synthesis, not primary evidence. ")
 		b.WriteString("researchguy_passage and researchguy_document read around a hit, and researchguy_source shows a source's versions and fetches. ")
+		b.WriteString("Claim cards are single statements extracted from fetched documents, each with the quote that states it and flags from the claims linked to it; ")
+		b.WriteString("researchguy_claim shows one with those claims and researchguy_timeline lays them out in date order. A link with method model is an inference, not a finding. ")
 		b.WriteString("Quote from passages you retrieve, not from memory.\n")
 	}
 	b.WriteString("\nProduce the best final answer using the worker analysis, but ground factual claims in the evidence ledger")
 	if in.Sources != "" || len(in.MCP) > 0 {
-		b.WriteString(" and the store. Cite a ledger item as [E12], a store passage as [P:<id>] and a source as [S:<id>]")
+		b.WriteString(" and the store. Cite a ledger item as [E12], a store passage as [P:<id>], a claim as [C:<id>] and a source as [S:<id>]")
 	}
 	b.WriteString(". Put a direct quote in double quotes right before its citation, copied exactly, so it can be checked. Mark claims without support as analysis or uncertainty. ")
 	b.WriteString("Write the report between a " + reportBegin + " line and a " + reportEnd + " line.")

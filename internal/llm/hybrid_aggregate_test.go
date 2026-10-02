@@ -67,7 +67,7 @@ func TestHybrid_BeforeAggregateFeedsAggregatorAndCritics(t *testing.T) {
 		t.Error("worker got the aggregator's MCP servers or hook")
 	}
 	prompt := aggregator.lastReq.UserPrompt
-	for _, want := range []string{"| [S:5] | zoo.example | Cats |", `run_id "run-1"`, "[P:<id>]", "ledger snippet"} {
+	for _, want := range []string{"| [S:5] | zoo.example | Cats |", `run_id "run-1"`, "[P:<id>]", "[C:<id>]", "researchguy_timeline", "ledger snippet"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("aggregator prompt missing %q", want)
 		}

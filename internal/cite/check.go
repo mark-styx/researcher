@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,7 +23,7 @@ type target struct {
 }
 
 // Check resolves every citation in report. Captures are the report's run's;
-// r looks up passages and sources, and nil leaves them unchecked.
+// r looks up passages, claims and sources, and nil leaves them unchecked.
 func Check(ctx context.Context, report string, captures []store.Capture, r *retrieve.Retriever) []store.Citation {
 	bySeq := make(map[string]store.Capture, len(captures))
 	for _, c := range captures {
@@ -38,6 +39,8 @@ func Check(ctx context.Context, report string, captures []store.Capture, r *retr
 				t = captureTarget(bySeq, m.ID)
 			case KindPassage:
 				t = passageTarget(ctx, r, m.ID)
+			case KindClaim:
+				t = claimTarget(ctx, r, m.ID)
 			case KindSource:
 				t = sourceTarget(ctx, r, m.ID)
 			}
@@ -120,6 +123,69 @@ func passageTarget(ctx context.Context, r *retrieve.Retriever, id string) target
 	}
 	if p.Kind == retrieve.KindReport {
 		t.note = "cites a researchguy report, not primary evidence"
+	}
+	return t
+}
+
+// claimNotes are the claim flags a citation's note repeats: the ones that
+// say the claim may not hold.
+var claimNotes = []string{retrieve.FlagContested, retrieve.FlagNewerContradiction, retrieve.FlagSuperseded, retrieve.FlagPossiblyOutdated}
+
+// claimTarget is a claim and the passages around it. A quote is checked
+// against the document's text, not the claim's wording, which is the
+// model's.
+func claimTarget(ctx context.Context, r *retrieve.Retriever, id string) target {
+	cid, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return target{resolved: resolved(false), note: "not a claim id"}
+	}
+	if r == nil {
+		return target{note: "no index to look claims up in"}
+	}
+	c, err := r.Claim(ctx, cid)
+	if errors.Is(err, retrieve.ErrNotFound) {
+		return target{resolved: resolved(false), note: "no such claim in the store"}
+	}
+	if err != nil {
+		return target{note: "looking up the claim: " + err.Error()}
+	}
+	t := target{resolved: resolved(true)}
+	if c.PassageID != 0 {
+		if p, err := r.Passage(ctx, c.PassageID, 1); err == nil {
+			var parts []string
+			for _, n := range p.Before {
+				parts = append(parts, n.Text)
+			}
+			parts = append(parts, p.Text)
+			for _, n := range p.After {
+				parts = append(parts, n.Text)
+			}
+			t.texts = append(t.texts, strings.Join(parts, "\n"))
+		}
+	}
+	// An unanchored claim has no passage: check against the document.
+	if len(t.texts) == 0 {
+		if text, _, err := r.DocumentText(ctx, c.DocumentID); err == nil {
+			t.texts = append(t.texts, text)
+		}
+	}
+	switch {
+	case len(t.texts) == 0:
+		t.partial = "the store has no text for the claim's document"
+	case c.ContentKind == store.KindAbstract:
+		t.partial = "the store has only the abstract"
+	}
+	var notes []string
+	if !c.QuoteVerified {
+		notes = append(notes, "its quote isn't in its document")
+	}
+	for _, f := range c.Flags {
+		if slices.Contains(claimNotes, f) {
+			notes = append(notes, strings.ReplaceAll(f, "_", " "))
+		}
+	}
+	if len(notes) > 0 {
+		t.note = "claim: " + strings.Join(notes, ", ")
 	}
 	return t
 }
@@ -249,8 +315,9 @@ func NotesSection(report, notes string) string {
 // maxCitedPassages caps the passages Passages returns.
 const maxCitedPassages = 50
 
-// Passages returns the store passages a draft cites, as evidence the
-// critics can judge those citations against.
+// Passages returns the store passages a draft cites, and the passages its
+// cited claims are in, as evidence the critics can judge those citations
+// against.
 func Passages(ctx context.Context, draft string, r *retrieve.Retriever) []critique.Evidence {
 	if r == nil {
 		return nil
@@ -258,13 +325,26 @@ func Passages(ctx context.Context, draft string, r *retrieve.Retriever) []critiq
 	seen := map[string]bool{}
 	var out []critique.Evidence
 	for _, m := range Parse(draft) {
-		if m.Kind != KindPassage || seen[m.Marker] || len(out) == maxCitedPassages {
+		if (m.Kind != KindPassage && m.Kind != KindClaim) || seen[m.Marker] || len(out) == maxCitedPassages {
 			continue
 		}
 		seen[m.Marker] = true
 		id, err := strconv.ParseInt(m.ID, 10, 64)
 		if err != nil {
 			continue
+		}
+		claim := ""
+		if m.Kind == KindClaim {
+			c, err := r.Claim(ctx, id)
+			if err != nil || c.PassageID == 0 {
+				continue
+			}
+			claim = "Claim: " + c.Text + "\n"
+			if len(c.Flags) > 0 {
+				claim += "Flags: " + strings.Join(c.Flags, ", ") + "\n"
+			}
+			claim += "\n"
+			id = c.PassageID
 		}
 		p, err := r.Passage(ctx, id, 0)
 		if err != nil {
@@ -274,7 +354,7 @@ func Passages(ctx context.Context, draft string, r *retrieve.Retriever) []critiq
 		if p.Kind == retrieve.KindReport {
 			label += ", researchguy synthesis"
 		}
-		out = append(out, critique.Evidence{ID: m.Marker, Label: label, Content: p.Text})
+		out = append(out, critique.Evidence{ID: m.Marker, Label: label, Content: claim + p.Text})
 	}
 	return out
 }

@@ -20,12 +20,13 @@ func TestIngestRun_Citations(t *testing.T) {
 		{Ord: 3, Marker: "P:9", TargetKind: "passage", TargetID: "9", ReportOffset: 60, Group: 3, Quote: "e f g h", Resolved: &no, QuoteStatus: store.QuoteNotFound},
 		{Ord: 4, Marker: "S:2", TargetKind: "source", TargetID: "2", ReportOffset: 66, Group: 3, Quote: "e f g h", Resolved: &yes, QuoteStatus: store.QuoteFound},
 		{Ord: 5, Marker: "S:3", TargetKind: "source", TargetID: "3", ReportOffset: 80, Group: 4, QuoteStatus: store.QuoteUnchecked, Quote: "i j k l"},
+		{Ord: 6, Marker: "C:7", TargetKind: "claim", TargetID: "7", ReportOffset: 90, Group: 5, Resolved: &yes, Note: "claim: contested"},
 	}
 	if err := store.WriteCitations(run.Dir(), cs); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := ix.IngestRun(ctx, run.Dir(), false)
-	if err != nil || stats.Citations != 5 {
+	if err != nil || stats.Citations != 6 {
 		t.Fatalf("ingest = %+v, %v", stats, err)
 	}
 	var marker, note string
@@ -39,7 +40,7 @@ func TestIngestRun_Citations(t *testing.T) {
 		t.Errorf("unchecked resolved = %v, %v", resolved, err)
 	}
 	c, err := ix.Counts(ctx)
-	if err != nil || c.Citations != 5 || c.Unresolved != 2 || c.QuotesNotFound != 1 {
+	if err != nil || c.Citations != 6 || c.Unresolved != 2 || c.QuotesNotFound != 1 {
 		t.Errorf("counts = %+v, %v", c, err)
 	}
 	fails, err := ix.CitationFailures(ctx, 10)

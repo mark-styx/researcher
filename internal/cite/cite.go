@@ -1,7 +1,7 @@
 // Package cite finds the citation markers in a report and checks each one
 // against what it cites: [E<seq>] a capture in the report's run, [P:<id>] a
-// store passage, [S:<id>] a source. It also checks that a direct quote
-// before a marker appears in the cited text. The check is deterministic:
+// store passage, [C:<id>] an extracted claim, [S:<id>] a source. It also
+// checks that a direct quote before a marker appears in the cited text. The check is deterministic:
 // no model reads the report.
 package cite
 
@@ -16,14 +16,15 @@ import (
 const (
 	KindCapture = "capture"
 	KindPassage = "passage"
+	KindClaim   = "claim"
 	KindSource  = "source"
 )
 
 // Marker is one citation in a report.
 type Marker struct {
 	Ord    int    // 1-based, in report order
-	Marker string // as cited: E12, P:123, S:456
-	Kind   string // KindCapture, KindPassage or KindSource
+	Marker string // as cited: E12, P:123, C:789, S:456
+	Kind   string // KindCapture, KindPassage, KindClaim or KindSource
 	ID     string // the seq or store ID
 	Offset int    // characters into the report, to the marker's bracket
 	// Group numbers the citations made together, one bracket or adjacent
@@ -33,8 +34,8 @@ type Marker struct {
 }
 
 var (
-	bracketRE = regexp.MustCompile(`\[\s*((?:E\d+|[PS]:\d+)(?:\s*[,;]\s*(?:E\d+|[PS]:\d+))*)\s*\]`)
-	markerRE  = regexp.MustCompile(`E\d+|[PS]:\d+`)
+	bracketRE = regexp.MustCompile(`\[\s*((?:E\d+|[PCS]:\d+)(?:\s*[,;]\s*(?:E\d+|[PCS]:\d+))*)\s*\]`)
+	markerRE  = regexp.MustCompile(`E\d+|[PCS]:\d+`)
 )
 
 // MinQuoteWords is the shortest quoted string treated as a direct quote.
@@ -69,6 +70,8 @@ func Parse(report string) []Marker {
 				mk.Kind, mk.ID = KindCapture, m[1:]
 			case 'P':
 				mk.Kind, mk.ID = KindPassage, m[2:]
+			case 'C':
+				mk.Kind, mk.ID = KindClaim, m[2:]
 			case 'S':
 				mk.Kind, mk.ID = KindSource, m[2:]
 			}

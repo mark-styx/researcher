@@ -99,3 +99,8 @@ CREATE TABLE store_state (
     key    text PRIMARY KEY,
     value  bigint NOT NULL
 );
+
+-- A report can cite a claim as [C:<id>].
+ALTER TABLE citations
+    DROP CONSTRAINT citations_target_kind_check,
+    ADD CONSTRAINT citations_target_kind_check CHECK (target_kind IN ('capture', 'passage', 'source', 'claim'));

@@ -189,3 +189,77 @@ func TestNotesSection(t *testing.T) {
 		t.Errorf("under critic notes = %q", got)
 	}
 }
+
+func TestCheck_Claims(t *testing.T) {
+	f := newCheckFixture(t)
+	ctx := context.Background()
+	ix, st := f.r.Index, f.r.Store
+	ids := map[string]int64{}
+	for _, d := range []struct {
+		url    string
+		claims map[string]store.ExtractedClaim
+	}{
+		{catURL, map[string]store.ExtractedClaim{
+			"nap":   {Text: "Cats sleep most of the day.", Quote: "sleep twelve to sixteen hours daily"},
+			"loose": {Text: "Cats like windows.", Quote: "cats adore every window"},
+		}},
+		{abstractURL, map[string]store.ExtractedClaim{"shelter": {Text: "Shelter cats were studied.", Quote: "we measured feline sleep in shelters"}}},
+	} {
+		var doc int64
+		var sha string
+		if err := ix.Pool().QueryRow(ctx, `SELECT d.id, d.sha256 FROM documents d JOIN sources s ON s.id = d.source_id WHERE s.url = $1`, d.url).Scan(&doc, &sha); err != nil {
+			t.Fatal(err)
+		}
+		e := store.Extraction{TextSHA: sha, Extractor: "test/claims-v1", Model: "test", Chunks: 1, Attempts: 1}
+		for _, name := range []string{"nap", "loose", "shelter"} {
+			if c, ok := d.claims[name]; ok {
+				ids[name] = index.ClaimID(doc, e.Extractor, 0, len(e.Claims))
+				e.Claims = append(e.Claims, c)
+			}
+		}
+		if err := st.PutExtraction(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.AppendLinks([]store.Link{{From: ids["nap"], To: ids["shelter"], Relation: store.RelContradicts, Method: store.LinkModel,
+		CreatedAt: time.Now().UTC()}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.SyncClaims(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+
+	c := func(name string) string { return "C:" + id(ids[name]) }
+	report := strings.Join([]string{
+		`Cats "sleep twelve to sixteen hours daily" [` + c("nap") + `].`,
+		`Unanchored: "mostly in warm places near windows" [` + c("loose") + `].`,
+		`Abstract: "we measured feline sleep in shelters" [` + c("shelter") + `] and "the abstract says nothing like this" [` + c("shelter") + `].`,
+		`Missing [C:12345].`,
+	}, "\n")
+	cs := Check(ctx, report, f.captures, f.r)
+	type want struct {
+		marker, quote, note string
+		resolved            bool
+	}
+	wants := []want{
+		{c("nap"), store.QuoteFound, "claim: contested", true},
+		{c("loose"), store.QuoteFound, "claim: its quote isn't in its document", true},
+		{c("shelter"), store.QuoteFound, "claim: contested", true},
+		{c("shelter"), store.QuoteUnverifiable, "claim: contested", true},
+		{"C:12345", "", "no such claim in the store", false},
+	}
+	if len(cs) != len(wants) {
+		t.Fatalf("got %d citations: %+v", len(cs), cs)
+	}
+	for i, w := range wants {
+		got := cs[i]
+		if got.Marker != w.marker || got.TargetKind != KindClaim || got.Resolved == nil || *got.Resolved != w.resolved || got.QuoteStatus != w.quote || got.Note != w.note {
+			t.Errorf("citation %d = %+v, want %+v", i, got, w)
+		}
+	}
+
+	ev := Passages(ctx, "A ["+c("nap")+"] B [P:"+id(f.catP)+"] C [C:12345]", f.r)
+	if len(ev) != 2 || ev[0].ID != c("nap") || ev[0].Content != "Claim: Cats sleep most of the day.\nFlags: single_origin, contested\n\n"+catText {
+		t.Errorf("evidence = %+v", ev)
+	}
+}
