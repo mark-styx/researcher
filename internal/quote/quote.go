@@ -60,6 +60,10 @@ func Locate(q, text string) (start, end int, ok bool) {
 	}
 }
 
+// Key is s as Locate compares it: lowercase words separated by single
+// spaces. Two spans with the same key quote the same words.
+func Key(s string) string { return strings.TrimSpace(normalizeQuote(s)) }
+
 // Found reports whether quote occurs in text.
 func Found(q, text string) bool {
 	_, _, ok := Locate(q, text)

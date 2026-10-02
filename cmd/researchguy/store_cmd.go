@@ -204,6 +204,13 @@ func ingestEach(ctx context.Context, ix *index.Index, st *store.Store, runID str
 			stats.Ingested = append(stats.Ingested, rs)
 		}
 	}
+	if runID == "" {
+		cs, err := ix.SyncClaims(ctx, st)
+		stats.Claims = &cs
+		if err != nil {
+			return stats, fmt.Errorf("syncing claims: %w", err)
+		}
+	}
 	return stats, nil
 }
 
@@ -282,10 +289,36 @@ func printSyncStats(stats index.SyncStats, verb string) {
 	for _, id := range sortedKeys(stats.Failed) {
 		fmt.Fprintf(os.Stderr, "Failed %s: %s\n", id, stats.Failed[id])
 	}
+	if c := stats.Claims; c != nil {
+		if c.Extractions > 0 || c.Links > 0 || c.Waiting > 0 {
+			fmt.Printf("Claims: %d extraction(s), %d claim(s), %d with the quote found; %d rule link(s), %d logged link(s) read",
+				c.Extractions, c.Claims, c.Verified, c.RuleLinks, c.Links)
+			if c.Waiting > 0 {
+				fmt.Printf("; %d extraction(s) waiting on their document", c.Waiting)
+			}
+			fmt.Println()
+		}
+		if o := c.Origins; o != nil {
+			fmt.Printf("Origins: %d document(s) in %d origin(s)\n", o.Documents, o.Origins)
+		}
+		if len(c.BadLinks) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: %d line(s) of %s don't decode and were skipped\n", len(c.BadLinks), store.LinksFile)
+		}
+		for _, path := range sortedKeys(c.Failed) {
+			fmt.Fprintf(os.Stderr, "Failed %s: %s\n", path, c.Failed[path])
+		}
+	}
 }
 
 func failedErr(stats index.SyncStats) error {
-	if n := len(stats.Failed); n > 0 {
+	n := len(stats.Failed)
+	if stats.Claims != nil && len(stats.Claims.Failed) > 0 {
+		if n > 0 {
+			return fmt.Errorf("%d run(s) and %d extraction file(s) failed to index", n, len(stats.Claims.Failed))
+		}
+		return fmt.Errorf("%d extraction file(s) failed to index", len(stats.Claims.Failed))
+	}
+	if n > 0 {
 		return fmt.Errorf("%d run(s) failed to index", n)
 	}
 	return nil

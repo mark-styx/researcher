@@ -19,6 +19,8 @@ type SyncStats struct {
 	Ingested    []RunStats        `json:"ingested"`
 	UpToDate    int               `json:"up_to_date"`
 	Failed      map[string]string `json:"failed,omitempty"` // run id: error
+	// Claims is what syncing the store's claims did, after the runs.
+	Claims *ClaimStats `json:"claims,omitempty"`
 }
 
 // Sync marks dead runs interrupted, then ingests every run that is new or
@@ -51,6 +53,11 @@ func (ix *Index) Sync(ctx context.Context, st *store.Store) (SyncStats, error) {
 		}
 		stats.Ingested = append(stats.Ingested, rs)
 	}
+	cs, err := ix.SyncClaims(ctx, st)
+	stats.Claims = &cs
+	if err != nil {
+		return stats, fmt.Errorf("syncing claims: %w", err)
+	}
 	return stats, nil
 }
 
@@ -68,7 +75,7 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 		return stats, err
 	}
 	err = pgx.BeginFunc(ctx, ix.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `TRUNCATE citations, passages, fetches, documents, sightings, captures, sources, runs`); err != nil {
+		if _, err := tx.Exec(ctx, `TRUNCATE claim_links, claims, extractions, origins, store_state, citations, passages, fetches, documents, sightings, captures, sources, runs`); err != nil {
 			return fmt.Errorf("emptying index: %w", err)
 		}
 		for _, id := range ids {
@@ -87,6 +94,11 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 			}
 			stats.Ingested = append(stats.Ingested, rs)
 		}
+		cs, err := ix.syncClaims(ctx, tx, st)
+		if err != nil {
+			return fmt.Errorf("syncing claims: %w", err)
+		}
+		stats.Claims = &cs
 		return nil
 	})
 	if err != nil {
