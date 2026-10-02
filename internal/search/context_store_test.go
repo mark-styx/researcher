@@ -16,6 +16,7 @@ import (
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
+	"github.com/marklubin/researchguy/internal/store/retrieve"
 )
 
 const reportText = "# Wells\n\nOur earlier report: nitrate in wells near feedlots is rising, per the county survey."
@@ -134,5 +135,31 @@ func TestBuildContext_StoreDown(t *testing.T) {
 	}
 	if got.Count != 1 || len(got.Notes) != 1 || !strings.Contains(got.Notes[0], "store index unavailable") {
 		t.Errorf("store down = %+v", got)
+	}
+}
+
+func TestFormatEvidence_Claim(t *testing.T) {
+	c := retrieve.Card{Ref: "C:5", Kind: retrieve.KindClaim, Title: "Nitrate survey", URL: "https://county.example/survey", Age: "published 2022-08-01",
+		Text: "Nitrate levels rose.", Quote: "nitrate levels rose", QuoteVerified: true, Flags: []string{retrieve.FlagReinforced, retrieve.FlagContested},
+		Cluster: &retrieve.Cluster{Origins: 2, SupportDates: "2021-2022", Related: []retrieve.Related{
+			{Ref: "C:9", Relation: retrieve.RelContradicts, Method: store.LinkModel, Domain: "farm.example", Dated: "2023-01-01", Text: "Levels held steady."},
+			{Ref: "C:7", Relation: retrieve.RelSame, Method: store.LinkRule, Domain: "news.example", Dated: "2021-05-01", Text: "Nitrate went up."},
+		}}}
+	got := FormatEvidence([]retrieve.Card{c})
+	want := `--- Evidence [C:5]: claim from Nitrate survey (primary evidence; reinforced, contested; published 2022-08-01) ---
+https://county.example/survey
+Nitrate levels rose.
+Quote: "nitrate levels rose"
+Said by 2 independent origins (2021-2022)
+contradicts [C:9] (farm.example, 2023-01-01; model-labeled, an inference): Levels held steady.
+same [C:7] (news.example, 2021-05-01; rule): Nitrate went up.
+
+`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	c.QuoteVerified, c.Flags, c.Cluster = false, nil, nil
+	if got := FormatEvidence([]retrieve.Card{c}); strings.Contains(got, "Quote:") || !strings.Contains(got, "no cluster flags") {
+		t.Errorf("unverified, unlinked claim:\n%s", got)
 	}
 }

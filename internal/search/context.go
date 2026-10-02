@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/retrieve"
 )
 
@@ -266,9 +267,40 @@ func FormatEvidence(cards []retrieve.Card) string {
 		if title == "" {
 			title = c.Domain
 		}
+		if c.Kind == retrieve.KindClaim {
+			writeClaimEvidence(&b, c, title)
+			continue
+		}
 		fmt.Fprintf(&b, "--- Evidence [%s]: %s (%s; %s) ---\n%s\n%s\n\n", c.Ref, title, kind, c.Age, where, strings.TrimSpace(c.Text))
 	}
 	return b.String()
+}
+
+// writeClaimEvidence formats a claim card: the claim, the quote it was
+// found in, its flags and the claims linked to it, each with how the link
+// was made, since a model's label is an inference, not a finding.
+func writeClaimEvidence(b *strings.Builder, c retrieve.Card, title string) {
+	flags := "no cluster flags"
+	if len(c.Flags) > 0 {
+		flags = strings.Join(c.Flags, ", ")
+	}
+	fmt.Fprintf(b, "--- Evidence [%s]: claim from %s (primary evidence; %s; %s) ---\n%s\n%s\n", c.Ref, title, flags, c.Age, c.URL, strings.TrimSpace(c.Text))
+	if c.QuoteVerified {
+		fmt.Fprintf(b, "Quote: %q\n", c.Quote)
+	}
+	if cl := c.Cluster; cl != nil {
+		if cl.Origins > 1 {
+			fmt.Fprintf(b, "Said by %d independent origins (%s)\n", cl.Origins, cl.SupportDates)
+		}
+		for _, rel := range cl.Related {
+			how := rel.Method
+			if rel.Method == store.LinkModel {
+				how = "model-labeled, an inference"
+			}
+			fmt.Fprintf(b, "%s [%s] (%s, %s; %s): %s\n", strings.ReplaceAll(rel.Relation, "_", " "), rel.Ref, rel.Domain, rel.Dated, how, strings.TrimSpace(rel.Text))
+		}
+	}
+	b.WriteString("\n")
 }
 
 // readWhole returns the file content if it is readable and small enough.

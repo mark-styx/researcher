@@ -56,7 +56,7 @@ func NewRead(cfg *config.Config, version string) *server.MCPServer {
 var ReadTools = []string{
 	"researchguy_search", "researchguy_context", "researchguy_list", "researchguy_read",
 	"researchguy_graph_list", "researchguy_graph_show", "researchguy_graph_find",
-	"researchguy_find", "researchguy_passage", "researchguy_document", "researchguy_source",
+	"researchguy_find", "researchguy_passage", "researchguy_claim", "researchguy_timeline", "researchguy_document", "researchguy_source",
 }
 
 func newServer(version string) *server.MCPServer {

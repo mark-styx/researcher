@@ -45,6 +45,7 @@ Get started:
 	root.AddCommand(searchCmd())
 	root.AddCommand(contextCmd())
 	root.AddCommand(findCmd())
+	root.AddCommand(timelineCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())
 	root.AddCommand(linkCmd())

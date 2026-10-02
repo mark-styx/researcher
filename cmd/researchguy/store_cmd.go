@@ -35,7 +35,7 @@ derived from the store: rebuild recreates it from scratch.`,
 		GroupID: "project",
 	}
 	cmd.AddCommand(storeInitCmd(), storeIngestCmd(), storeFetchCmd(), storeEmbedCmd(), storeExtractCmd(), storeLinkCmd(), storeRebuildCmd(), storeDoctorCmd(),
-		storePassageCmd(), storeDocumentCmd(), storeSourceCmd(), storeIngestURLCmd())
+		storePassageCmd(), storeClaimCmd(), storeDocumentCmd(), storeSourceCmd(), storeIngestURLCmd())
 	return cmd
 }
 

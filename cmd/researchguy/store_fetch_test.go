@@ -16,6 +16,7 @@ import (
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
+	"github.com/marklubin/researchguy/internal/store/retrieve"
 )
 
 // fetchSite serves an article, a 404 and a fake Ollama: /api/embed (down
@@ -245,6 +246,37 @@ func TestStoreExtract_WithIndex(t *testing.T) {
 	log, _ := st.ReadLinks(0)
 	if len(log.Links) != 1 || log.Links[0].Method != store.LinkHuman || log.Links[0].From != id || log.Links[0].To != 99 || log.Links[0].Note != "newer" {
 		t.Errorf("links = %+v", log.Links)
+	}
+
+	// The claim is found, looked up and laid out; the link to a claim
+	// that isn't indexed isn't shown.
+	fr := decode[retrieve.Result](t, mustStdout(t, "find", "article long", "--kind", "claim", "--json"))
+	if len(fr.Cards) != 1 || fr.Cards[0].Ref != ref || fr.Cards[0].Kind != retrieve.KindClaim || fr.Cards[0].Quote != "long enough to be the document" {
+		t.Fatalf("find claims = %+v", fr.Cards)
+	}
+	out := mustStdout(t, "find", "article long", "--kind", "claim")
+	for _, want := range []string{"1. [" + ref + "] The article is long.", "   single_origin\n", `   quote: "long enough to be the document"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("find output lacks %q:\n%s", want, out)
+		}
+	}
+	out = mustStdout(t, "store", "claim", ref)
+	for _, want := range []string{"[" + ref + "] The article is long.", "extracted by qwen-test/claims-v1 on ", "[P:", "long enough to be the document"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("store claim output lacks %q:\n%s", want, out)
+		}
+	}
+	if cr := decode[retrieve.ClaimResult](t, mustStdout(t, "store", "claim", strings.TrimPrefix(ref, "C:"), "--json")); cr.Ref != ref || cr.Passage == nil {
+		t.Errorf("store claim --json = %+v", cr)
+	}
+	if _, _, err := runCmdStdout(t, "store", "claim", "C:99"); err == nil || !strings.Contains(err.Error(), "claim C:99: not in the index") {
+		t.Errorf("missing claim = %v", err)
+	}
+	if out := mustStdout(t, "timeline", ref); !strings.Contains(out, "["+ref+"] The article is long.") || !strings.Contains(out, "1 claim(s), oldest first") {
+		t.Errorf("timeline: %q", out)
+	}
+	if tl := decode[retrieve.TimelineResult](t, mustStdout(t, "timeline", "article long", "--json")); len(tl.Entries) != 1 || !tl.Entries[0].Matched {
+		t.Errorf("timeline --json = %+v", tl)
 	}
 
 	// A rebuild restores the claims and links from the store.

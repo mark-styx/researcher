@@ -22,16 +22,23 @@ func findCmd() *cobra.Command {
 	var f findFlags
 	cmd := &cobra.Command{
 		Use:   "find <query>",
-		Short: "Search fetched documents and reports in the store index (no LLM call)",
+		Short: "Search fetched documents, claims and reports in the store index (no LLM call)",
 		Long: `Find searches the passages of every document the fetch stage got and of
-every report, ranking by full-text match and by meaning (store.embed.model
-through Ollama), fused. Each card has its source, publication date (when the
-source states one), when it was collected, and whether it is primary
-evidence (passage) or researchguy's own synthesis (report). Nothing is left
-out for its age unless a filter asks.
+every report, and the claims extracted from documents, ranking by full-text
+match and by meaning (store.embed.model through Ollama), fused. Each card has
+its source, publication date (when the source states one), when it was
+collected, and whether it is primary evidence (passage), a claim with the
+quote that states it, or researchguy's own synthesis (report). Nothing is
+left out for its age unless a filter asks.
+
+A claim card has flags from the claims linked to it: reinforced (two or more
+independent origins say it), single_origin, contested, newer_contradiction,
+superseded and possibly_outdated (a volatile claim older than
+store.volatile_max_age). A link a model labeled says so; it's an inference.
+Only claims whose quote was found in the document are returned.
 
 When the embedding model is unavailable the search is full-text only, and
-it says so. Cite a card as [P:<id>] in a report; ` + "`researchguy store passage`" + `
+it says so. Cite a card as [P:<id>] or [C:<id>] in a report; ` + "`researchguy store passage`" + `
 shows the text around it and ` + "`researchguy store document`" + ` the whole document.
 
 Dates take YYYY, YYYY-MM, YYYY-MM-DD or an age (90d, 2w, 1y). --since and
@@ -74,7 +81,7 @@ by then.`,
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringSliceVar(&f.Kinds, "kind", nil, "passage (fetched documents) or report (researchguy's synthesis); default both")
+	fl.StringSliceVar(&f.Kinds, "kind", nil, "passage (fetched documents), claim (claims extracted from them) or report (researchguy's synthesis); default all")
 	fl.StringVar(&f.Since, "since", "", "Earliest date (YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y)")
 	fl.StringVar(&f.Until, "until", "", "Latest date, inclusive")
 	fl.StringVar(&f.DateField, "date", "", "Date --since/--until bound: published (default) or collected")
@@ -105,6 +112,13 @@ func printFind(res retrieve.Result) {
 		kind := c.Kind
 		if c.ContentKind == "abstract" {
 			kind += ", abstract only"
+		}
+		if c.Kind == retrieve.KindClaim {
+			fmt.Printf("%d. [%s] %s\n", i+1, c.Ref, excerpt(c.Text, 300))
+			fmt.Printf("   %s (%s, %s)\n   %s\n   %s\n", title, c.Domain, kind, c.Age, c.URL)
+			printClaimLines(c, maxRelatedShown)
+			fmt.Println()
+			continue
 		}
 		fmt.Printf("%d. [%s] %s (%s, %s)\n", i+1, c.Ref, title, c.Domain, kind)
 		fmt.Printf("   %s\n", c.Age)

@@ -104,6 +104,8 @@ func TestMCPServer_ListTools(t *testing.T) {
 
 		"researchguy_find":       false,
 		"researchguy_passage":    false,
+		"researchguy_claim":      false,
+		"researchguy_timeline":   false,
 		"researchguy_document":   false,
 		"researchguy_source":     false,
 		"researchguy_ingest_url": false,

@@ -51,6 +51,8 @@ func (t *storeTools) retriever(ctx context.Context) (*retrieve.Retriever, error)
 func addStoreTools(s *server.MCPServer, t *storeTools, write bool) {
 	s.AddTool(findTool(), t.findHandler)
 	s.AddTool(passageTool(), t.passageHandler)
+	s.AddTool(claimTool(), t.claimHandler)
+	s.AddTool(timelineTool(), t.timelineHandler)
 	s.AddTool(documentTool(), t.documentHandler)
 	s.AddTool(sourceTool(), t.sourceHandler)
 	if write {
@@ -58,7 +60,7 @@ func addStoreTools(s *server.MCPServer, t *storeTools, write bool) {
 	}
 }
 
-// parseRefID reads an id given as a number or as its ref (P:123, S:123).
+// parseRefID reads an id given as a number or as its ref (P:123, C:123, S:123).
 // IDs are 63-bit, past what a JSON number holds exactly, so tools take
 // them as strings.
 func parseRefID(s, prefix string) (int64, error) {
@@ -79,13 +81,19 @@ func lookupError(err error) (*mcp.CallToolResult, error) {
 
 func findTool() mcp.Tool {
 	return mcp.NewTool("researchguy_find",
-		mcp.WithDescription("Search the passages of every document researchguy fetched and of its own reports, by full-text match and by meaning, fused. "+
+		mcp.WithDescription("Search the passages of every document researchguy fetched and of its own reports, and the claims extracted from those documents, "+
+			"by full-text match and by meaning, fused. "+
 			"Each card has its source URL and domain, the publication date when the source states one (with where the date came from, and weak when it's a guess), "+
-			"when it was collected, and kind: passage (primary evidence from a fetched document; content_kind abstract means only the abstract was fetched) or "+
+			"when it was collected, and kind: passage (primary evidence from a fetched document; content_kind abstract means only the abstract was fetched), "+
+			"claim (one checkable statement from a fetched document, with the quote that states it, checked against the document's text), or "+
 			"report (researchguy's own earlier synthesis, never primary evidence). Nothing is dropped for age unless you filter. "+
-			"Cite a card as [P:<id>] using its ref. mode full_text with a note means the embedding model was down. No LLM call."),
+			"A claim card has flags: reinforced (two or more independent origins say it), single_origin (however many pages repeat it, it traces to one), "+
+			"contested, newer_contradiction, superseded, possibly_outdated (volatile and old). Its cluster lists the linked claims with method: "+
+			"rule (same quoted words), model (an inference, with the labeling model and its confidence) or human. "+
+			"Cite a passage as [P:<id>] and a claim as [C:<id>] using its ref. mode full_text with a note means the embedding model was down. No LLM call."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("What to find, in plain words")),
-		mcp.WithArray("kinds", mcp.Description("passage, report, or both (default both)"), mcp.WithStringEnumItems([]string{retrieve.KindPassage, retrieve.KindReport})),
+		mcp.WithArray("kinds", mcp.Description("passage, claim, report, or any of them (default all)"),
+			mcp.WithStringEnumItems([]string{retrieve.KindPassage, retrieve.KindClaim, retrieve.KindReport})),
 		mcp.WithString("since", mcp.Description("Earliest date: YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y. Bounds the publication date unless date_field is collected; leaves out undated documents")),
 		mcp.WithString("until", mcp.Description("Latest date, inclusive (until 2020 takes in all of 2020)")),
 		mcp.WithString("date_field", mcp.Description("Date since/until bound"), mcp.Enum(retrieve.DatePublished, retrieve.DateCollected)),
@@ -151,6 +159,81 @@ func (t *storeTools) passageHandler(ctx context.Context, req mcp.CallToolRequest
 		return lookupError(err)
 	}
 	return toolResultJSON(p)
+}
+
+// --- researchguy_claim ---
+
+func claimTool() mcp.Tool {
+	return mcp.NewTool("researchguy_claim",
+		mcp.WithDescription("One extracted claim: its text, the quote that states it (quote_verified false means the quote wasn't found in the document; "+
+			"model_quote is what the model gave, never cite it as quoted), the passage it's in, its flags, and every claim linked to it with how "+
+			"the link was made (rule, model with its confidence, or human). For checking a [C:<id>] citation."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("The claim ref (C:123) or id")),
+	)
+}
+
+func (t *storeTools) claimHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, err := req.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	id, err := parseRefID(raw, retrieve.RefClaim)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	r, err := t.retriever(ctx)
+	if err != nil {
+		return lookupError(err)
+	}
+	c, err := r.Claim(ctx, id)
+	if err != nil {
+		return lookupError(err)
+	}
+	return toolResultJSON(c)
+}
+
+// --- researchguy_timeline ---
+
+func timelineTool() mcp.Tool {
+	return mcp.NewTool("researchguy_timeline",
+		mcp.WithDescription("What sources said on a question, in date order: the claims a find of the query returns, plus the claims linked to them, "+
+			"oldest first by the date each is true as of (its own date, else publication, else collection). changes marks a claim that supersedes, "+
+			"refines or contradicts an earlier entry: where the evidence changed. matched false means the claim came in through a link. "+
+			"Given a claim ref (C:123) as the query, it starts from that claim. No LLM call."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("What to lay out, in plain words, or a claim ref (C:123)")),
+		mcp.WithString("since", mcp.Description("Earliest date: YYYY, YYYY-MM, YYYY-MM-DD or an age such as 2y")),
+		mcp.WithString("until", mcp.Description("Latest date, inclusive")),
+		mcp.WithString("date_field", mcp.Description("Date since/until bound"), mcp.Enum(retrieve.DatePublished, retrieve.DateCollected)),
+		mcp.WithString("as_of", mcp.Description("Only what had been collected by this date")),
+		mcp.WithString("run_id", mcp.Description("Only claims from documents this run fetched")),
+		mcp.WithString("domain", mcp.Description("Only this domain and its subdomains")),
+		mcp.WithNumber("min_similarity", mcp.Description("Drop meaning matches less similar than this (0-1)")),
+		mcp.WithNumber("limit", mcp.Description("Claims the query finds before linked ones are added (default 20, at most 100)")),
+	)
+}
+
+func (t *storeTools) timelineHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	text, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	q, err := retrieve.Args{
+		Since: req.GetString("since", ""), Until: req.GetString("until", ""), DateField: req.GetString("date_field", ""),
+		AsOf: req.GetString("as_of", ""), RunID: req.GetString("run_id", ""), Domain: req.GetString("domain", ""),
+		MinSimilarity: req.GetFloat("min_similarity", 0), Limit: req.GetInt("limit", 20),
+	}.Query(text, time.Now())
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	r, err := t.retriever(ctx)
+	if err != nil {
+		return lookupError(err)
+	}
+	res, err := r.Timeline(ctx, q)
+	if err != nil {
+		return lookupError(err)
+	}
+	return toolResultJSON(res)
 }
 
 // --- researchguy_document ---

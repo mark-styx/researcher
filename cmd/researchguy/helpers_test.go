@@ -112,6 +112,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(searchCmd())
 	root.AddCommand(contextCmd())
 	root.AddCommand(findCmd())
+	root.AddCommand(timelineCmd())
 	root.AddCommand(graphCmd())
 	root.AddCommand(listCmd())
 	root.AddCommand(showCmd())

@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
@@ -141,10 +142,56 @@ func TestStoreTools_IngestFindAndLookups(t *testing.T) {
 		t.Errorf("source = %+v", s)
 	}
 
+	// A claim extracted from the page is found, looked up and laid out.
+	ctx := context.Background()
+	st, err := store.Open(cfg.Store.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix, err := index.Open(ctx, cfg.Store.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	var sha string
+	if err := ix.Pool().QueryRow(ctx, `SELECT sha256 FROM documents WHERE id = $1`, doc.DocumentID).Scan(&sha); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutExtraction(store.Extraction{TextSHA: sha, Extractor: "test/claims-v1", Model: "test", Chunks: 1, Attempts: 1,
+		Claims: []store.ExtractedClaim{{Text: "Nitrate levels rose near the feedlots.", Quote: "Groundwater nitrate levels rose near the feedlots"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.SyncClaims(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.EmbedClaims(ctx, st, embed.New(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	claimID := index.ClaimID(doc.DocumentID, "test/claims-v1", 0, 0)
+	decode(t, callOn(t, c, "researchguy_find", map[string]any{"query": "nitrate feedlots", "kinds": []any{"claim"}}), &res)
+	if len(res.Cards) != 1 || res.Cards[0].Ref != retrieve.ClaimRef(claimID) || !res.Cards[0].QuoteVerified ||
+		!slices.Equal(res.Cards[0].Flags, []string{retrieve.FlagSingleOrigin}) {
+		t.Fatalf("find claims = %+v", res.Cards)
+	}
+	var cl retrieve.ClaimResult
+	decode(t, callOn(t, c, "researchguy_claim", map[string]any{"id": retrieve.ClaimRef(claimID)}), &cl)
+	if cl.ClaimID != claimID || cl.Extractor != "test/claims-v1" || cl.Passage == nil || cl.Quote != "Groundwater nitrate levels rose near the feedlots" {
+		t.Errorf("claim = %+v", cl)
+	}
+	var tl retrieve.TimelineResult
+	decode(t, callOn(t, c, "researchguy_timeline", map[string]any{"query": "nitrate feedlots"}), &tl)
+	if len(tl.Entries) != 1 || tl.Entries[0].Dated != "2022-08-01" || !tl.Entries[0].Matched {
+		t.Errorf("timeline = %+v", tl)
+	}
+
 	for _, bad := range []struct {
 		tool string
 		args map[string]any
 	}{
+		{"researchguy_claim", map[string]any{"id": "C:x"}},
+		{"researchguy_claim", map[string]any{"id": "C:123"}},
+		{"researchguy_timeline", map[string]any{"query": "C:123"}},
+		{"researchguy_timeline", map[string]any{"query": "x", "since": "soon"}},
 		{"researchguy_find", map[string]any{"query": "x", "since": "soon"}},
 		{"researchguy_find", map[string]any{"query": "x", "kinds": []any{"tweet"}}},
 		{"researchguy_passage", map[string]any{"id": "P:abc"}},
