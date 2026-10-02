@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/marklubin/researchguy/internal/claims"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
@@ -64,7 +66,7 @@ func fetchSetup(t *testing.T, srv *httptest.Server, dsn string) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprintf(f, "store:\n  dsn: %q\n  fetch:\n    enabled: true\n    timeout: 5s\n  embed:\n    model: nomic-embed-text\n    host: %q\n  claims:\n    model: qwen-test\n    host: %q\n", dsn, srv.URL, srv.URL)
+	fmt.Fprintf(f, "store:\n  dsn: %q\n  fetch:\n    enabled: true\n    timeout: 5s\n  embed:\n    model: nomic-embed-text\n    host: %q\n  claims:\n    model: qwen-test\n    host: %q\n    link:\n      backend: ollama\n      model: qwen-test\n", dsn, srv.URL, srv.URL)
 	f.Close()
 	st, err := store.Open(filepath.Join(configDir, "store"))
 	if err != nil {
@@ -179,7 +181,8 @@ func TestStoreEmbed_ModelDownFails(t *testing.T) {
 
 func TestStoreExtract_WithIndex(t *testing.T) {
 	srv := fetchSite(t, nil)
-	st := fetchSetup(t, srv, indextest.DSN(t))
+	dsn := indextest.DSN(t)
+	st := fetchSetup(t, srv, dsn)
 	finishedRun(t, st, "t", srv.URL+"/article")
 	mustStdout(t, "store", "init")
 	mustStdout(t, "store", "fetch")
@@ -212,9 +215,41 @@ func TestStoreExtract_WithIndex(t *testing.T) {
 	if _, _, err := runCmdStdout(t, "store", "extract", "--budget", "soon"); err == nil || !strings.Contains(err.Error(), "invalid --budget") {
 		t.Errorf("bad --budget = %v", err)
 	}
-	// A rebuild restores the claims from the store.
+
+	// One origin: nothing to label, and no model call.
+	ls := decode[claims.LinkStats](t, mustStdout(t, "store", "link", "--json"))
+	if ls.Checked != stats.Claims || ls.Pairs != 0 || ls.Model != "ollama/qwen-test" {
+		t.Errorf("link = %+v", ls)
+	}
+
+	// A human link needs indexed claims unless forced.
+	conn, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(context.Background())
+	var id int64
+	if err := conn.QueryRow(context.Background(), `SELECT id FROM claims LIMIT 1`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	ref := fmt.Sprintf("C:%d", id)
+	if _, _, err := runCmdStdout(t, "store", "link", "set", ref, "C:99", "same"); err == nil || !strings.Contains(err.Error(), "no claim C:99") {
+		t.Errorf("unindexed claim = %v", err)
+	}
+	if _, _, err := runCmdStdout(t, "store", "link", "set", ref, "99", "agrees"); err == nil || !strings.Contains(err.Error(), "unknown relation") {
+		t.Errorf("bad relation = %v", err)
+	}
+	if out := mustStdout(t, "store", "link", "set", ref, "C:99", "Supersedes", "--force", "--note", "newer"); out != "Logged "+ref+" supersedes C:99\n" {
+		t.Errorf("forced link: %q", out)
+	}
+	log, _ := st.ReadLinks(0)
+	if len(log.Links) != 1 || log.Links[0].Method != store.LinkHuman || log.Links[0].From != id || log.Links[0].To != 99 || log.Links[0].Note != "newer" {
+		t.Errorf("links = %+v", log.Links)
+	}
+
+	// A rebuild restores the claims and links from the store.
 	rb := decode[index.SyncStats](t, mustStdout(t, "store", "rebuild", "--json"))
-	if rb.Claims == nil || rb.Claims.Claims != stats.Claims {
+	if rb.Claims == nil || rb.Claims.Claims != stats.Claims || rb.Claims.Links != 1 {
 		t.Errorf("rebuild claims = %+v", rb.Claims)
 	}
 }

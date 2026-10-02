@@ -34,7 +34,8 @@ func (s *Scheduler) startStorePass(ctx context.Context) {
 // storePass catches the store and index up: it fetches sources for runs
 // that haven't had them fetched (asks, runs whose budget ran out, runs from
 // before fetching), indexes runs the index lacks, embeds passages that
-// have no vector, then extracts claims from documents waiting on them.
+// have no vector, extracts claims from documents waiting on them, then
+// labels how new claims relate to their nearest claims.
 func (s *Scheduler) storePass(ctx context.Context) {
 	s.fetchPending(ctx)
 	if s.cfg.Store.DSN == "" || ctx.Err() != nil {
@@ -43,6 +44,7 @@ func (s *Scheduler) storePass(ctx context.Context) {
 	s.syncIndex(ctx)
 	s.embedPending(ctx)
 	s.extractClaims(ctx)
+	s.linkClaims(ctx)
 }
 
 // fetchPending runs the fetch stage for up to maxFetchRuns finished runs
@@ -147,6 +149,42 @@ func (s *Scheduler) extractClaims(ctx context.Context) {
 			stats.Claims, stats.Extracted, ex.Model, stats.Waiting-stats.Extracted+stats.Failed, stats.Failed)
 	}
 	if err != nil {
+		status = err.Error()
+	}
+}
+
+// linkClaims labels how claims the linker hasn't checked relate to their
+// nearest claims from other origins, within store.claims.budget and the
+// link's daily cap. Like extraction, it waits for research tasks.
+func (s *Scheduler) linkClaims(ctx context.Context) {
+	c := s.cfg.Store.Claims
+	if s.index == nil || !c.Enabled || !c.Link.Enabled || ctx.Err() != nil {
+		return
+	}
+	busy := func() bool { return len(s.sem) > 0 }
+	if busy() {
+		return
+	}
+	status := ""
+	defer func() { s.logStatus(&s.linkStatus, "Claim linking", status) }()
+	st, err := runstore.Open(s.cfg.Store.Dir)
+	if err != nil {
+		status = err.Error()
+		return
+	}
+	p, opts, err := claims.NewLinker(s.cfg)
+	if err != nil {
+		status = err.Error()
+		return
+	}
+	opts.Pause = busy
+	lctx, cancel := context.WithTimeout(ctx, c.BudgetDuration())
+	defer cancel()
+	stats, err := claims.Link(lctx, s.index, st, p, opts)
+	if stats.Pairs > 0 {
+		s.logger.Printf("Labeled %d claim pair(s) with %s: %d linked, %d unanswered", stats.Pairs, opts.Model, stats.Linked, stats.Unanswered)
+	}
+	if err != nil && lctx.Err() == nil {
 		status = err.Error()
 	}
 }

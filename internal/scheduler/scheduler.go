@@ -38,10 +38,10 @@ type Scheduler struct {
 	graphStore *graph.Store   // nil unless graph.rollup.enabled
 	rollup     *rollup.Rollup // nil unless graph.rollup.enabled
 	index      *index.Index   // opened on the first index sync; nil after an error
-	// indexStatus, fetchStatus, embedStatus and claimsStatus are the last
-	// problem each store pass step logged, so a down index or model is
-	// logged once rather than every pass.
-	indexStatus, fetchStatus, embedStatus, claimsStatus string
+	// indexStatus, fetchStatus, embedStatus, claimsStatus and linkStatus
+	// are the last problem each store pass step logged, so a down index or
+	// model is logged once rather than every pass.
+	indexStatus, fetchStatus, embedStatus, claimsStatus, linkStatus string
 	// passing is set while a store pass runs, so passes don't overlap.
 	passing atomic.Bool
 }

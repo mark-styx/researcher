@@ -260,3 +260,25 @@ func TestExtractClaims_YieldsToTasks(t *testing.T) {
 		t.Errorf("disabled extraction ran:\n%s", logs.String())
 	}
 }
+
+func TestLinkClaims_BadBackendLoggedOnce(t *testing.T) {
+	srv := sourceSite(t, nil)
+	storeDir := filepath.Join(t.TempDir(), "store")
+	var logs bytes.Buffer
+	cfg := passConfig(t, srv, storeDir, indextest.DSN(t))
+	cfg.Store.Claims = config.StoreClaimsConfig{Enabled: true, Link: config.StoreLinkConfig{Enabled: true, Backend: "nope"}}
+	s := &Scheduler{cfg: cfg, logger: log.New(&logs, "", 0)}
+	defer func() { s.index.Close() }()
+	s.storePass(context.Background())
+	s.storePass(context.Background())
+	if n := strings.Count(logs.String(), "Claim linking error"); n != 1 || !strings.Contains(logs.String(), "unknown backend") {
+		t.Fatalf("logged %d times:\n%s", n, logs.String())
+	}
+	cfg.Store.Claims.Link.Enabled = false
+	logs.Reset()
+	s.linkStatus = ""
+	s.storePass(context.Background())
+	if strings.Contains(logs.String(), "linking") {
+		t.Errorf("disabled linking ran:\n%s", logs.String())
+	}
+}

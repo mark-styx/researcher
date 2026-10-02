@@ -527,16 +527,20 @@ func informative(text string) float64 {
 	return math.Max(0.2, math.Min(1, ratio/0.25))
 }
 
-// Refs: what reports cite. P is a passage, S a source, E a capture of the
-// report's own run.
+// Refs: what reports cite. P is a passage, S a source, C a claim, E a
+// capture of the report's own run.
 const (
 	RefPassage = "P"
 	RefSource  = "S"
+	RefClaim   = "C"
 	RefCapture = "E"
 )
 
 // PassageRef is the citation for a passage.
 func PassageRef(id int64) string { return RefPassage + ":" + strconv.FormatInt(id, 10) }
+
+// ClaimRef is the citation for a claim.
+func ClaimRef(id int64) string { return RefClaim + ":" + strconv.FormatInt(id, 10) }
 
 // SourceRef is the citation for a source.
 func SourceRef(id int64) string { return RefSource + ":" + strconv.FormatInt(id, 10) }

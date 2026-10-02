@@ -28,6 +28,18 @@ var (
 // failText and a page too short to extract.
 func indexed(t *testing.T) (*index.Index, *store.Store) {
 	t.Helper()
+	return indexPages(t, []page{
+		{"https://example.org/bridge", "Bridge", goodText},
+		{"https://example.org/harbour", "Harbour", failText},
+		{"https://example.org/stub", "Stub", "Too short to bother with."},
+	})
+}
+
+type page struct{ url, title, text string }
+
+// indexPages returns an index holding a finished run that fetched pages.
+func indexPages(t *testing.T, pages []page) (*index.Index, *store.Store) {
+	t.Helper()
 	ctx := context.Background()
 	ix, err := index.Open(ctx, indextest.DSN(t))
 	if err != nil {
@@ -50,11 +62,7 @@ func indexed(t *testing.T) (*index.Index, *store.Store) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	for i, page := range []struct{ url, title, text string }{
-		{"https://example.org/bridge", "Bridge", goodText},
-		{"https://example.org/harbour", "Harbour", failText},
-		{"https://example.org/stub", "Stub", "Too short to bother with."},
-	} {
+	for i, page := range pages {
 		sha, err := st.PutText(page.text)
 		if err != nil {
 			t.Fatal(err)
@@ -64,7 +72,7 @@ func indexed(t *testing.T) (*index.Index, *store.Store) {
 			t.Fatal(err)
 		}
 	}
-	if err := log.WriteSummary(store.FetchSummary{Records: 3}); err != nil {
+	if err := log.WriteSummary(store.FetchSummary{Records: len(pages)}); err != nil {
 		t.Fatal(err)
 	}
 	log.Close()

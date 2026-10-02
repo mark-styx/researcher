@@ -41,9 +41,14 @@ CREATE TABLE claims (
     text_sha256       text NOT NULL,
     tsv               tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
     embedding         vector(768),
-    embed_model       text
+    embed_model       text,
+    -- When the linker last compared the claim with its nearest claims;
+    -- null until it has. Reset by re-ingest, which is harmless: pairs
+    -- already in links.jsonl aren't labeled again.
+    link_checked_at   timestamptz
 );
 CREATE INDEX claims_document ON claims (document_id);
+CREATE INDEX claims_link_unchecked ON claims (extracted_at) WHERE link_checked_at IS NULL AND quote_verified;
 CREATE INDEX claims_passage ON claims (passage_id);
 CREATE INDEX claims_quote_key ON claims (quote_key) WHERE quote_verified;
 CREATE INDEX claims_tsv ON claims USING gin (tsv);
