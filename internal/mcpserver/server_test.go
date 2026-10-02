@@ -101,6 +101,12 @@ func TestMCPServer_ListTools(t *testing.T) {
 		"researchguy_graph_add_node": false,
 		"researchguy_graph_add_edge": false,
 		"researchguy_critique":       false,
+
+		"researchguy_find":       false,
+		"researchguy_passage":    false,
+		"researchguy_document":   false,
+		"researchguy_source":     false,
+		"researchguy_ingest_url": false,
 	}
 
 	for _, tool := range result.Tools {

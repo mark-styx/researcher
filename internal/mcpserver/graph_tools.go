@@ -15,12 +15,16 @@ import (
 
 const defaultGraphLimit = 100
 
-func addGraphTools(s *server.MCPServer, cfg *config.Config) {
+// addGraphTools registers the graph tools that read, and with write the
+// ones that add nodes and edges.
+func addGraphTools(s *server.MCPServer, cfg *config.Config, write bool) {
 	s.AddTool(graphListTool(), graphListHandler(cfg))
 	s.AddTool(graphShowTool(), graphShowHandler(cfg))
 	s.AddTool(graphFindTool(), graphFindHandler(cfg))
-	s.AddTool(graphAddNodeTool(), graphAddNodeHandler(cfg))
-	s.AddTool(graphAddEdgeTool(), graphAddEdgeHandler(cfg))
+	if write {
+		s.AddTool(graphAddNodeTool(), graphAddNodeHandler(cfg))
+		s.AddTool(graphAddEdgeTool(), graphAddEdgeHandler(cfg))
+	}
 }
 
 // withStore opens the graph store for one call. The store runs on the

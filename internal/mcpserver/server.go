@@ -19,13 +19,7 @@ import (
 
 // New creates an MCP server with all researchguy tools registered.
 func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPServer {
-	s := server.NewMCPServer(
-		"Researchguy",
-		version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
-
+	s := newServer(version)
 	s.AddTool(askTool(), askHandler(cfg, provider))
 	s.AddTool(diveTool(), diveHandler(cfg, provider))
 	s.AddTool(reviewTool(), reviewHandler(cfg, provider))
@@ -36,9 +30,40 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 	s.AddTool(contextTool(), contextHandler(cfg))
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
-	addGraphTools(s, cfg)
-
+	addGraphTools(s, cfg, true)
+	addStoreTools(s, cfg, true)
 	return s
+}
+
+// NewRead creates an MCP server with only the tools that read: no LLM
+// calls, no graph writes, no fetching. It's what a model gets while it
+// writes a report (`researchguy mcp --profile read`), so it can look up
+// evidence but not start research or change the record.
+func NewRead(cfg *config.Config, version string) *server.MCPServer {
+	s := newServer(version)
+	s.AddTool(searchTool(), searchHandler(cfg))
+	s.AddTool(contextTool(), contextHandler(cfg))
+	s.AddTool(listTool(), listHandler(cfg))
+	s.AddTool(readTool(), readHandler(cfg))
+	addGraphTools(s, cfg, false)
+	addStoreTools(s, cfg, false)
+	return s
+}
+
+// ReadTools are the tools NewRead registers.
+var ReadTools = []string{
+	"researchguy_search", "researchguy_context", "researchguy_list", "researchguy_read",
+	"researchguy_graph_list", "researchguy_graph_show", "researchguy_graph_find",
+	"researchguy_find", "researchguy_passage", "researchguy_document", "researchguy_source",
+}
+
+func newServer(version string) *server.MCPServer {
+	return server.NewMCPServer(
+		"Researchguy",
+		version,
+		server.WithToolCapabilities(false),
+		server.WithRecovery(),
+	)
 }
 
 // --- researchguy_ask ---
