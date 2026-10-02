@@ -92,6 +92,6 @@ Document comparison: use --sources to compare two existing research documents.`,
 	cmd.Flags().IntVar(&branches, "branches", 0, "Number of angles to investigate in parallel (hybrid backend only; 0 = backend default)")
 	cmd.Flags().StringVar(&outPath, "out", "", "Write the report to this exact path (skips the LLM categorizer)")
 	cmd.Flags().StringSliceVar(&projects, "project", nil, "grepai workspace project to search for context (repeatable; default: grepai.projects)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {comparison, saved_to, backend, metadata} instead of a status line")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {comparison, saved_to, backend, metadata, run_id, run_dir} instead of a status line")
 	return cmd
 }

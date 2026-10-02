@@ -82,6 +82,6 @@ or --max-age to control the freshness filter.`,
 	cmd.Flags().BoolVar(&noResearch, "no-research", false, "Skip searching existing research for context")
 	cmd.Flags().StringVar(&maxAge, "max-age", "", "Max age for research freshness filter (e.g. 90d, 2w, 24h, none)")
 	cmd.Flags().StringSliceVar(&projects, "project", nil, "grepai workspace project to search for context (repeatable; default: grepai.projects)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {answer, saved_to, backend, metadata} instead of the answer text")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print JSON {answer, saved_to, backend, metadata, run_id, run_dir} instead of the answer text")
 	return cmd
 }

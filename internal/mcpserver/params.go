@@ -77,6 +77,26 @@ func parseResearchParams(cfg *config.Config, defaultProvider llm.Provider, req m
 }
 
 // researchResult builds the JSON body shared by research tools.
+// withRun adds the task's run record to a result map, so an agent can find
+// the evidence the task captured.
+func withRun(out map[string]string, r research.RunResult) map[string]string {
+	if r.RunID != "" {
+		out["run_id"] = r.RunID
+		out["run_dir"] = r.RunDir
+	}
+	return out
+}
+
+// runFailed is a research tool's error result. It names the run record,
+// which keeps whatever the task collected before it failed.
+func runFailed(kind string, r research.RunResult, err error) *mcp.CallToolResult {
+	msg := fmt.Sprintf("%s failed: %v", kind, err)
+	if r.RunDir != "" {
+		msg += "\nrun record: " + r.RunDir
+	}
+	return mcp.NewToolResultError(msg)
+}
+
 func researchResult(key string, r research.RunResult, backend, warning string) map[string]any {
 	out := r.Fields(key, backend)
 	if warning != "" {

@@ -77,7 +77,7 @@ researchguy search "entanglement"
 
 For scripts and workflow engines:
 
-- `--json` on `ask`/`dive`/`review`/`compare` prints only `{"<answer|report|review|comparison>", "saved_to", "backend", "metadata"}` on stdout (progress goes to stderr). `search --json` prints hits with their grepai `project` and on-disk `path`. `context --json` prints `{"topic", "sources", "context", "count"}`.
+- `--json` on `ask`/`dive`/`review`/`compare` prints only `{"<answer|report|review|comparison>", "saved_to", "backend", "metadata", "run_id", "run_dir"}` on stdout (progress goes to stderr). The MCP research tools return `run_id`/`run_dir` too, and a failed tool call names the run record that kept its evidence. `search --json` prints hits with their grepai `project` and on-disk `path`. `context --json` prints `{"topic", "sources", "context", "count"}`.
 - `--out <path>` on `dive`/`review`/`compare` writes the report to that exact path and skips the LLM categorizer call.
 - `--project <name>` (repeatable) on every research command plus `search`/`context` picks which grepai workspace projects to search, overriding `grepai.projects`.
 - `--max-age none` turns off the freshness filter, e.g. to include past book research.

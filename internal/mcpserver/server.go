@@ -74,13 +74,13 @@ func askHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFun
 		runner := research.NewRunner(cfg, provider)
 		result, err := runner.Run(ctx, task)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("ask failed: %v", err)), nil
+			return runFailed("ask", result, err), nil
 		}
 
-		return toolResultJSON(map[string]string{
+		return toolResultJSON(withRun(map[string]string{
 			"answer":   result.Response,
 			"saved_to": result.FilePath,
-		})
+		}, result))
 	}
 }
 
@@ -119,7 +119,7 @@ func diveHandler(cfg *config.Config, provider llm.Provider) server.ToolHandlerFu
 			Projects:    p.projects,
 		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("dive failed: %v", err)), nil
+			return runFailed("dive", result, err), nil
 		}
 
 		return toolResultJSON(researchResult("report", result, p.provider.Name(), p.warning))
@@ -163,7 +163,7 @@ func reviewHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 			Projects:    p.projects,
 		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("review failed: %v", err)), nil
+			return runFailed("review", result, err), nil
 		}
 
 		return toolResultJSON(researchResult("review", result, p.provider.Name(), p.warning))
@@ -212,7 +212,7 @@ func compareHandler(cfg *config.Config, provider llm.Provider) server.ToolHandle
 			Projects:    p.projects,
 		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("compare failed: %v", err)), nil
+			return runFailed("compare", result, err), nil
 		}
 
 		return toolResultJSON(researchResult("comparison", result, p.provider.Name(), p.warning))
@@ -260,13 +260,13 @@ func enrichHandler(cfg *config.Config, provider llm.Provider) server.ToolHandler
 			Quiet:   true,
 		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("enrich failed: %v", err)), nil
+			return runFailed("enrich", result, err), nil
 		}
 
-		return toolResultJSON(map[string]string{
+		return toolResultJSON(withRun(map[string]string{
 			"enriched": result.Response,
 			"saved_to": result.FilePath,
-		})
+		}, result))
 	}
 }
 
