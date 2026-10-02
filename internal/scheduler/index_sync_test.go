@@ -95,15 +95,15 @@ func TestSyncIndex_LogsAProblemOnceAndTheRecovery(t *testing.T) {
 		cfg:    &config.Config{Store: config.StoreConfig{Dir: storeDir, DSN: "postgres://localhost:1/researchguy?connect_timeout=1"}},
 		logger: log.New(&logs, "", 0),
 	}
-	s.syncIndex()
-	s.syncIndex()
+	s.syncIndex(context.Background())
+	s.syncIndex(context.Background())
 	if n := strings.Count(logs.String(), "Index sync error"); n != 1 {
 		t.Fatalf("down index logged %d times, want once:\n%s", n, logs.String())
 	}
 
 	s.cfg.Store.DSN = indextest.DSN(t)
-	s.syncIndex()
-	s.syncIndex()
+	s.syncIndex(context.Background())
+	s.syncIndex(context.Background())
 	defer s.index.Close()
 	out := logs.String()
 	if strings.Count(out, "Index sync recovered") != 1 || strings.Count(out, "Indexed 1 run(s)") != 1 {
@@ -131,8 +131,8 @@ func TestSyncIndex_LogsRunsThatFailToIndexOnce(t *testing.T) {
 		logger: log.New(&logs, "", 0),
 	}
 	defer func() { s.index.Close() }()
-	s.syncIndex()
-	s.syncIndex()
+	s.syncIndex(context.Background())
+	s.syncIndex(context.Background())
 	if n := strings.Count(logs.String(), "1 run(s) failed to index; "+ids[0]); n != 1 {
 		t.Fatalf("failed run logged %d times, want once:\n%s", n, logs.String())
 	}

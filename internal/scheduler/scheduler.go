@@ -10,9 +10,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/graph"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/research"
@@ -36,9 +38,12 @@ type Scheduler struct {
 	graphStore *graph.Store   // nil unless graph.rollup.enabled
 	rollup     *rollup.Rollup // nil unless graph.rollup.enabled
 	index      *index.Index   // opened on the first index sync; nil after an error
-	// indexStatus is the last index sync problem logged, so a down index
-	// is logged once rather than every pass.
-	indexStatus string
+	// indexStatus, fetchStatus and embedStatus are the last problem each
+	// store pass step logged, so a down index or model is logged once
+	// rather than every pass.
+	indexStatus, fetchStatus, embedStatus string
+	// passing is set while a store pass runs, so passes don't overlap.
+	passing atomic.Bool
 }
 
 func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
@@ -108,28 +113,37 @@ func (s *Scheduler) Run() {
 		s.logger.Println("Graph rollup enabled")
 	}
 
-	// indexCh stays nil (never selected) when store.dsn is blank.
-	var indexCh <-chan time.Time
-	if s.cfg.Store.DSN != "" {
-		indexTicker := time.NewTicker(interval)
-		defer indexTicker.Stop()
-		indexCh = indexTicker.C
-		s.logger.Println("Store index sync enabled")
-		s.syncIndex()
+	// storeCh stays nil (never selected) when there's no index to sync and
+	// no fetching to catch up on.
+	var storeCh <-chan time.Time
+	passCtx, cancelPass := context.WithCancel(context.Background())
+	defer cancelPass()
+	if s.cfg.Store.Dir != "" && (s.cfg.Store.DSN != "" || s.cfg.Store.Fetch.Enabled) {
+		storeTicker := time.NewTicker(interval)
+		defer storeTicker.Stop()
+		storeCh = storeTicker.C
+		if s.cfg.Store.DSN != "" {
+			s.logger.Println("Store index sync enabled")
+		}
+		if s.cfg.Store.Fetch.Enabled {
+			s.logger.Println("Source fetch catch-up enabled")
+		}
+		s.startStorePass(passCtx)
 	}
 
 	for {
 		select {
 		case <-ticker.C:
 			s.poll()
-		case <-indexCh:
-			s.syncIndex()
+		case <-storeCh:
+			s.startStorePass(passCtx)
 		case <-rollupCh:
 			if err := s.rollup.Run(context.Background()); err != nil {
 				s.logger.Printf("Rollup pass error: %v", err)
 			}
 		case <-s.stopCh:
 			s.logger.Println("Scheduler stopped")
+			cancelPass()
 			s.wg.Wait()
 			s.store.Close()
 			if s.graphStore != nil {
@@ -150,8 +164,8 @@ const indexSyncTimeout = 5 * time.Minute
 // syncIndex indexes the runs the index lacks: ones whose runner couldn't
 // reach it, and runs a crash left behind (marked interrupted first). A
 // problem is logged when it changes, not on every pass.
-func (s *Scheduler) syncIndex() {
-	ctx, cancel := context.WithTimeout(context.Background(), indexSyncTimeout)
+func (s *Scheduler) syncIndex(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, indexSyncTimeout)
 	defer cancel()
 	stats, err := s.indexPass(ctx)
 	if len(stats.Interrupted) > 0 {
@@ -177,15 +191,21 @@ func (s *Scheduler) syncIndex() {
 		}
 		status = b.String()
 	}
-	if status == s.indexStatus {
+	s.logStatus(&s.indexStatus, "Index sync", status)
+}
+
+// logStatus logs a store pass step's problem when it differs from the last
+// one logged, and its recovery.
+func (s *Scheduler) logStatus(last *string, step, status string) {
+	if status == *last {
 		return
 	}
 	if status == "" {
-		s.logger.Println("Index sync recovered")
+		s.logger.Printf("%s recovered", step)
 	} else {
-		s.logger.Printf("Index sync error: %s", status)
+		s.logger.Printf("%s error: %s", step, status)
 	}
-	s.indexStatus = status
+	*last = status
 }
 
 func (s *Scheduler) indexPass(ctx context.Context) (index.SyncStats, error) {
@@ -194,6 +214,7 @@ func (s *Scheduler) indexPass(ctx context.Context) (index.SyncStats, error) {
 		if err != nil {
 			return index.SyncStats{}, err
 		}
+		ix.SetEmbedModel(embed.New(s.cfg).Model())
 		s.index = ix
 	}
 	st, err := runstore.Open(s.cfg.Store.Dir)
