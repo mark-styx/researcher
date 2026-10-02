@@ -315,7 +315,14 @@ type doctorIndex struct {
 	// Running are runs still in progress that aren't indexed yet; the
 	// runner indexes them when they finish.
 	Running []string `json:"running,omitempty"`
+	// CitationFailures are recent runs whose reports have citations that
+	// don't resolve or quotes not found in what they cite. They're about
+	// the reports, not the store, so they aren't problems.
+	CitationFailures []index.CitationFailure `json:"citation_failures,omitempty"`
 }
+
+// maxCitationFailures caps the runs doctor lists for failed citations.
+const maxCitationFailures = 10
 
 func storeDoctorCmd() *cobra.Command {
 	var jsonOut bool
@@ -424,6 +431,11 @@ func diagnose(ctx context.Context, cfg *config.Config, st *store.Store) (doctorR
 		return rep, nil
 	}
 	di.Counts = &counts
+	if counts.Unresolved+counts.QuotesNotFound > 0 {
+		if di.CitationFailures, err = ix.CitationFailures(ctx, maxCitationFailures); err != nil {
+			add("listing failed citations: %v", err)
+		}
+	}
 	pending, _, err := ix.Pending(ctx, st)
 	if err != nil {
 		di.Error = err.Error()
@@ -474,6 +486,12 @@ func printDoctor(rep doctorReport) {
 			if c.Unembedded > 0 {
 				fmt.Printf("  %d passage(s) without a %s vector (`researchguy store embed`)\n", c.Unembedded, di.EmbedModel)
 			}
+			if c.Citations > 0 {
+				fmt.Printf("  %d report citation(s): %d don't resolve, %d quote(s) not found in what they cite\n", c.Citations, c.Unresolved, c.QuotesNotFound)
+			}
+		}
+		for _, f := range di.CitationFailures {
+			fmt.Printf("    run %s: %d unresolved, %d quote(s) not found (see its citations.jsonl)\n", f.RunID, f.Unresolved, f.QuotesNotFound)
 		}
 		if n := len(di.Running); n > 0 {
 			fmt.Printf("  %d running run(s) not indexed yet\n", n)

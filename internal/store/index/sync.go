@@ -68,7 +68,7 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 		return stats, err
 	}
 	err = pgx.BeginFunc(ctx, ix.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `TRUNCATE passages, fetches, documents, sightings, captures, sources, runs`); err != nil {
+		if _, err := tx.Exec(ctx, `TRUNCATE citations, passages, fetches, documents, sightings, captures, sources, runs`); err != nil {
 			return fmt.Errorf("emptying index: %w", err)
 		}
 		for _, id := range ids {
@@ -96,23 +96,23 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 }
 
 // Pending lists the runs in st that the index doesn't have, or has as they
-// were before their record, capture log or fetch log last changed, and how many runs
-// with a record the store holds. Run dirs without a run.json are skipped;
+// were before their record, capture log, fetch log or citations last
+// changed, and how many runs with a record the store holds. Run dirs without a run.json are skipped;
 // store.Check reports them.
 func (ix *Index) Pending(ctx context.Context, st *store.Store) ([]string, int, error) {
 	type ingested struct {
-		sha               string
-		captures, fetches int64
+		sha                          string
+		captures, fetches, citations int64
 	}
 	indexed := map[string]ingested{}
-	rows, err := ix.pool.Query(ctx, `SELECT id, record_sha256, capture_bytes, fetch_bytes FROM runs`)
+	rows, err := ix.pool.Query(ctx, `SELECT id, record_sha256, capture_bytes, fetch_bytes, citation_bytes FROM runs`)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing indexed runs: %w", err)
 	}
 	for rows.Next() {
 		var id string
 		var got ingested
-		if err := rows.Scan(&id, &got.sha, &got.captures, &got.fetches); err != nil {
+		if err := rows.Scan(&id, &got.sha, &got.captures, &got.fetches, &got.citations); err != nil {
 			rows.Close()
 			return nil, 0, err
 		}
@@ -142,7 +142,8 @@ func (ix *Index) Pending(ctx context.Context, st *store.Store) ([]string, int, e
 			size = info.Size()
 		}
 		got, ok := indexed[id]
-		if !ok || got.sha != hex.EncodeToString(sum[:]) || got.captures != size || got.fetches != store.FetchSize(dir) {
+		if !ok || got.sha != hex.EncodeToString(sum[:]) || got.captures != size || got.fetches != store.FetchSize(dir) ||
+			got.citations != store.CitationsSize(dir) {
 			pending = append(pending, id)
 		}
 	}
@@ -160,6 +161,11 @@ type Counts struct {
 	Documents  int64 `json:"documents"`
 	Passages   int64 `json:"passages"`
 	Unembedded int64 `json:"unembedded"`
+	// Citations in checked reports, those that don't resolve, and quotes
+	// none of their citations hold.
+	Citations      int64 `json:"citations"`
+	Unresolved     int64 `json:"unresolved_citations"`
+	QuotesNotFound int64 `json:"quotes_not_found"`
 }
 
 // Counts counts the index's rows.
@@ -170,7 +176,36 @@ func (ix *Index) Counts(ctx context.Context) (Counts, error) {
 		(SELECT count(*) FROM sources), (SELECT count(*) FROM sightings),
 		(SELECT count(*) FROM fetches), (SELECT count(*) FROM documents),
 		(SELECT count(*) FROM passages),
-		(SELECT count(*) FROM passages WHERE `+unembedded+`)`, ix.embedModel).
-		Scan(&c.Runs, &c.Captures, &c.Sources, &c.Sightings, &c.Fetches, &c.Documents, &c.Passages, &c.Unembedded)
+		(SELECT count(*) FROM passages WHERE `+unembedded+`),
+		(SELECT count(*) FROM citations), (SELECT count(*) FROM citations WHERE resolved = false),
+		(SELECT count(*) FROM (`+missedQuotes+`) g)`, ix.embedModel).
+		Scan(&c.Runs, &c.Captures, &c.Sources, &c.Sightings, &c.Fetches, &c.Documents, &c.Passages, &c.Unembedded,
+			&c.Citations, &c.Unresolved, &c.QuotesNotFound)
 	return c, err
+}
+
+// CitationFailure is a run whose report has citations that don't resolve
+// or quotes none of their citations hold.
+type CitationFailure struct {
+	RunID          string `json:"run_id"`
+	Unresolved     int    `json:"unresolved"`
+	QuotesNotFound int    `json:"quotes_not_found"`
+}
+
+// missedQuotes selects the quotes none of their group's citations hold.
+const missedQuotes = `SELECT run_id FROM citations WHERE quote <> '' GROUP BY run_id, group_ord
+	HAVING bool_and(quote_status = 'not_found')`
+
+// CitationFailures lists the runs with failed citations, newest first, at
+// most limit of them.
+func (ix *Index) CitationFailures(ctx context.Context, limit int) ([]CitationFailure, error) {
+	rows, err := ix.pool.Query(ctx, `
+		WITH unresolved AS (SELECT run_id, count(*) AS n FROM citations WHERE resolved = false GROUP BY run_id),
+		missed AS (SELECT run_id, count(*) AS n FROM (`+missedQuotes+`) g GROUP BY run_id)
+		SELECT run_id, coalesce(u.n, 0), coalesce(m.n, 0)
+		FROM unresolved u FULL JOIN missed m USING (run_id) ORDER BY run_id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[CitationFailure])
 }

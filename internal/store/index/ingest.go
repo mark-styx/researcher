@@ -41,6 +41,8 @@ type RunStats struct {
 	Embedded      int   `json:"embedded"`
 	FetchBadLines []int `json:"fetch_bad_lines,omitempty"`
 	MissingTexts  int   `json:"missing_texts,omitempty"`
+	// Citations are the report's citations, when it was checked.
+	Citations int `json:"citations,omitempty"`
 }
 
 // snapshot is a run directory as read for ingest.
@@ -49,6 +51,8 @@ type snapshot struct {
 	recordSHA string
 	log       store.CaptureLog
 	fetches   store.FetchLogScan
+	citations []store.Citation
+	citeSize  int64 // -1: no citations.jsonl
 	store     *store.Store
 }
 
@@ -70,6 +74,10 @@ func readSnapshot(dir string) (snapshot, error) {
 		return snapshot{}, err
 	}
 	if snap.fetches, err = store.ScanFetches(dir); err != nil {
+		return snapshot{}, err
+	}
+	snap.citeSize = store.CitationsSize(dir)
+	if snap.citations, _, err = store.ReadCitations(dir); err != nil {
 		return snapshot{}, err
 	}
 	snap.store = store.OfRunDir(dir)
@@ -107,9 +115,10 @@ func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, f
 	}
 	if !force {
 		var sha string
-		var size, fetchSize int64
-		err := tx.QueryRow(ctx, `SELECT record_sha256, capture_bytes, fetch_bytes FROM runs WHERE id = $1`, rec.ID).Scan(&sha, &size, &fetchSize)
-		if err == nil && sha == snap.recordSHA && size == snap.log.Size && fetchSize == snap.fetches.Size {
+		var size, fetchSize, citeSize int64
+		err := tx.QueryRow(ctx, `SELECT record_sha256, capture_bytes, fetch_bytes, citation_bytes FROM runs WHERE id = $1`, rec.ID).
+			Scan(&sha, &size, &fetchSize, &citeSize)
+		if err == nil && sha == snap.recordSHA && size == snap.log.Size && fetchSize == snap.fetches.Size && citeSize == snap.citeSize {
 			stats.Skipped = true
 			return stats, nil
 		}
@@ -124,8 +133,8 @@ func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, f
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO runs (id, kind, topic, mode, backend, branch_count, status, error,
-			started_at, finished_at, report_path, meta, record_sha256, capture_bytes, fetch_bytes, ingested_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, now())
+			started_at, finished_at, report_path, meta, record_sha256, capture_bytes, fetch_bytes, citation_bytes, ingested_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, now())
 		ON CONFLICT (id) DO UPDATE SET
 			kind = EXCLUDED.kind, topic = EXCLUDED.topic, mode = EXCLUDED.mode,
 			backend = EXCLUDED.backend, branch_count = EXCLUDED.branch_count,
@@ -133,9 +142,10 @@ func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, f
 			started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at,
 			report_path = EXCLUDED.report_path, meta = EXCLUDED.meta,
 			record_sha256 = EXCLUDED.record_sha256, capture_bytes = EXCLUDED.capture_bytes,
-			fetch_bytes = EXCLUDED.fetch_bytes, ingested_at = EXCLUDED.ingested_at`,
+			fetch_bytes = EXCLUDED.fetch_bytes, citation_bytes = EXCLUDED.citation_bytes,
+			ingested_at = EXCLUDED.ingested_at`,
 		rec.ID, rec.Kind, rec.Topic, rec.Mode, rec.Backend, rec.BranchCount, rec.Status, rec.Error,
-		rec.StartedAt, rec.FinishedAt, rec.ReportPath, meta, snap.recordSHA, snap.log.Size, snap.fetches.Size,
+		rec.StartedAt, rec.FinishedAt, rec.ReportPath, meta, snap.recordSHA, snap.log.Size, snap.fetches.Size, snap.citeSize,
 	); err != nil {
 		return stats, fmt.Errorf("writing run %s: %w", rec.ID, err)
 	}
@@ -200,7 +210,32 @@ func (ix *Index) ingestSnapshot(ctx context.Context, tx pgx.Tx, snap snapshot, f
 	if err := ix.ingestReport(ctx, tx, snap, &stats); err != nil {
 		return stats, fmt.Errorf("writing the report of run %s: %w", rec.ID, err)
 	}
+	if err := ix.ingestCitations(ctx, tx, snap, &stats); err != nil {
+		return stats, fmt.Errorf("writing the citations of run %s: %w", rec.ID, err)
+	}
 	return stats, nil
+}
+
+// ingestCitations replaces the run's citations with its citations.jsonl,
+// which the citation check rewrites whole. A run without one has none.
+func (ix *Index) ingestCitations(ctx context.Context, tx pgx.Tx, snap snapshot, stats *RunStats) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM citations WHERE run_id = $1`, snap.rec.ID); err != nil {
+		return err
+	}
+	q := make([]queued, 0, len(snap.citations))
+	for _, c := range snap.citations {
+		var status *string
+		if c.QuoteStatus != "" {
+			status = &c.QuoteStatus
+		}
+		q = append(q, queued{`
+			INSERT INTO citations (run_id, ord, marker, target_kind, target_id, report_offset, group_ord, quote, resolved, quote_status, note)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (run_id, ord) DO NOTHING`,
+			[]any{snap.rec.ID, c.Ord, c.Marker, c.TargetKind, c.TargetID, c.ReportOffset, c.Group, c.Quote, c.Resolved, status, c.Note}})
+	}
+	stats.Citations = len(snap.citations)
+	return sendAll(ctx, tx, q)
 }
 
 type queued struct {

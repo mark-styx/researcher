@@ -294,3 +294,30 @@ func TestStoreDoctor_IndexSchemaNewerThanBinary(t *testing.T) {
 		t.Fatalf("got %v %q", err, stdout)
 	}
 }
+
+func TestStoreDoctor_ListsFailedCitationsWithoutFailing(t *testing.T) {
+	st := storeSetup(t, indextest.DSN(t))
+	run := finishedRun(t, st, "ok", "https://example.org/a")
+	no := false
+	if err := store.WriteCitations(run.Dir(), []store.Citation{
+		{Ord: 1, Marker: "P:9", TargetKind: "passage", TargetID: "9", Group: 1, Resolved: &no, Note: "no such passage in the store"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCmdStdout(t, "store", "ingest"); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runCmdStdout(t, "store", "doctor")
+	if err != nil {
+		t.Fatalf("doctor failed on a report problem: %v\n%s", err, stdout)
+	}
+	for _, want := range []string{"1 report citation(s): 1 don't resolve", "run " + run.ID() + ": 1 unresolved"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, stdout)
+		}
+	}
+	stdout, _, _ = runCmdStdout(t, "store", "doctor", "--json")
+	if rep := decode[doctorReport](t, stdout); len(rep.Index.CitationFailures) != 1 || rep.Index.Counts.Unresolved != 1 {
+		t.Errorf("json = %+v", rep.Index)
+	}
+}
