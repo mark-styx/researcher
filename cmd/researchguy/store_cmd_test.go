@@ -175,6 +175,10 @@ func TestStoreCmd_IngestDoctorRebuild(t *testing.T) {
 	if err != nil || !strings.Contains(stdout, "Indexed 0 run(s)") || !strings.Contains(stdout, "3 already up to date") {
 		t.Fatalf("second ingest: %v %q", err, stdout)
 	}
+	stdout, _, err = runCmdStdout(t, "store", "ingest", "--json")
+	if err != nil || !strings.Contains(stdout, `"ingested": []`) {
+		t.Fatalf("ingest --json with nothing new should list no runs, not null: %v %q", err, stdout)
+	}
 
 	stdout, _, err = runCmdStdout(t, "store", "ingest", "--run", a.ID(), "--force", "--json")
 	if err != nil {
@@ -189,6 +193,13 @@ func TestStoreCmd_IngestDoctorRebuild(t *testing.T) {
 	stdout, _, err = runCmdStdout(t, "store", "doctor")
 	if err == nil || !strings.Contains(stdout, "1 finished run(s) not indexed or out of date") {
 		t.Fatalf("doctor after a change: %v %q", err, stdout)
+	}
+
+	// Both finished runs saw example.org/a: two sightings, one source. The
+	// summary can't sum per-run source counts into a total.
+	stdout, _, err = runCmdStdout(t, "store", "ingest", "--force")
+	if err != nil || strings.Contains(stdout, "sources") || !strings.Contains(stdout, "3 sightings") {
+		t.Fatalf("ingest summary: %v %q", err, stdout)
 	}
 
 	stdout, stderr, err = runCmdStdout(t, "store", "rebuild", "--json")

@@ -168,7 +168,7 @@ Ingest is idempotent, so replaying a run is safe.`,
 
 // ingestEach reconciles, then ingests one run (runID) or all of them.
 func ingestEach(ctx context.Context, ix *index.Index, st *store.Store, runID string, force bool) (index.SyncStats, error) {
-	var stats index.SyncStats
+	stats := index.SyncStats{Ingested: []index.RunStats{}}
 	marked, err := st.Reconcile()
 	stats.Interrupted = marked
 	if err != nil {
@@ -252,13 +252,14 @@ func printSyncStats(stats index.SyncStats, verb string) {
 	if n := len(stats.Interrupted); n > 0 {
 		fmt.Printf("Marked %d run(s) interrupted: %s\n", n, strings.Join(stats.Interrupted, ", "))
 	}
-	var captures, sources, sightings int
+	// Sources are shared across runs, so per-run counts don't add up to a
+	// total; `store doctor` shows the index's.
+	var captures, sightings int
 	for _, rs := range stats.Ingested {
 		captures += rs.Captures
-		sources += rs.Sources
 		sightings += rs.Sightings
 	}
-	fmt.Printf("%s %d run(s): %d captures, %d sources, %d sightings", verb, len(stats.Ingested), captures, sources, sightings)
+	fmt.Printf("%s %d run(s): %d captures, %d sightings", verb, len(stats.Ingested), captures, sightings)
 	if stats.UpToDate > 0 {
 		fmt.Printf("; %d already up to date", stats.UpToDate)
 	}

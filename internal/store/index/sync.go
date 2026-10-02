@@ -25,7 +25,7 @@ type SyncStats struct {
 // has changed since it was last ingested. One run failing doesn't stop the
 // rest; its error is in Failed.
 func (ix *Index) Sync(ctx context.Context, st *store.Store) (SyncStats, error) {
-	var stats SyncStats
+	stats := SyncStats{Ingested: []RunStats{}}
 	marked, err := st.Reconcile()
 	stats.Interrupted = marked
 	if err != nil {
@@ -57,7 +57,7 @@ func (ix *Index) Sync(ctx context.Context, st *store.Store) (SyncStats, error) {
 // Rebuild empties the index and ingests every run in the store, in one
 // transaction: if it fails, the old index is still there.
 func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error) {
-	var stats SyncStats
+	stats := SyncStats{Ingested: []RunStats{}}
 	marked, err := st.Reconcile()
 	stats.Interrupted = marked
 	if err != nil {
@@ -90,7 +90,7 @@ func (ix *Index) Rebuild(ctx context.Context, st *store.Store) (SyncStats, error
 		return nil
 	})
 	if err != nil {
-		return SyncStats{Interrupted: marked}, err
+		return SyncStats{Interrupted: marked, Ingested: []RunStats{}}, err
 	}
 	return stats, nil
 }

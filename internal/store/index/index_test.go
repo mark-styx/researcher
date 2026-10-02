@@ -304,6 +304,10 @@ func TestSync_ReconcilesAndIngestsPending(t *testing.T) {
 	if pending, _, _ := ix.Pending(ctx, st); len(pending) != 0 {
 		t.Errorf("pending after sync = %v", pending)
 	}
+	// Nothing new still encodes as an empty list, not null.
+	if again, err := ix.Sync(ctx, st); err != nil || again.Ingested == nil || again.UpToDate != 2 {
+		t.Errorf("second Sync = %+v, %v; want an empty, non-nil Ingested", again, err)
+	}
 	// Both runs saw the same sources: still one row each.
 	if c, _ := ix.Counts(ctx); c.Runs != 2 || c.Captures != 6 || c.Sources != 3 || c.Sightings != 8 {
 		t.Errorf("counts = %+v", c)
