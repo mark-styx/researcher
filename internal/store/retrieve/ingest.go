@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/marklubin/researchguy/internal/fetch"
@@ -17,9 +18,11 @@ type Ingester struct {
 	Index *index.Index
 	Store *store.Store
 	Stage *fetch.Stage
-	// Embed embeds what was fetched before IngestURL returns; nil leaves
-	// it for the daemon or `researchguy store embed`.
-	Embed index.Embedder
+	// Embed embeds what was fetched before IngestURL returns, within
+	// EmbedBudget (0 is no limit); nil leaves it for the daemon or
+	// `researchguy store embed`.
+	Embed       index.Embedder
+	EmbedBudget time.Duration
 }
 
 // IngestedDocument is a document an ingest fetched.
@@ -135,7 +138,12 @@ func (in *Ingester) IngestURL(ctx context.Context, rawURL, runID string) (Ingest
 		res.Documents = append(res.Documents, d)
 	}
 	if len(docIDs) > 0 && in.Embed != nil {
-		stats, err := in.Index.EmbedDocuments(ctx, in.Store, in.Embed, docIDs)
+		ectx, cancel := ctx, context.CancelFunc(func() {})
+		if in.EmbedBudget > 0 {
+			ectx, cancel = context.WithTimeout(ctx, in.EmbedBudget)
+		}
+		stats, err := in.Index.EmbedDocuments(ectx, in.Store, in.Embed, docIDs)
+		cancel()
 		res.Embedded = stats.Embedded + stats.FromCache
 		if err != nil {
 			res.Note = fmt.Sprintf("passages not embedded yet (%v); the daemon or `researchguy store embed` retries", err)

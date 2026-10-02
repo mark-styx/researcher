@@ -141,6 +141,9 @@ type Result struct {
 	TookMS int64  `json:"took_ms"`
 }
 
+// queryEmbedTimeout caps embedding the query.
+const queryEmbedTimeout = 30 * time.Second
+
 // rrfK is reciprocal rank fusion's constant: a card's score is the sum of
 // 1/(rrfK + rank) over the rankings it appears in.
 const rrfK = 60
@@ -174,7 +177,11 @@ func (r *Retriever) Find(ctx context.Context, q Query) (Result, error) {
 	var vec []float32
 	if r.Embed != nil {
 		res.EmbedModel = r.Embed.Model()
-		v, err := r.Embed.EmbedQuery(ctx, q.Text)
+		// A cold model takes a few seconds to load; a dead one shouldn't
+		// hold the search up longer than that.
+		ectx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+		v, err := r.Embed.EmbedQuery(ectx, q.Text)
+		cancel()
 		switch {
 		case err != nil:
 			res.Note = fmt.Sprintf("full-text only: the embedding model is unavailable (%v)", err)

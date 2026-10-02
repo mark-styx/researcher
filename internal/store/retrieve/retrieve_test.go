@@ -491,3 +491,33 @@ func TestSince(t *testing.T) {
 		}
 	}
 }
+
+func TestParseBound(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		end  bool
+		want string
+	}{
+		{"2020", false, "2020-01-01T00:00:00Z"},
+		{"2020", true, "2020-12-31T23:59:59.999999999Z"},
+		{"2020-02", true, "2020-02-29T23:59:59.999999999Z"},
+		{"2020-02-03", false, "2020-02-03T00:00:00Z"},
+		{"2020-02-03", true, "2020-02-03T23:59:59.999999999Z"},
+		{"2021-05-06T07:08:09Z", true, "2021-05-06T07:08:09Z"},
+		{"30d", false, "2026-09-02T12:00:00Z"},
+		{"1y", true, "2025-10-02T12:00:00Z"},
+	} {
+		got, err := ParseBound(c.in, now, c.end)
+		if err != nil || got.Format(time.RFC3339Nano) != c.want {
+			t.Errorf("ParseBound(%q, end=%v) = %s, %v; want %s", c.in, c.end, got.Format(time.RFC3339Nano), err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "yesterday", "2020-13", "0d", "-5d", "5x"} {
+		if _, err := ParseBound(bad, now, false); err == nil {
+			t.Errorf("ParseBound(%q) succeeded", bad)
+		}
+	}
+	if d, err := ParseAge("2w"); err != nil || d != 14*24*time.Hour {
+		t.Errorf("ParseAge(2w) = %v, %v", d, err)
+	}
+}
