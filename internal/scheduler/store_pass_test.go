@@ -21,8 +21,8 @@ import (
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
 )
 
-// sourceSite serves an article and a fake Ollama /api/embed; embedDown
-// makes the embed endpoint fail.
+// sourceSite serves an article and a fake Ollama: /api/embed (embedDown
+// makes it fail) and an /api/chat that finds one claim in the article.
 func sourceSite(t *testing.T, embedDown *bool) *httptest.Server {
 	t.Helper()
 	text := strings.Repeat("A paragraph of the fetched article, long enough to be the document. ", 40)
@@ -44,6 +44,12 @@ func sourceSite(t *testing.T, embedDown *bool) *httptest.Server {
 				out[i][0] = 1
 			}
 			json.NewEncoder(w).Encode(map[string]any{"embeddings": out})
+		case "/api/chat":
+			claims, _ := json.Marshal(map[string]any{"claims": []map[string]any{
+				{"text": "The article is long.", "quote": "long enough to be the document", "as_of": "", "volatile": false}}})
+			json.NewEncoder(w).Encode(map[string]any{"message": map[string]string{"content": string(claims)}})
+		case "/api/generate":
+			json.NewEncoder(w).Encode(map[string]any{"done": true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -213,5 +219,44 @@ func TestRun_StorePassRunsWithoutAnIndex(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(logFile); strings.Contains(string(data), "Store index sync enabled") {
 		t.Error("index sync enabled with no dsn")
+	}
+}
+
+func TestExtractClaims_YieldsToTasks(t *testing.T) {
+	srv := sourceSite(t, nil)
+	storeDir := filepath.Join(t.TempDir(), "store")
+	st, _ := runstore.Open(storeDir)
+	searchRun(t, st, srv.URL+"/article")
+	var logs bytes.Buffer
+	cfg := passConfig(t, srv, storeDir, indextest.DSN(t))
+	cfg.Store.Claims = config.StoreClaimsConfig{Enabled: true, Model: "qwen-test", Host: srv.URL, Budget: "30s", ChunkChars: 6000, MaxChunks: 8, MaxAttempts: 3}
+	s := &Scheduler{cfg: cfg, logger: log.New(&logs, "", 0), sem: make(chan struct{}, 1)}
+	defer func() { s.index.Close() }()
+
+	// A task holds a slot: the pass indexes but doesn't extract.
+	s.sem <- struct{}{}
+	s.storePass(context.Background())
+	if out := logs.String(); !strings.Contains(out, "Embedded ") || strings.Contains(out, "Extracted") {
+		t.Fatalf("pass with a task running:\n%s", out)
+	}
+	if files, _ := st.Extractions(); len(files) != 0 {
+		t.Fatalf("extracted while a task ran: %d files", len(files))
+	}
+	<-s.sem
+	s.storePass(context.Background())
+	if out := logs.String(); !strings.Contains(out, "Extracted 1 claim(s) from 1 text(s) with qwen-test (0 left, 0 with failed chunks)") {
+		t.Fatalf("pass log:\n%s", out)
+	}
+	c, _ := s.index.ClaimCandidates(context.Background(), runstore.ExtractorDir("qwen-test/claims-v1"))
+	if len(c) != 0 {
+		t.Errorf("still waiting: %+v", c)
+	}
+	// Disabled, it doesn't run.
+	cfg.Store.Claims.Enabled = false
+	logs.Reset()
+	searchRun(t, st, srv.URL+"/article?second")
+	s.storePass(context.Background())
+	if strings.Contains(logs.String(), "Extracted") {
+		t.Errorf("disabled extraction ran:\n%s", logs.String())
 	}
 }

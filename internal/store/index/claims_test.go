@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -349,5 +350,57 @@ func TestEmbedClaims_EmbedsAndCaches(t *testing.T) {
 	calls := emb.calls
 	if again, err := ix.EmbedClaims(ctx, st, emb); err != nil || again.Embedded != 0 || emb.calls != calls {
 		t.Errorf("re-embedding after rebuild: %+v, %v", again, err)
+	}
+}
+
+func TestClaimCandidates_CitedFirstAndCompleteSkipped(t *testing.T) {
+	ix, _ := openIndex(t)
+	ctx := context.Background()
+	st := newStore(t)
+	_, _, other := claimRuns(t, ix, st)
+	otherSHA := store.HashText(strings.Repeat("Wholly unrelated text about tide tables and harbour pilots. ", 30))
+	dir := store.ExtractorDir(testExtractor)
+
+	got, err := ix.ClaimCandidates(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// docText is two documents but one text; the 17-character abstract is
+	// too short. Uncited, the newest fetch comes first.
+	if len(got) != 2 || got[0].TextSHA != otherSHA || got[1].TextSHA != store.HashText(docText) || got[0].Cited || got[0].Title != "Tides" {
+		t.Fatalf("candidates = %+v", got)
+	}
+
+	// A report citing docText's source puts it first.
+	run := sampleRun(t, st)
+	if err := store.WriteCitations(run.Dir(), []store.Citation{{Ord: 1, Marker: "S:x", TargetKind: "source",
+		TargetID: fmt.Sprint(SourceID("go.dev/blog/go1.18")), Group: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.Sync(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = ix.ClaimCandidates(ctx, dir)
+	if len(got) != 2 || got[0].TextSHA != store.HashText(docText) || !got[0].Cited || got[1].Cited {
+		t.Fatalf("after citing = %+v", got)
+	}
+
+	// A complete extraction takes a text off the list; an incomplete one
+	// doesn't.
+	e := docTextExtraction()
+	e.Failed = nil
+	if err := st.PutExtraction(e); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutExtraction(store.Extraction{TextSHA: otherSHA, Extractor: testExtractor, Chunks: 1, Attempts: 1,
+		Failed: []store.ChunkError{{Chunk: 0, Error: "bad JSON"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.SyncClaims(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = ix.ClaimCandidates(ctx, dir)
+	if len(got) != 1 || got[0].TextSHA != otherSHA {
+		t.Fatalf("after extracting = %+v (other doc %d)", got, other)
 	}
 }

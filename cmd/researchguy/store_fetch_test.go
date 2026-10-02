@@ -10,13 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/marklubin/researchguy/internal/claims"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/marklubin/researchguy/internal/store/index/indextest"
 )
 
-// fetchSite serves an article, a 404 and a fake Ollama /api/embed (down
-// when embedDown is set).
+// fetchSite serves an article, a 404 and a fake Ollama: /api/embed (down
+// when embedDown is set) and an /api/chat that finds one claim in the
+// article.
 func fetchSite(t *testing.T, embedDown *bool) *httptest.Server {
 	t.Helper()
 	text := strings.Repeat("A paragraph of the fetched article, long enough to be the document. ", 40)
@@ -38,6 +40,12 @@ func fetchSite(t *testing.T, embedDown *bool) *httptest.Server {
 				out[i][1] = 1
 			}
 			json.NewEncoder(w).Encode(map[string]any{"embeddings": out})
+		case "/api/chat":
+			claims, _ := json.Marshal(map[string]any{"claims": []map[string]any{
+				{"text": "The article is long.", "quote": "long enough to be the document", "as_of": "", "volatile": false}}})
+			json.NewEncoder(w).Encode(map[string]any{"message": map[string]string{"content": string(claims)}})
+		case "/api/generate":
+			json.NewEncoder(w).Encode(map[string]any{"done": true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -56,7 +64,7 @@ func fetchSetup(t *testing.T, srv *httptest.Server, dsn string) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Fprintf(f, "store:\n  dsn: %q\n  fetch:\n    enabled: true\n    timeout: 5s\n  embed:\n    model: nomic-embed-text\n    host: %q\n", dsn, srv.URL)
+	fmt.Fprintf(f, "store:\n  dsn: %q\n  fetch:\n    enabled: true\n    timeout: 5s\n  embed:\n    model: nomic-embed-text\n    host: %q\n  claims:\n    model: qwen-test\n    host: %q\n", dsn, srv.URL, srv.URL)
 	f.Close()
 	st, err := store.Open(filepath.Join(configDir, "store"))
 	if err != nil {
@@ -166,5 +174,47 @@ func TestStoreEmbed_ModelDownFails(t *testing.T) {
 	}
 	if _, _, err := runCmdStdout(t, "store", "embed", "--budget", "soon"); err == nil || !strings.Contains(err.Error(), "invalid --budget") {
 		t.Errorf("bad --budget = %v", err)
+	}
+}
+
+func TestStoreExtract_WithIndex(t *testing.T) {
+	srv := fetchSite(t, nil)
+	st := fetchSetup(t, srv, indextest.DSN(t))
+	finishedRun(t, st, "t", srv.URL+"/article")
+	mustStdout(t, "store", "init")
+	mustStdout(t, "store", "fetch")
+
+	stdout, stderr, err := runCmdStdout(t, "store", "extract", "--json")
+	if err != nil {
+		t.Fatalf("store extract: %v\n%s", err, stderr)
+	}
+	stats := decode[claims.Stats](t, stdout)
+	if stats.Extractor != "qwen-test/claims-v1" || stats.Waiting != 1 || stats.Extracted != 1 || stats.Claims < 1 {
+		t.Fatalf("extract = %+v", stats)
+	}
+	if stats.Sync == nil || stats.Sync.Claims != stats.Claims || stats.Sync.Verified != stats.Claims {
+		t.Fatalf("sync = %+v", stats.Sync)
+	}
+	if stats.Embed == nil || stats.Embed.Embedded != stats.Claims {
+		t.Fatalf("embed = %+v", stats.Embed)
+	}
+	if !strings.Contains(stderr, "Extracting claims with qwen-test") {
+		t.Errorf("stderr = %q", stderr)
+	}
+	files, _ := st.Extractions()
+	if len(files) != 1 {
+		t.Errorf("%d extraction files", len(files))
+	}
+
+	if out := mustStdout(t, "store", "extract"); !strings.Contains(out, "Extracted 0 claim(s) from 0 of 0 waiting text(s) with qwen-test/claims-v1") {
+		t.Errorf("second extract: %q", out)
+	}
+	if _, _, err := runCmdStdout(t, "store", "extract", "--budget", "soon"); err == nil || !strings.Contains(err.Error(), "invalid --budget") {
+		t.Errorf("bad --budget = %v", err)
+	}
+	// A rebuild restores the claims from the store.
+	rb := decode[index.SyncStats](t, mustStdout(t, "store", "rebuild", "--json"))
+	if rb.Claims == nil || rb.Claims.Claims != stats.Claims {
+		t.Errorf("rebuild claims = %+v", rb.Claims)
 	}
 }

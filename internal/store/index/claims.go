@@ -331,3 +331,44 @@ func (ix *Index) readLinkLog(ctx context.Context, q querier, st *store.Store) (i
 	}
 	return len(log.Links), log.BadLines, nil
 }
+
+// ClaimCandidate is a text waiting for claims: primary documents with
+// this text have no complete extraction in the index.
+type ClaimCandidate struct {
+	TextSHA string
+	Title   string
+	Chars   int
+	Cited   bool // a report cites one of its documents
+}
+
+// MinClaimChars is the shortest text worth extracting claims from.
+const MinClaimChars = 200
+
+// ClaimCandidates lists the texts of primary documents with no complete
+// extraction from extractorDir, one per text: texts a report cites first,
+// then the most recently fetched.
+func (ix *Index) ClaimCandidates(ctx context.Context, extractorDir string) ([]ClaimCandidate, error) {
+	rows, err := ix.pool.Query(ctx, `WITH cited AS (
+			SELECT p.document_id AS id FROM citations c JOIN passages p ON p.id::text = c.target_id WHERE c.target_kind = 'passage'
+			UNION SELECT d.id FROM citations c JOIN documents d ON d.source_id::text = c.target_id WHERE c.target_kind = 'source')
+		SELECT d.sha256, max(d.title), max(d.text_chars), bool_or(d.id IN (SELECT id FROM cited)) AS cited, max(d.last_fetched_at) AS fetched
+		FROM documents d
+		WHERE d.origin = 'primary' AND d.text_chars >= $2
+		  AND NOT EXISTS (SELECT 1 FROM extractions e WHERE e.document_id = d.id AND e.extractor_dir = $1 AND e.complete)
+		GROUP BY d.sha256
+		ORDER BY cited DESC, fetched DESC, d.sha256`, extractorDir, MinClaimChars)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ClaimCandidate
+	for rows.Next() {
+		var c ClaimCandidate
+		var fetched time.Time
+		if err := rows.Scan(&c.TextSHA, &c.Title, &c.Chars, &c.Cited, &fetched); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

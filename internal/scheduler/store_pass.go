@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/marklubin/researchguy/internal/claims"
 	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/fetch"
 	runstore "github.com/marklubin/researchguy/internal/store"
@@ -32,8 +33,8 @@ func (s *Scheduler) startStorePass(ctx context.Context) {
 
 // storePass catches the store and index up: it fetches sources for runs
 // that haven't had them fetched (asks, runs whose budget ran out, runs from
-// before fetching), indexes runs the index lacks, then embeds passages
-// that have no vector.
+// before fetching), indexes runs the index lacks, embeds passages that
+// have no vector, then extracts claims from documents waiting on them.
 func (s *Scheduler) storePass(ctx context.Context) {
 	s.fetchPending(ctx)
 	if s.cfg.Store.DSN == "" || ctx.Err() != nil {
@@ -41,6 +42,7 @@ func (s *Scheduler) storePass(ctx context.Context) {
 	}
 	s.syncIndex(ctx)
 	s.embedPending(ctx)
+	s.extractClaims(ctx)
 }
 
 // fetchPending runs the fetch stage for up to maxFetchRuns finished runs
@@ -110,4 +112,41 @@ func (s *Scheduler) embedPending(ctx context.Context) {
 		status = err.Error()
 	}
 	s.logStatus(&s.embedStatus, "Embedding", status)
+}
+
+// extractClaims extracts claims from indexed documents waiting on them,
+// within store.claims.budget. Research tasks come first, since both want
+// the GPU: it doesn't start while a task runs and stops before its next
+// chunk when one starts. What it finished is kept either way.
+func (s *Scheduler) extractClaims(ctx context.Context) {
+	c := s.cfg.Store.Claims
+	if s.index == nil || !c.Enabled || ctx.Err() != nil {
+		return
+	}
+	busy := func() bool { return len(s.sem) > 0 }
+	if busy() {
+		return
+	}
+	status := ""
+	defer func() { s.logStatus(&s.claimsStatus, "Claim extraction", status) }()
+	st, err := runstore.Open(s.cfg.Store.Dir)
+	if err != nil {
+		status = err.Error()
+		return
+	}
+	ex := claims.New(s.cfg)
+	if ex.Model == "" {
+		status = "no model; set store.claims.model or ollama.utility_model"
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, c.BudgetDuration())
+	defer cancel()
+	stats, err := claims.Run(cctx, s.index, st, ex, claims.Options{MaxAttempts: c.MaxAttempts, Pause: busy, Embedder: embed.New(s.cfg)})
+	if stats.Extracted > 0 {
+		s.logger.Printf("Extracted %d claim(s) from %d text(s) with %s (%d left, %d with failed chunks)",
+			stats.Claims, stats.Extracted, ex.Model, stats.Waiting-stats.Extracted+stats.Failed, stats.Failed)
+	}
+	if err != nil {
+		status = err.Error()
+	}
 }

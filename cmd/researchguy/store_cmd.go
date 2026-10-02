@@ -34,7 +34,7 @@ indexed in Postgres, their documents split into passages and embedded
 derived from the store: rebuild recreates it from scratch.`,
 		GroupID: "project",
 	}
-	cmd.AddCommand(storeInitCmd(), storeIngestCmd(), storeFetchCmd(), storeEmbedCmd(), storeRebuildCmd(), storeDoctorCmd(),
+	cmd.AddCommand(storeInitCmd(), storeIngestCmd(), storeFetchCmd(), storeEmbedCmd(), storeExtractCmd(), storeRebuildCmd(), storeDoctorCmd(),
 		storePassageCmd(), storeDocumentCmd(), storeSourceCmd(), storeIngestURLCmd())
 	return cmd
 }
