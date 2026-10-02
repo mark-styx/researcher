@@ -72,6 +72,7 @@ researchguy search "entanglement"
 | `enrich [path]` | Expand and add context to an existing document (interactive picker if no path) |
 | `search <query>` | Semantic search across research via grepai |
 | `context <topic>` | Existing research on a topic, formatted as an ask/dive would see it. Never calls an LLM |
+| `find <query>` | Search the passages of fetched documents and reports in the index, with publication and collection dates. Needs `store.dsn`; see [Retrieval](#retrieval) |
 
 `dive`/`review`/`compare` accept `--no-research` (skip searching existing research for context) and `--max-age` (freshness filter, e.g. `90d`), same as `ask`. With the hybrid backend, they also accept `--mode` (`landscape`, `inquiry`) and `--branches` (effort/breadth dial) — see [Hybrid Backend](#hybrid-backend-modes-and-critics) below.
 
@@ -307,6 +308,8 @@ researchguy config set default_backend claude
 
 Each call runs `claude -p` in a fresh empty temp dir, removed afterwards, with the prompt on stdin and the system prompt in a file (`--system-prompt-file`), so prompt size isn't bound by the 1 MB argv limit. `--tools` names exactly the tools the request asked for (`WebSearch`, `WebFetch`), or none, so a call can't run commands or edit files. `ignore_user_config: true` (the default) adds `--safe-mode` and `--strict-mcp-config`, which keep your CLAUDE.md files, memory, hooks and MCP servers out of research calls; auth is unaffected. Calls use `--no-session-persistence`, so they don't show up in `claude --resume`.
 
+`--safe-mode` also turns off the MCP servers `--mcp-config` names, so a call that gets MCP tools (the hybrid aggregator's read-profile tools, below) uses `--setting-sources ""` with `--strict-mcp-config` instead. That loads no user, project or local settings, so CLAUDE.md, memory, hooks and other MCP servers stay out, and a tool that isn't allowed is denied (checked against Claude Code 2.1.282). It also skips the `env` block in `~/.claude/settings.json`: if `CLAUDE_CODE_OAUTH_TOKEN` is only there, the call fails with "Not logged in", and researchguy retries it once under `--safe-mode` without the tools, with a warning.
+
 ### Ollama
 
 Uses a local [Ollama](https://ollama.com) instance. The default local stack uses a sparse worker for repeated tool calls, a dense model for one synthesis call, and a small utility model for categorization and optional verification:
@@ -375,6 +378,8 @@ Worker prose is analysis, not evidence. Successful tool results form an evidence
 
 `hybrid.max_evidence_chars` caps how much of the ledger one prompt receives. `0` (the default) sizes it to the backend that reads it: ~2M chars for claude, which is ~500-670k tokens and leaves room in Opus's 1M-token window for the drafts and the report, and 80000 for Ollama or Codex. Set it explicitly for a smaller-window claude model such as haiku. The cap is split evenly across shards, and a shard that needs less than its share passes the rest to the others, so the first shard can't fill the ledger and starve the counter-evidence branches. When the critics' backend has a smaller budget than the aggregator's, they get their own cut of the ledger. Run metadata records `evidence_ledger` (items and chars captured vs. passed, and how many shards made it in), plus `critic_evidence_ledger` when the critics got a different cut.
 
+With `store.dsn` set, the runner fetches, indexes and embeds what the workers found before the aggregator runs (an ask skips the fetch), and the aggregator's prompt gets a table of the run's sources: each `[S:<id>]` with its domain, title, publication date, when it was collected, what text the store holds (full, abstract only, a failed fetch, or not fetched) and the ledger items that saw it. A claude aggregator also gets the read-only researchguy tools (`researchguy mcp --profile read`; `hybrid.aggregator_tools`, on by default), so it can run `researchguy_find` over the run's fetched text (`run_id`) or prior research and quote the passages it retrieves. Reports cite ledger items as `[E12]`, passages as `[P:<id>]` and sources as `[S:<id>]`, with a direct quote in double quotes right before its citation. The critics also get the text of every passage the draft cites. Metadata records `sources_table`, `aggregator_tools`, `cited_passages` and `before_aggregate_error`.
+
 The aggregator writes its report between a `===BEGIN REPORT===` line and an `===END REPORT===` line. Text outside them, such as status chatter or offers to save a file, is left out of the report and kept in the run record's `aggregator-output.md`. Metadata `aggregator_output.markers` is `ok`, `unterminated` (no end line, so everything after the begin line is kept), `missing` or `empty` (the whole output is kept), and a warning goes to stderr when it isn't `ok`.
 
 Both critic passes leave the answer body unchanged and write their findings under `## Critic Notes`:
@@ -419,12 +424,17 @@ Every `ask`, `dive`, `review`, `compare`, `enrich` and `watch` task, from the CL
   aggregator-output.md           # hybrid: the aggregator's raw output, before the report was cut out
   fetches.jsonl                  # one line per fetch attempt, failures included
   fetch.json                     # the last fetch pass: queued, fetched, failed, remaining
+  citations.jsonl                # every citation in the report and what the citation check found
 <store.dir>/blobs/sha256/<ab>/<hash>.gz         # raw fetched bytes, gzip
 <store.dir>/text/sha256/<ab>/<hash>.txt         # extracted text
 <store.dir>/vectors/<model>/<ab>/<hash>.f32     # embedding cache, keyed by passage text hash
 ```
 
-`run.json` is written as `running` when the task starts, with the process ID and host, and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed is marked `interrupted` by the next `store ingest` or daemon pass. Each tool result is appended as it arrives, so a worker killed mid-run keeps what it had collected. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept.
+`run.json` is written as `running` when the task starts, with the process ID and host, and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed is marked `interrupted` by the next `store ingest` or daemon pass. Each tool result is appended as it arrives, so a worker killed mid-run keeps what it had collected. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept. When a run succeeds, its section of the report is copied into `text/` as well (`report_sha256` in `run.json`), so the index has it even if the file moves or changes.
+
+### Citation check
+
+After a task writes its report, every citation in the run's section of it is checked, with no model involved: `[E<n>]` against the run's captures, `[P:<id>]` and `[S:<id>]` against the index. A double-quoted string of 4 or more words right before a citation is checked against the cited text, ignoring case, punctuation and spacing, and `...` may skip text. Citations in one bracket, or in adjacent brackets, share the quote, and it passes when any of them holds it. A quote missing from a search result's snippets, an abstract-only document or a source with no stored text is `unverifiable`, not `not_found`, because the worker may have read more than the store has. Results go to the run's `citations.jsonl` and the index's `citations` table. Citations that don't resolve, and quotes none of their citations hold, are listed under `## Citation Check` at the end of the report (under `## Critic Notes` when it has them). Without an index, passages and sources are left unchecked.
 
 ### Fetched documents
 
@@ -434,7 +444,7 @@ Every attempt goes in the run's `fetches.jsonl`, so a 403 or a timeout is record
 
 ### Index
 
-The store is the record of truth. With `store.dsn` set, runs are also indexed in Postgres: runs, captures, sources (one row per normalized URL, classified `web`, `paper`, `video` or `court`), sightings (each time a run saw a source, with its rank and whether it was opened or fetched), every fetch attempt, documents (each distinct text of a source, with its publication date), and passages: each document split into ~1,500-character passages with character offsets, full-text indexed, and embedded with `store.embed.model` through Ollama (`ollama pull nomic-embed-text`). The index is derived, so `store rebuild` can always recreate it, and vectors are cached under `vectors/`, so a rebuild doesn't embed again.
+The store is the record of truth. With `store.dsn` set, runs are also indexed in Postgres: runs, captures, sources (one row per normalized URL, classified `web`, `paper`, `video` or `court`), sightings (each time a run saw a source, with its rank and whether it was opened or fetched), every fetch attempt, documents (each distinct text of a source, with its publication date), and passages: each document split into ~1,500-character passages with character offsets, full-text indexed, and embedded with `store.embed.model` through Ollama (`ollama pull nomic-embed-text`). Each finished run's report is a document too, with `origin: synthesis`, under the source `researchguy:run/<id>`, and the report's checked citations are in `citations`. The index is derived, so `store rebuild` can always recreate it, and vectors are cached under `vectors/`, so a rebuild doesn't embed again.
 
 ```bash
 # store.dsn: postgres://localhost:5432/researchguy in config.yaml, then:
@@ -442,12 +452,26 @@ researchguy store init      # create the database, apply the schema (needs pgvec
 researchguy store ingest    # index runs already in the store
 researchguy store fetch     # fetch sources for runs that haven't had them
 researchguy store embed     # embed passages without a vector
-researchguy store doctor    # check both
+researchguy store doctor    # check both, and count failed report citations
 ```
 
 Runs recorded before the index existed have captures but no structured tool calls, so they index without sources. A task indexes its run when it finishes, then embeds its new passages within `store.embed.budget`. If the index or Ollama is down, the run is still saved, a warning says so, and `researchguy daemon start` or the `store` commands catch it up later. The daemon's pass fetches up to 4 runs still waiting on fetching, indexes what's new, then embeds. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
 
-This is phases 1-3 of `docs/research-store-design.md`. Retrieval over the store comes in phase 4.
+This is phases 1-4 of `docs/research-store-design.md`. Claims, claim links and cluster flags come in phase 5.
+
+### Retrieval
+
+`researchguy find <query>` (and `researchguy_find` over MCP) searches every passage in the index, from fetched documents and from reports. It ranks by full-text match and by embedding similarity, fused, discounts passages that are mostly repetition (figure labels, token tables), and returns at most 2 passages per document. Each card has its `P:<id>` ref, its source, the publication date when the source states one, when it was collected, and whether it's primary evidence or researchguy's own synthesis. Nothing is left out for its age unless a filter asks: `--since`/`--until` bound the publication date (or the collection date with `--date collected`, and a publication bound leaves out undated documents), `--as-of` keeps what had been collected by then, and `--run`, `--domain`, `--kind` and `--min-similarity` narrow it. `--prefer-recent 1y` halves a card's score per year of age. If the embedding model is down the search is full-text only, and the result says so.
+
+```bash
+researchguy find "nicotine patch trial outcomes" --since 2023
+researchguy store passage P:4821193310755112 --neighbors 2   # the text around a card
+researchguy store document 7075171269261622582 --offset 8000 # a document, paged, with its versions and fetches
+researchguy store source https://doi.org/10.1145/3290605.3300830
+researchguy store ingest-url https://example.org/paper       # fetch one URL into the store now
+```
+
+`researchguy context`, `researchguy_context` and the runner's research context include store evidence from `find` next to the grepai report excerpts, each labeled primary evidence or synthesis, with its dates. Store evidence is only filtered by age when a max age is passed explicitly.
 
 To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
 
@@ -496,11 +520,18 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 | `researchguy_context` | Search + freshness filter + read + format into ready-to-use context |
 | `researchguy_list` | List research files by category |
 | `researchguy_read` | Read a research document, a search hit's `file_path`, or a file under `read_roots`. Capped at 100KB; `start_line`/`end_line` read part of a large file |
+| `researchguy_find` | Ranked passages from fetched documents and reports, with dates; params match `find`'s flags (needs `store.dsn`) |
+| `researchguy_passage` | A passage (`P:<id>`) with up to 5 passages on each side |
+| `researchguy_document` | A document's text from `offset`, up to 50,000 chars, with its versions and fetch attempts |
+| `researchguy_source` | A source by URL, id or `S:<id>`: its documents, sightings, fetches and the runs that cited it |
+| `researchguy_ingest_url` | Fetch a URL into the store now, attached to `run_id` or a new `manual` run, and index and embed it |
 | `researchguy_graph_list` | List graph nodes, optionally by type (default limit 100) |
 | `researchguy_graph_show` | One node with its outgoing and incoming edges |
 | `researchguy_graph_find` | Find nodes by `title`, `path`, or a metadata key (e.g. `url`) |
 | `researchguy_graph_add_node` | Create a node |
 | `researchguy_graph_add_edge` | Create an edge between existing nodes |
+
+`researchguy mcp --profile read` serves only the tools that read: search, context, list, read, graph list/show/find, find, passage, document and source. It can't start research or write anything; the hybrid aggregator gets this profile.
 
 `researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `codex`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 

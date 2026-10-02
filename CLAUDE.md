@@ -89,6 +89,26 @@ extending it.
   default) `--safe-mode`. Don't move prompts back onto argv (1 MiB
   `ARG_MAX`). The hybrid aggregator's report is cut from between
   `===BEGIN REPORT===`/`===END REPORT===`; keep that contract in its prompt.
+  `--safe-mode` disables MCP servers, even ones `--mcp-config` names, so a
+  request with `Request.MCP` uses `--setting-sources ""` with
+  `--strict-mcp-config` instead. That skips the `settings.json` env block
+  too, so keep the retry without MCP on "Not logged in", and never pass the
+  OAuth token through `--settings` or a file.
+- The hybrid backend calls `Request.BeforeAggregate` after the workers are
+  recorded and unloaded; the runner uses it to fetch, index and embed the
+  run, and to hand the aggregator the sources table and the read-profile
+  MCP server. Workers never get it. `internal/research` can't import
+  `internal/mcpserver` (cycle), so the aggregator allows `mcp__researchguy`
+  rather than naming tools.
+- Retrieval over the index lives in `internal/store/retrieve` (`Find` and
+  the lookups); the CLI, MCP tools and `search.BuildContext` all use it.
+  `search` imports `retrieve`, so `retrieve` must never import `search`.
+  Keep it LLM-free; the query embedding is its only model call. A run's
+  report is indexed as an `origin = synthesis` document, and anything that
+  shows one must label it synthesis, not primary evidence.
+- The citation check (`internal/cite`) is deterministic: no model reads the
+  report. It writes the run's `citations.jsonl` (the index's `citations`
+  table comes from that file) and appends its notes to the report file.
 - Context retrieval lives in `search.BuildContext`; the MCP context tool,
   `researchguy context`, and the runner all use it. Keep it LLM-free.
 - Commands with `--json` must print nothing but the JSON on stdout. Send

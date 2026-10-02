@@ -681,7 +681,7 @@ Deviations from the plan above:
   Offsets are characters (runes) into that text.
 - **The fetch runs after the run ends,** not between the workers and the
   aggregator. Moving it before aggregation goes with aggregator retrieval in
-  phase 4.
+  phase 4. (Phase 4 added the pass before aggregation; see below.)
 - **Retries are counted per record** (`attempts`), not one row per HTTP
   try. One row per URL and route reads better and still shows a flaky host.
 - **Added:** meta refresh following, source kind classification, and
@@ -699,6 +699,135 @@ Deviations from the plan above:
   labels (`<pad> <pad>` in an arXiv PDF) embed close to many queries, so
   phase 4's ranking needs to discount low-information passages. A news
   feature with a DOI is classified `paper`.
+
+### Phase 4 as built
+
+Built 2026-10-02, `80456f5` to `1c44025`.
+
+- **Find** (`internal/store/retrieve`). One read-only transaction runs a
+  full-text arm (`plainto_tsquery` with its terms ORed, ranked by
+  `ts_rank_cd`) and, when the query embeds, a vector arm (HNSW cosine,
+  `hnsw.iterative_scan = relaxed_order` so a filtered query doesn't come
+  back short), each taking the top `max(5 x limit, 50)` under the same
+  filters. Reciprocal rank fusion (k = 60) combines them. A passage's score
+  is scaled by its share of distinct words relative to prose (floored at
+  0.2), so figure labels and token tables sink, and by a half-life when
+  `prefer_recent` is set. A document gives at most 2 cards; `limit` is at
+  most 100. Filters: kind (`passage` or `report`), `since`/`until` on the
+  published date (undated documents drop out) or the collected date,
+  `as_of`, `run_id`, domain and its subdomains, and `min_similarity`. When
+  the embedder is off, down or the wrong size, the search is full-text only
+  and the result's `note` says why.
+- **Cards** carry the `P:<id>` and `S:<id>` refs, URL, domain, title, the
+  published date with its source and precision (weak dates flagged), the
+  collected date, an age label, the kind, the passage text and both ranks.
+- **Lookups.** `Passage` with up to 5 neighbors on each side; `Document`
+  paged by character offset (at most 50,000 chars), with every version and
+  fetch attempt; `Source` by URL, ID or `S:` ref, with its documents,
+  sightings, fetches and the runs that cited it; `RunSources`, a run's
+  sources with their dates and fetch state, fetched ones first.
+- **CLI and MCP.** `find`, `store passage`/`document`/`source`/`ingest-url`,
+  and `researchguy_find`/`_passage`/`_document`/`_source`/`_ingest_url`.
+  MCP takes IDs as strings, since 63-bit IDs exceed JSON's 2^53.
+  `ingest-url` fetches one URL into a given run or a new `manual` run, then
+  indexes and embeds just that document. `mcp --profile read` serves 11
+  read tools: search, context, list, read, graph list/show/find, find,
+  passage, document and source.
+- **Context.** `search.BuildContext` adds store evidence from `find` next to
+  the grepai excerpts, each labeled primary evidence or synthesis, with its
+  dates. Only an explicit max age filters it, on the collected date.
+- **Reports as documents.** `Finish` copies a succeeded run's section of its
+  report into `text/` (`report_sha256` in `run.json`). Ingest makes it an
+  `origin = synthesis` document under the source `researchguy:run/<id>`,
+  and migration 3 adds `runs.report_document_id`.
+- **Hybrid.** `Request.BeforeAggregate` runs after the workers are recorded
+  and unloaded: the runner fetches the run (not for asks), indexes and
+  embeds it, lists up to 200 sources as a table, and, for a claude
+  aggregator with `hybrid.aggregator_tools` on, attaches `researchguy mcp
+  --profile read` on the same config. The prompt asks for `[E<n>]`, `[P:<id>]`
+  and `[S:<id>]` citations with exact quotes in double quotes. The critics'
+  evidence adds the text of every passage the draft cites (at most 50). A
+  failure in the hook is a warning, and the aggregator works from the
+  ledger alone.
+- **Claude isolation with MCP.** `--safe-mode` disables every MCP server,
+  including those `--mcp-config` names, so a call with MCP uses
+  `--setting-sources ""` and `--strict-mcp-config`, with `--allowedTools`
+  naming `mcp__researchguy`. Checked against Claude Code 2.1.282: no
+  CLAUDE.md, memory, hooks or user MCP servers load, and tools not allowed
+  are denied. That mode also skips the `env` block of `settings.json`, so
+  without `CLAUDE_CODE_OAUTH_TOKEN` in the process environment the call
+  fails "Not logged in"; the provider then retries once under `--safe-mode`
+  without MCP, with a warning.
+- **Citation check** (`internal/cite`, no model). Markers are parsed from
+  the run's section of the report. A quote is a double-quoted string
+  (straight or curly) of 4+ words on the same line, closing within 100
+  chars of the citation. Matching ignores case, punctuation and spacing,
+  and an ellipsis splits a quote into fragments that must appear in order.
+  Citations in one bracket or adjacent brackets share a quote, which fails
+  only if every one of them is `not_found`. Search snippets, abstracts and
+  sources without text give `unverifiable`; no index gives `unchecked`. A
+  passage from a report resolves, with the note that it isn't primary
+  evidence. Results go to the run's `citations.jsonl` and, through
+  migration 4, the `citations` table (`runs.citation_bytes` makes a
+  rewritten file pending). Failures are listed under `## Citation Check`
+  at the end of the report, and `store doctor` lists runs with failures
+  as information, not problems.
+
+Smoke run, 2026-10-02, the installed binary on a scratch config:
+`ingest-url` on a Wikipedia page (6,494 chars, 5 passages), then `find` in
+hybrid mode in 23 ms, and `claude -p` (Haiku, `--setting-sources ""`, the
+read profile through `--mcp-config`) called `researchguy_find` and answered
+with the card's ref.
+
+Speed, on a synthetic index since the backfill is phase 6: 20k documents
+and 100k passages of random text from a 78-word vocabulary with random unit
+vectors, HNSW built, on Postgres 14.22 with pgvector 0.8.1 on this machine,
+and the query embedded by `nomic-embed-text` through Ollama. `took_ms`
+covers embedding the query through building the cards, not process start.
+Over 5 queries run 3 times each:
+
+| Mode | took_ms |
+|---|---|
+| Hybrid, warm | 150-239, median ~170 |
+| Hybrid, first query | 423 |
+| Full-text only | 95-185, median ~125 |
+| Hybrid, `--since 2024` (12% of documents) | 130-194 |
+
+With so small a vocabulary each ORed full-text query matches ~15% of the
+passages (14,971 of 100k for "vaccine trial efficacy"), which should be
+worse than real text. That's inside the 80-260 ms target at 100k; 1M
+passages is unmeasured.
+
+Deviations from the plan above:
+
+- **`[E<seq>]` stays** next to `[P:]` and `[S:]`. It's the capture's `seq`
+  (phase 2), stable across prompts and checked against the run's captures,
+  so it isn't the per-prompt numbering the plan replaces. `[C:]` waits for
+  claims.
+- **The critics get the cited passages,** not retrieval tools: the passages
+  are appended to their evidence. Retrieval tools for critics are a
+  follow-up.
+- **Only a claude aggregator gets the read profile.** Codex and Ollama
+  workers still don't, and Codex still skips the user's MCP config.
+- **Not done:** `researchguy_claim`, `researchguy_timeline` and cluster
+  flags wait for claims in phase 5. Reports have no YAML frontmatter: the
+  header line names the run, and `run.json` holds the rest.
+- **The fetch runs twice:** before aggregation for what workers found, and
+  after the run for URLs only the report cites.
+- **Context isn't only a formatter over `find`.** Reports in `research_dir`
+  aren't in the store until phase 6's backfill, so grepai stays the source
+  for them.
+- **Speed was measured on a synthetic 100k index,** not the backfilled
+  store. Phase 6 measures it again on real text.
+- **Added:** `min_similarity`, the low-information discount,
+  `hybrid.aggregator_tools`, the sources table and the "Not logged in"
+  retry.
+- **Found while testing:** an `ingest-url` run writes no `fetch.json`, so
+  `store doctor` counts it as waiting on fetching until the daemon's next
+  pass finds nothing to fetch and writes one. Harmless, and a follow-up.
+  `TestHybrid_CodexWorkersClaudeAggregator` is flaky under load: the fake
+  codex's parallel workers each rewrite one `args.txt`, so a read can see
+  interleaved writes.
 
 ## Decisions
 
