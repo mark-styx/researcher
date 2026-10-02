@@ -59,7 +59,13 @@ func (c *Claude) Complete(ctx context.Context, req Request) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude CLI failed: %w\nstderr: %s", err, stderr.String())
+		// API errors such as "Prompt is too long" come on stdout, with an
+		// empty stderr.
+		out := strings.TrimSpace(stdout.String())
+		if len(out) > 2000 {
+			out = out[:2000] + "..."
+		}
+		return "", fmt.Errorf("claude CLI failed: %w\nstdout: %s\nstderr: %s", err, out, stderr.String())
 	}
 
 	return strings.TrimSpace(stdout.String()), nil

@@ -286,3 +286,19 @@ func argIndex(args []string, flag string) int {
 	}
 	return -1
 }
+
+// The CLI reports API errors such as "Prompt is too long" on stdout with an
+// empty stderr; the error has to carry them or a failed aggregation says
+// nothing about why.
+func TestClaude_Complete_FailureIncludesStdout(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-claude")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat > /dev/null\necho 'Prompt is too long'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Claude{Binary: script, Model: "opus"}
+	_, err := c.Complete(context.Background(), Request{UserPrompt: "q"})
+	if err == nil || !strings.Contains(err.Error(), "Prompt is too long") {
+		t.Errorf("err = %v, want the CLI's stdout included", err)
+	}
+}
