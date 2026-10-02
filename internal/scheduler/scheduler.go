@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/research"
 	"github.com/marklubin/researchguy/internal/rollup"
+	runstore "github.com/marklubin/researchguy/internal/store"
+	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/robfig/cron/v3"
 )
 
@@ -32,6 +35,10 @@ type Scheduler struct {
 	owner      string
 	graphStore *graph.Store   // nil unless graph.rollup.enabled
 	rollup     *rollup.Rollup // nil unless graph.rollup.enabled
+	index      *index.Index   // opened on the first index sync; nil after an error
+	// indexStatus is the last index sync problem logged, so a down index
+	// is logged once rather than every pass.
+	indexStatus string
 }
 
 func New(cfg *config.Config, provider llm.Provider) (*Scheduler, error) {
@@ -101,10 +108,22 @@ func (s *Scheduler) Run() {
 		s.logger.Println("Graph rollup enabled")
 	}
 
+	// indexCh stays nil (never selected) when store.dsn is blank.
+	var indexCh <-chan time.Time
+	if s.cfg.Store.DSN != "" {
+		indexTicker := time.NewTicker(interval)
+		defer indexTicker.Stop()
+		indexCh = indexTicker.C
+		s.logger.Println("Store index sync enabled")
+		s.syncIndex()
+	}
+
 	for {
 		select {
 		case <-ticker.C:
 			s.poll()
+		case <-indexCh:
+			s.syncIndex()
 		case <-rollupCh:
 			if err := s.rollup.Run(context.Background()); err != nil {
 				s.logger.Printf("Rollup pass error: %v", err)
@@ -116,12 +135,78 @@ func (s *Scheduler) Run() {
 			if s.graphStore != nil {
 				s.graphStore.Close()
 			}
+			s.index.Close()
 			if s.logFile != nil {
 				s.logFile.Close()
 			}
 			return
 		}
 	}
+}
+
+// indexSyncTimeout bounds one index catch-up pass.
+const indexSyncTimeout = 5 * time.Minute
+
+// syncIndex indexes the runs the index lacks: ones whose runner couldn't
+// reach it, and runs a crash left behind (marked interrupted first). A
+// problem is logged when it changes, not on every pass.
+func (s *Scheduler) syncIndex() {
+	ctx, cancel := context.WithTimeout(context.Background(), indexSyncTimeout)
+	defer cancel()
+	stats, err := s.indexPass(ctx)
+	if len(stats.Interrupted) > 0 {
+		s.logger.Printf("Marked %d run(s) interrupted: %s", len(stats.Interrupted), strings.Join(stats.Interrupted, ", "))
+	}
+	if len(stats.Ingested) > 0 {
+		s.logger.Printf("Indexed %d run(s)", len(stats.Ingested))
+	}
+	status := ""
+	switch {
+	case err != nil:
+		status = err.Error()
+	case len(stats.Failed) > 0:
+		ids := make([]string, 0, len(stats.Failed))
+		for id := range stats.Failed {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		var b strings.Builder
+		fmt.Fprintf(&b, "%d run(s) failed to index", len(ids))
+		for _, id := range ids {
+			fmt.Fprintf(&b, "; %s: %s", id, stats.Failed[id])
+		}
+		status = b.String()
+	}
+	if status == s.indexStatus {
+		return
+	}
+	if status == "" {
+		s.logger.Println("Index sync recovered")
+	} else {
+		s.logger.Printf("Index sync error: %s", status)
+	}
+	s.indexStatus = status
+}
+
+func (s *Scheduler) indexPass(ctx context.Context) (index.SyncStats, error) {
+	if s.index == nil {
+		ix, err := index.Open(ctx, s.cfg.Store.DSN)
+		if err != nil {
+			return index.SyncStats{}, err
+		}
+		s.index = ix
+	}
+	st, err := runstore.Open(s.cfg.Store.Dir)
+	if err != nil {
+		return index.SyncStats{}, err
+	}
+	stats, err := s.index.Sync(ctx, st)
+	if err != nil {
+		// Reopen next pass, which also migrates a schema changed meanwhile.
+		s.index.Close()
+		s.index = nil
+	}
+	return stats, err
 }
 
 func (s *Scheduler) Stop() {
