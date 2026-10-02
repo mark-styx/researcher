@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +33,7 @@ func configShowCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
+			cfg.Store.DSN = index.Redact(cfg.Store.DSN)
 
 			data, err := yaml.Marshal(cfg)
 			if err != nil {

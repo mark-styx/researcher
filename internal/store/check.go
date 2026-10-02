@@ -25,7 +25,7 @@ type Health struct {
 	// BadLines maps runs to the capture lines that don't decode.
 	BadLines map[string][]int `json:"bad_lines,omitempty"`
 	// Truncated are finished runs whose capture log ends mid-line.
-	Truncated []string `json:"truncated,omitempty"`
+	Truncated []string   `json:"truncated,omitempty"`
 	Oldest    *time.Time `json:"oldest,omitempty"`
 	Newest    *time.Time `json:"newest,omitempty"`
 }

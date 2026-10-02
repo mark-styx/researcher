@@ -2,8 +2,6 @@ package index
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,65 +11,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/marklubin/researchguy/internal/store"
+	"github.com/marklubin/researchguy/internal/store/index/indextest"
 )
-
-// testServer is the Postgres server tests create throwaway databases on:
-// RESEARCHGUY_TEST_PG, or the local default. Tests skip when it's down.
-func testServer() string {
-	if dsn := os.Getenv("RESEARCHGUY_TEST_PG"); dsn != "" {
-		return dsn
-	}
-	return "postgres://localhost:5432/postgres"
-}
-
-// testDSN creates an empty database and drops it when the test ends.
-func testDSN(t *testing.T) string {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, err := pgx.Connect(ctx, testServer())
-	if err != nil {
-		t.Skipf("no Postgres for index tests (%v); set RESEARCHGUY_TEST_PG", err)
-	}
-	defer conn.Close(ctx)
-	b := make([]byte, 4)
-	rand.Read(b)
-	name := "researchguy_test_" + hex.EncodeToString(b)
-	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		c, err := pgx.Connect(ctx, testServer())
-		if err != nil {
-			t.Logf("dropping %s: %v", name, err)
-			return
-		}
-		defer c.Close(ctx)
-		if _, err := c.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
-			t.Logf("dropping %s: %v", name, err)
-		}
-	})
-	cfg, err := pgx.ParseConfig(testServer())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return replaceDatabase(t, testServer(), cfg.Database, name)
-}
-
-func replaceDatabase(t *testing.T, dsn, from, to string) string {
-	t.Helper()
-	i := strings.LastIndex(dsn, "/"+from)
-	if i < 0 {
-		t.Fatalf("can't find database %q in %s", from, dsn)
-	}
-	return dsn[:i] + "/" + to + dsn[i+1+len(from):]
-}
 
 func openIndex(t *testing.T) (*Index, string) {
 	t.Helper()
-	dsn := testDSN(t)
+	dsn := indextest.DSN(t)
 	ix, err := Open(context.Background(), dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +82,7 @@ func TestOpen_MigratesAndIsIdempotent(t *testing.T) {
 }
 
 func TestOpen_ConcurrentMigrations(t *testing.T) {
-	dsn := testDSN(t)
+	dsn := indextest.DSN(t)
 	errs := make(chan error, 4)
 	for i := 0; i < 4; i++ {
 		go func() {
@@ -156,9 +101,9 @@ func TestOpen_ConcurrentMigrations(t *testing.T) {
 }
 
 func TestOpen_MissingDatabaseAndBadDSN(t *testing.T) {
-	dsn := testDSN(t)
+	dsn := indextest.DSN(t)
 	cfg, _ := pgx.ParseConfig(dsn)
-	missing := replaceDatabase(t, dsn, cfg.Database, cfg.Database+"_missing")
+	missing := indextest.WithDatabase(t, dsn, cfg.Database+"_missing")
 	if _, err := Open(context.Background(), missing); !errors.Is(err, ErrNoDatabase) {
 		t.Errorf("Open on a missing database = %v, want ErrNoDatabase", err)
 	}
@@ -171,16 +116,10 @@ func TestOpen_MissingDatabaseAndBadDSN(t *testing.T) {
 }
 
 func TestCreateDatabase(t *testing.T) {
-	dsn := testDSN(t)
+	dsn := indextest.DSN(t)
 	cfg, _ := pgx.ParseConfig(dsn)
-	fresh := replaceDatabase(t, dsn, cfg.Database, cfg.Database+"_new")
-	t.Cleanup(func() {
-		ctx := context.Background()
-		if c, err := pgx.Connect(ctx, testServer()); err == nil {
-			c.Exec(ctx, "DROP DATABASE IF EXISTS "+cfg.Database+"_new WITH (FORCE)")
-			c.Close(ctx)
-		}
-	})
+	fresh := indextest.WithDatabase(t, dsn, cfg.Database+"_new")
+	t.Cleanup(func() { indextest.Drop(t, cfg.Database+"_new") })
 	ctx := context.Background()
 	created, err := CreateDatabase(ctx, fresh)
 	if err != nil || !created {
@@ -194,7 +133,7 @@ func TestCreateDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	ix.Close()
-	if _, err := CreateDatabase(ctx, replaceDatabase(t, dsn, cfg.Database, "postgres")); err == nil {
+	if _, err := CreateDatabase(ctx, indextest.WithDatabase(t, dsn, "postgres")); err == nil {
 		t.Error("CreateDatabase should refuse the postgres database")
 	}
 }

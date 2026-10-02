@@ -12,6 +12,8 @@ import (
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/store"
+	"github.com/marklubin/researchguy/internal/store/index"
+	"github.com/marklubin/researchguy/internal/store/index/indextest"
 )
 
 // evidenceProvider is a single-shot provider that reports raw tool results,
@@ -251,5 +253,48 @@ func TestRun_EveryTaskTypeNamesItsRun(t *testing.T) {
 		if rec, err := store.ReadRecord(res.RunDir); err != nil || rec.Kind != task.Type || rec.ReportPath != res.FilePath {
 			t.Errorf("%s run record = %+v (%v)", task.Type, rec, err)
 		}
+	}
+}
+
+func TestRun_IndexesTheRunWhenItEnds(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Store.DSN = indextest.DSN(t)
+	p := &evidenceProvider{
+		mockProvider: mockProvider{response: "answer"},
+		evidence: []llm.EvidenceRecord{{Label: "web_fetch", Content: "page",
+			Call: store.Call{Tool: "web_fetch", Action: "fetch", URL: "https://example.org/a"}}},
+	}
+	res, err := NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeAsk, Topic: "q", NoSave: true, NoResearch: true, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix, err := index.Open(context.Background(), cfg.Store.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	c, err := ix.Counts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Runs != 1 || c.Captures != 1 || c.Sources != 1 {
+		t.Errorf("index counts = %+v, want the run, its capture and its source", c)
+	}
+	st, _ := store.Open(cfg.Store.Dir)
+	if pending, _, _ := ix.Pending(context.Background(), st); len(pending) != 0 {
+		t.Errorf("run %s still pending after the task: %v", res.RunID, pending)
+	}
+}
+
+func TestRun_UnreachableIndexWarnsAndContinues(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Store.DSN = "postgres://localhost:1/researchguy?connect_timeout=1"
+	res, err := NewRunner(cfg, &mockProvider{response: "answer"}).Run(context.Background(),
+		Task{Type: TypeAsk, Topic: "q", NoSave: true, NoResearch: true, Quiet: true})
+	if err != nil {
+		t.Fatalf("an unreachable index shouldn't fail the task: %v", err)
+	}
+	if rec, err := store.ReadRecord(res.RunDir); err != nil || rec.Status != store.StatusSucceeded {
+		t.Errorf("run record = %+v, %v", rec, err)
 	}
 }

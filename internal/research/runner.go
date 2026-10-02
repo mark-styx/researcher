@@ -12,6 +12,7 @@ import (
 	"github.com/marklubin/researchguy/internal/llm"
 	"github.com/marklubin/researchguy/internal/search"
 	"github.com/marklubin/researchguy/internal/store"
+	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/marklubin/researchguy/internal/tools"
 )
 
@@ -66,6 +67,7 @@ func (r *Runner) Run(ctx context.Context, task Task) (RunResult, error) {
 	run := r.startRun(task)
 	result, err := do(ctx, task, run)
 	r.finishRun(run, result, err)
+	r.indexRun(ctx, run)
 	result.RunID = run.ID()
 	result.RunDir = run.Dir()
 	return result, err
@@ -146,6 +148,29 @@ func (r *Runner) finishRun(run *store.Run, result RunResult, runErr error) {
 	}
 	if err := run.Finish(fin); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", err)
+	}
+}
+
+// indexTimeout bounds indexing one run when its task ends.
+const indexTimeout = 30 * time.Second
+
+// indexRun ingests the run into the index (store.dsn) once it has ended. A
+// down or missing index is a warning: the run is on disk, and `researchguy
+// store ingest` or the daemon adds it later. A canceled task is still
+// indexed.
+func (r *Runner) indexRun(ctx context.Context, run *store.Run) {
+	if run == nil || r.cfg.Store.DSN == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), indexTimeout)
+	defer cancel()
+	ix, err := index.Open(ctx, r.cfg.Store.DSN)
+	if err == nil {
+		_, err = ix.IngestRun(ctx, run.Dir(), false)
+		ix.Close()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: run %s is saved but not indexed (`researchguy store ingest` adds it): %v\n", run.ID(), err)
 	}
 }
 

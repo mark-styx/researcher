@@ -41,9 +41,12 @@ type GraphRollupConfig struct {
 
 // StoreConfig locates the on-disk research store, where every task writes
 // a run record and the evidence it collected (internal/store). A blank Dir
-// resolves to <config dir>/store when the config is loaded.
+// resolves to <config dir>/store when the config is loaded. DSN is the
+// Postgres index derived from it (internal/store/index); blank means no
+// index, and runs are only written to disk.
 type StoreConfig struct {
 	Dir string `yaml:"dir"`
+	DSN string `yaml:"dsn"`
 }
 
 type AskConfig struct {
@@ -238,8 +241,12 @@ graph:
 # Research store. Every task writes a run record and the raw evidence it
 # collected under <dir>/runs/<run_id>/. Blank means <config dir>/store.
 # Point several config dirs at one store to keep all research together.
+# dsn is the Postgres index built from the store, for example
+# postgres://localhost:5432/researchguy (create it with
+# ` + "`researchguy store init`" + `). Blank means no index.
 store:
   dir: ""
+  dsn: ""
 `
 
 func Dir() string {
