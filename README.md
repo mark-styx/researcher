@@ -120,6 +120,10 @@ Off by default until it's had real use.
 | `show <category>/<file>` | Show details for a specific file |
 | `migrate` | Reorganize flat slug directories into categories |
 | `link <path>` | Create a symlink to the research directory |
+| `store init` | Create the index database in `store.dsn` and apply its schema |
+| `store ingest [--run <id>] [--force]` | Mark dead runs interrupted, then index new or changed runs |
+| `store rebuild` | Empty the index and re-index every run, in one transaction |
+| `store doctor` | Check the store and index for problems; changes nothing, exits non-zero on a problem |
 
 ### Task Scheduling
 
@@ -233,9 +237,11 @@ graph:
     max_per_cycle: 5
 
 # Research store: run records under <dir>/runs/<run_id>/.
-# Blank means <config dir>/store.
+# Blank means <config dir>/store. dsn is the Postgres index built from it;
+# blank means no index.
 store:
   dir: ""
+  dsn: ""   # e.g. postgres://localhost:5432/researchguy
 ```
 
 Override backend and model per-command with `--backend` and `--model` flags.
@@ -394,15 +400,28 @@ Every `ask`, `dive`, `review`, `compare`, `enrich` and `watch` task, from the CL
 ```
 <store.dir>/runs/<run_id>/       # run_id: UTC start time + random suffix
   run.json                       # kind, topic, backend, mode, status, timing, report_path, metadata
-  captures.jsonl                 # one raw tool result per line: seq, worker, shard, backend, model, label, content
+  captures.jsonl                 # one raw tool result per line, written as it arrives: seq, worker, shard, backend, model, tool, action, query, url, ranked results, label, content
   workers.jsonl                  # hybrid: each worker's full draft, error and metadata
   aggregator-prompt.md           # hybrid: the exact system and user prompt the aggregator got
   aggregator-output.md           # hybrid: the aggregator's raw output, before the report was cut out
 ```
 
-`run.json` is written as `running` when the task starts and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed stays `running`. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept.
+`run.json` is written as `running` when the task starts, with the process ID and host, and rewritten as `succeeded` or `failed` when it ends, so a failed run keeps what it collected and says why. A run whose process was killed is marked `interrupted` by the next `store ingest` or daemon pass. Each tool result is appended as it arrives, so a worker killed mid-run keeps what it had collected. Captures are fsynced, and the other files are written to a temp file and renamed. A capture's `seq` is the report's citation: `[E12]` is the line with `"seq":12`. `--json` output and the MCP research tools include `run_id` and `run_dir`. If the store can't be written, the task still runs and a warning on stderr says its evidence isn't being kept.
 
-This is phase 1 of `docs/research-store-design.md`. The index, fetching and retrieval over the store come in later phases.
+### Index
+
+The store is the record of truth. With `store.dsn` set, runs are also indexed in Postgres: runs, captures, sources (one row per normalized URL) and sightings (each time a run saw a source, with its rank and whether it was opened or fetched). The index is derived, so `store rebuild` can always recreate it.
+
+```bash
+# store.dsn: postgres://localhost:5432/researchguy in config.yaml, then:
+researchguy store init      # create the database, apply the schema
+researchguy store ingest    # index runs already in the store
+researchguy store doctor    # check both
+```
+
+A task indexes its run when it finishes. If the index is down, the run is still saved, a warning says so, and `researchguy daemon start` or `store ingest` catches it up later. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
+
+This is phases 1 and 2 of `docs/research-store-design.md`. Fetching, passages and retrieval over the store come in later phases.
 
 To migrate existing flat directories (e.g. `long-slug-topic-name/README.md`) into the new structure:
 

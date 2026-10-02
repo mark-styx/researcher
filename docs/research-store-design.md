@@ -1,8 +1,8 @@
 # Research store: design
 
-Status: phase 1 built 2026-10-02 (see "Phase 1 as built" under Phases); phases
-2-7 proposed. Written 2026-10-02. "What exists today" describes the code
-before phase 1.
+Status: phases 1 and 2 built 2026-10-02 (see "Phase 1 as built" and "Phase 2
+as built" under Phases); phases 3-7 proposed. Decisions accepted 2026-10-02.
+Written 2026-10-02. "What exists today" describes the code before phase 1.
 
 researchguy collects evidence and then loses it. Workers' tool results live in
 process memory, one aggregator prompt reads a capped slice of them, and the
@@ -121,8 +121,8 @@ in Go.
 The cost is that the full feature needs a running server. Degraded modes are
 listed under failure handling.
 
-New Go dependencies (to be confirmed before adding): `github.com/jackc/pgx/v5`
-and `github.com/pgvector/pgvector-go`.
+New Go dependencies: `github.com/jackc/pgx/v5` (added in phase 2) and
+`github.com/pgvector/pgvector-go` (phase 3, with the first vector column).
 
 ### On-disk store
 
@@ -523,7 +523,81 @@ Deviations from the plan above:
 - **Not done:** marking crashed runs `interrupted` (they stay `running`),
   and the Codex page-open label bug. Both are phase 2.
 
-## Decisions needed
+### Phase 2 as built
+
+Built 2026-10-02, `c3b9d76` to `1808098`.
+
+- **Captures stream.** Each tool result is appended to `captures.jsonl` as
+  it arrives, through `Request.Capture`: Codex stdout is read line by line,
+  Ollama writes in its tool loop. The run assigns every `seq`, so parallel
+  workers' streamed captures get distinct IDs in arrival order. Providers
+  that don't stream (Claude) are appended after the call returns, in worker
+  order. A seq whose write failed stays used, so no later capture takes an
+  ID a prompt may already cite. Each capture carries its structured call:
+  tool, action (`search`, `open`, `fetch`, or a Codex action such as
+  `find_in_page`), query, URL, and for searches the ranked results with an
+  `opened` flag. That is the rank recording decision 2 asks for.
+- **Codex page opens** are labeled `web_search open: <url>`, with the URL
+  taken from the opened result when the action has none (the phase 1 bug).
+- **Interrupted runs.** `run.json` records the PID and host.
+  `store.Reconcile` marks a `running` run `interrupted` when it started on
+  this host and its PID is gone, taking its end time from the newest file in
+  the run dir and its capture count from the log. Runs recorded before PIDs
+  were are left alone. `store ingest`, `store rebuild` and the daemon
+  reconcile; `store doctor` only reports.
+- **Index.** `internal/store/index`, on `pgx/v5`. Migrations are embedded SQL
+  files applied in one transaction under an advisory lock and tracked in
+  `schema_migrations`; an index schema newer than the binary is refused.
+  Migration 1 creates `runs`, `captures`, `sources` and `sightings`.
+- **Ingest** is idempotent: captures are keyed by `(run_id, seq)`, sightings
+  by `(run_id, seq, ord)`, and a run is skipped when the SHA-256 of its
+  `run.json` and the size of its `captures.jsonl` match the last ingest.
+  Each run's ingest holds an advisory lock on its ID, so the runner and the
+  daemon take turns, and sources are upserted in sorted key order, so
+  concurrent ingests of runs sharing sources can't deadlock. A partial last
+  line (a crash mid-write) isn't ingested; lines that don't decode are
+  skipped and reported.
+- **When runs are indexed.** With `store.dsn` set, the runner ingests its
+  run when it finishes (30 s timeout; a failure is a warning and the run is
+  still on disk), and the daemon syncs at start and every poll interval,
+  logging a problem when it changes rather than every pass.
+- **Commands.** `store init` creates the database if needed and migrates
+  it. `store ingest [--run <id>] [--force]` reconciles, then indexes what's
+  new or changed. `store rebuild` empties and re-ingests in one transaction,
+  so a failed rebuild leaves the old index. `store doctor` checks the store
+  (run dirs without a record, orphaned runs, capture count mismatches, bad
+  or truncated capture lines) and the index (reachable, schema version, row
+  counts, finished runs not indexed) without changing either, and exits
+  non-zero on a problem. `ingest`, `rebuild` and `doctor` take `--json`.
+
+Deviations from the plan above:
+
+- **No blob store yet.** Nothing writes blobs before the fetcher exists, so
+  `blobs/`, `text/` and `vectors/` move to phase 3 with their first writer,
+  as does `pgvector-go`.
+- **A `sightings` table,** not in the schema above. A source is seen many
+  times, in different runs, at different ranks. `sightings` holds each one:
+  `(run_id, seq, ord)`, the source, its role (`result`, `opened`,
+  `fetched`), rank, title and snippet. Without it the index can't answer
+  which runs found a source, or decision 2's rank question.
+- **Source IDs are hashes,** the first 63 bits of the SHA-256 of `url_key`,
+  not a sequence, so a rebuild reproduces them and an ID stored outside the
+  index stays valid. `node_id` waits for phase 6; `kind` is `web` until
+  phase 3 classifies sources. `runs.report_path` stands in for
+  `report_document_id` until documents exist.
+- **`store.dsn` defaults to blank,** meaning no index, for the same reason
+  as the store dir: a scratch config never writes into the real index.
+- **`worker_error`** is set only on captures appended after the worker
+  returned. A streamed capture is written before its worker's outcome is
+  known.
+
+## Decisions
+
+Accepted 2026-10-02 as recommended: Postgres + pgvector in a new
+`researchguy` database; eager fetch of opened, cited and top 3 results with
+rank recorded; the local model for claim extraction and a stronger one for
+links; retire grepai for research at parity; move the graph to Postgres in
+phase 6. The options as they were weighed:
 
 1. **Index backend.** Postgres + pgvector in a new `researchguy` database
    (recommended, reasons above) or SQLite with brute-force vectors.

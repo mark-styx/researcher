@@ -85,5 +85,9 @@ graph:
 # Research store. Every task writes a run record and the raw evidence it
 # collected under <dir>/runs/<run_id>/. Blank means <config dir>/store.
 # Point several config dirs at one store to keep all research together.
+# dsn is the Postgres index built from the store, for example
+# postgres://localhost:5432/researchguy (create it with
+# `researchguy store init`). Blank means no index.
 store:
   dir: ""
+  dsn: ""

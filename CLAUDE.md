@@ -67,6 +67,14 @@ extending it.
   what one prompt sees, never what's kept: write captures before anything
   that can fail, and don't add a path that drops collected evidence. Ledger
   IDs (`E<seq>`) are the capture `seq`, and the report header names the run.
+  A provider with tool calls streams each result through `Request.Capture`
+  as it arrives; the run assigns seqs, so never number captures yourself.
+- The Postgres index (`internal/store/index`, `store.dsn`) is derived from
+  the store and must stay rebuildable from it: nothing gets written only to
+  the index. Ingest must stay idempotent. Schema changes are new numbered
+  files in `internal/store/index/migrations/`, never edits to an applied
+  one. Index tests use `indextest.DSN`, which makes a throwaway database and
+  skips without Postgres (`RESEARCHGUY_TEST_PG` points elsewhere).
 - The Claude provider runs `claude -p` in an empty temp dir with the prompt
   on stdin, the system prompt in a file, an explicit `--tools` list and (by
   default) `--safe-mode`. Don't move prompts back onto argv (1 MiB
