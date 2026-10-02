@@ -319,3 +319,35 @@ func popcount(x uint64) int {
 	}
 	return n
 }
+
+func TestEmbedClaims_EmbedsAndCaches(t *testing.T) {
+	ix, _ := openIndex(t)
+	ctx := context.Background()
+	st := newStore(t)
+	claimRuns(t, ix, st)
+	if err := st.PutExtraction(docTextExtraction()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.SyncClaims(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	emb := &fakeEmbedder{model: "fake", dims: Dims}
+	stats, err := ix.EmbedClaims(ctx, st, emb)
+	if err != nil || stats.Embedded+stats.FromCache != 8 || stats.Remaining != 0 {
+		t.Fatalf("stats = %+v, %v", stats, err)
+	}
+	// A rebuild reattaches the cached vectors without the model.
+	ix.SetEmbedModel("fake")
+	if _, err := ix.Rebuild(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	var missing int
+	ix.pool.QueryRow(ctx, `SELECT count(*) FROM claims WHERE embedding IS NULL`).Scan(&missing)
+	if missing != 0 {
+		t.Errorf("%d claims lost their vector across a rebuild", missing)
+	}
+	calls := emb.calls
+	if again, err := ix.EmbedClaims(ctx, st, emb); err != nil || again.Embedded != 0 || emb.calls != calls {
+		t.Errorf("re-embedding after rebuild: %+v, %v", again, err)
+	}
+}

@@ -51,9 +51,22 @@ func (ix *Index) EmbedDocuments(ctx context.Context, st *store.Store, emb Embedd
 	return ix.embed(ctx, st, emb, docIDs)
 }
 
+// EmbedClaims is Embed for claims: their text, so a claim's nearest
+// claims can be found.
+func (ix *Index) EmbedClaims(ctx context.Context, st *store.Store, emb Embedder) (EmbedStats, error) {
+	return ix.embedTable(ctx, st, emb, "claims", nil)
+}
+
 // embed embeds the passages of docIDs, or of every document when docIDs
 // is nil.
 func (ix *Index) embed(ctx context.Context, st *store.Store, emb Embedder, docIDs []int64) (EmbedStats, error) {
+	return ix.embedTable(ctx, st, emb, "passages", docIDs)
+}
+
+// embedTable embeds the rows of table (passages or claims, which share
+// text, text_sha256, embedding and embed_model) in documents docIDs, or in
+// every document when docIDs is nil.
+func (ix *Index) embedTable(ctx context.Context, st *store.Store, emb Embedder, table string, docIDs []int64) (EmbedStats, error) {
 	model := emb.Model()
 	stats := EmbedStats{Model: model}
 	var err error
@@ -62,15 +75,15 @@ func (ix *Index) embed(ctx context.Context, st *store.Store, emb Embedder, docID
 		query string
 		args  []any
 	}{
-		{`SELECT id, text, text_sha256 FROM passages WHERE embedding IS NULL AND ` + scope + `
+		{`SELECT id, text, text_sha256 FROM ` + table + ` WHERE embedding IS NULL AND ` + scope + `
 			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch, docIDs}},
-		{`SELECT id, text, text_sha256 FROM passages WHERE embed_model IS DISTINCT FROM $3 AND ` + scope + `
+		{`SELECT id, text, text_sha256 FROM ` + table + ` WHERE embed_model IS DISTINCT FROM $3 AND ` + scope + `
 			ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, []any{embedBatch, docIDs, model}},
 	}
 	for _, pass := range passes {
 		for {
 			var n int
-			n, err = ix.embedRound(ctx, st, emb, pass.query, pass.args, &stats)
+			n, err = ix.embedRound(ctx, st, emb, table, pass.query, pass.args, &stats)
 			if err != nil || n == 0 {
 				break
 			}
@@ -81,15 +94,16 @@ func (ix *Index) embed(ctx context.Context, st *store.Store, emb Embedder, docID
 	}
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if qerr := ix.pool.QueryRow(cctx, `SELECT count(*) FROM passages WHERE `+unembedded, model).Scan(&stats.Remaining); qerr != nil && err == nil {
+	if qerr := ix.pool.QueryRow(cctx, `SELECT count(*) FROM `+table+` WHERE `+unembedded, model).Scan(&stats.Remaining); qerr != nil && err == nil {
 		err = qerr
 	}
 	return stats, err
 }
 
-// embedRound embeds one batch of the passages query selects, locked so a
-// concurrent Embed takes others. It returns how many it embedded.
-func (ix *Index) embedRound(ctx context.Context, st *store.Store, emb Embedder, query string, args []any, stats *EmbedStats) (int, error) {
+// embedRound embeds one batch of the rows query selects from table,
+// locked so a concurrent Embed takes others. It returns how many it
+// embedded.
+func (ix *Index) embedRound(ctx context.Context, st *store.Store, emb Embedder, table, query string, args []any, stats *EmbedStats) (int, error) {
 	model := emb.Model()
 	n, cached, made := 0, 0, 0
 	err := pgx.BeginFunc(ctx, ix.pool, func(tx pgx.Tx) error {
@@ -136,7 +150,7 @@ func (ix *Index) embedRound(ctx context.Context, st *store.Store, emb Embedder, 
 				return err
 			}
 			if len(vs) != len(texts) {
-				return fmt.Errorf("embedding model %s returned %d vectors for %d passages", model, len(vs), len(texts))
+				return fmt.Errorf("embedding model %s returned %d vectors for %d texts", model, len(vs), len(texts))
 			}
 			for j, v := range vs {
 				if len(v) != Dims {
@@ -152,7 +166,7 @@ func (ix *Index) embedRound(ctx context.Context, st *store.Store, emb Embedder, 
 		}
 		b := &pgx.Batch{}
 		for _, p := range ps {
-			b.Queue(`UPDATE passages SET embedding = $2, embed_model = $3 WHERE id = $1`, p.id, pgvector.NewVector(p.vec), model)
+			b.Queue(`UPDATE `+table+` SET embedding = $2, embed_model = $3 WHERE id = $1`, p.id, pgvector.NewVector(p.vec), model)
 		}
 		if err := tx.SendBatch(ctx, b).Close(); err != nil {
 			return err
