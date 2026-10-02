@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -45,8 +46,67 @@ type GraphRollupConfig struct {
 // Postgres index derived from it (internal/store/index); blank means no
 // index, and runs are only written to disk.
 type StoreConfig struct {
-	Dir string `yaml:"dir"`
-	DSN string `yaml:"dsn"`
+	Dir   string           `yaml:"dir"`
+	DSN   string           `yaml:"dsn"`
+	Fetch StoreFetchConfig `yaml:"fetch"`
+	Embed StoreEmbedConfig `yaml:"embed"`
+}
+
+// StoreFetchConfig drives the fetch stage (internal/fetch): after a run
+// ends, the pages its workers opened, the URLs its drafts and report cite
+// and each search's top results are fetched into the store.
+type StoreFetchConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// TopResults is how many of each search's top-ranked results are
+	// fetched, besides opened and cited pages.
+	TopResults  int    `yaml:"top_results"`
+	Concurrency int    `yaml:"concurrency"`
+	Timeout     string `yaml:"timeout"` // per request
+	// Budget caps one run's fetch stage; what it doesn't reach is fetched
+	// by `researchguy store fetch` or the daemon. "0" is no limit.
+	Budget string `yaml:"budget"`
+	// OpenAlex looks DOIs up for metadata, abstracts and open-access
+	// copies when the publisher's page gives too little text.
+	OpenAlex  bool   `yaml:"openalex"`
+	UserAgent string `yaml:"user_agent,omitempty"`
+}
+
+// TimeoutDuration is Timeout parsed, 20s when blank or invalid.
+func (f StoreFetchConfig) TimeoutDuration() time.Duration {
+	return durationOr(f.Timeout, 20*time.Second)
+}
+
+// BudgetDuration is Budget parsed, 3m when blank or invalid, 0 (no limit)
+// for "0".
+func (f StoreFetchConfig) BudgetDuration() time.Duration {
+	if strings.TrimSpace(f.Budget) == "0" {
+		return 0
+	}
+	return durationOr(f.Budget, 3*time.Minute)
+}
+
+// StoreEmbedConfig is the embedding model passages are indexed with.
+// Embeddings need the index (store.dsn) and Ollama.
+type StoreEmbedConfig struct {
+	Model string `yaml:"model"`
+	// Host is the Ollama server; blank uses ollama.host.
+	Host string `yaml:"host"`
+	// Budget caps embedding after a run; the rest is embedded by
+	// `researchguy store embed` or the daemon.
+	Budget string `yaml:"budget"`
+}
+
+// BudgetDuration is Budget parsed, 2m when blank or invalid.
+func (e StoreEmbedConfig) BudgetDuration() time.Duration {
+	return durationOr(e.Budget, 2*time.Minute)
+}
+
+func durationOr(s string, def time.Duration) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(s))
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 type AskConfig struct {
@@ -247,6 +307,24 @@ graph:
 store:
   dir: ""
   dsn: ""
+  # After a run ends, fetch the pages its workers opened, the URLs its
+  # drafts and report cite, and each search's top_results results, storing
+  # their raw bytes and text. budget caps one run's fetch ("0" is no limit);
+  # the rest waits for ` + "`researchguy store fetch`" + ` or the daemon. openalex
+  # looks DOIs up for abstracts and open-access copies of blocked papers.
+  fetch:
+    enabled: true
+    top_results: 3
+    concurrency: 8
+    timeout: 20s
+    budget: 3m
+    openalex: true
+  # Passage embeddings for the index (needs dsn and Ollama). Blank host
+  # uses ollama.host.
+  embed:
+    model: nomic-embed-text
+    host: ""
+    budget: 2m
 `
 
 func Dir() string {
@@ -365,6 +443,20 @@ func defaults() *Config {
 			Rollup: GraphRollupConfig{
 				Enabled:     false,
 				MaxPerCycle: 5,
+			},
+		},
+		Store: StoreConfig{
+			Fetch: StoreFetchConfig{
+				Enabled:     true,
+				TopResults:  3,
+				Concurrency: 8,
+				Timeout:     "20s",
+				Budget:      "3m",
+				OpenAlex:    true,
+			},
+			Embed: StoreEmbedConfig{
+				Model:  "nomic-embed-text",
+				Budget: "2m",
 			},
 		},
 	}
