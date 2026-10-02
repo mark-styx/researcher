@@ -590,6 +590,11 @@ Deviations from the plan above:
 - **`worker_error`** is set only on captures appended after the worker
   returned. A streamed capture is written before its worker's outcome is
   known.
+- **Runs recorded before phase 2 add no sources.** Their captures have a
+  label and content but no structured call, so they index as captures only.
+  Checked on the 2026-10-02 smoke run `20261002T170200Z-0ad1e9`: 14
+  captures, 0 sources. Recovering their URLs means parsing the content,
+  which phase 6's backfill can do.
 
 ## Decisions
 

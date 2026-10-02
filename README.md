@@ -419,7 +419,7 @@ researchguy store ingest    # index runs already in the store
 researchguy store doctor    # check both
 ```
 
-A task indexes its run when it finishes. If the index is down, the run is still saved, a warning says so, and `researchguy daemon start` or `store ingest` catches it up later. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
+Runs recorded before the index existed have captures but no structured tool calls, so they index without sources. A task indexes its run when it finishes. If the index is down, the run is still saved, a warning says so, and `researchguy daemon start` or `store ingest` catches it up later. Ingest is idempotent: an unchanged run is skipped and a replayed one changes nothing.
 
 This is phases 1 and 2 of `docs/research-store-design.md`. Fetching, passages and retrieval over the store come in later phases.
 
