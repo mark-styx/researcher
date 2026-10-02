@@ -389,8 +389,9 @@ type CaptureLog struct {
 	Captures []Capture
 	// Bytes is the length of the complete lines read. A last line without
 	// a newline is a write still in progress (or cut off by a crash), and
-	// is neither decoded nor counted.
+	// is neither decoded nor counted. Size is the whole file.
 	Bytes    int64
+	Size     int64
 	Partial  bool
 	BadLines []int // 1-based numbers of complete lines that didn't decode
 	BadErr   string
@@ -407,6 +408,7 @@ func ScanCaptures(runDir string) (CaptureLog, error) {
 	if err != nil {
 		return log, fmt.Errorf("reading captures: %w", err)
 	}
+	log.Size = int64(len(data))
 	for n := 1; len(data) > 0; n++ {
 		i := bytes.IndexByte(data, '\n')
 		if i < 0 {

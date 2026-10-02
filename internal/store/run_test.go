@@ -232,7 +232,7 @@ func TestScanCaptures_PartialLastLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(log.Captures) != 1 || !log.Partial || log.Bytes != full.Size() || len(log.BadLines) != 0 {
+	if len(log.Captures) != 1 || !log.Partial || log.Bytes != full.Size() || log.Size != full.Size()+21 || len(log.BadLines) != 0 {
 		t.Errorf("log = %+v, want 1 capture, partial, %d bytes, no bad lines", log, full.Size())
 	}
 	if _, err := ReadCaptures(r.Dir()); err != nil {
