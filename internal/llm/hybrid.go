@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +42,7 @@ type hybridWorkerOutput struct {
 	Shard    string
 	Content  string
 	Evidence []critique.Evidence
+	Calls    []store.Call // the tool call behind each Evidence item
 	Provider Provider
 	Metadata json.RawMessage
 	Err      error
@@ -117,11 +117,13 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	// angles get investigated from how many distinct models are configured.
 	out := make(chan hybridWorkerOutput, len(shards))
 	sem := make(chan struct{}, parallel)
+	captures := &captureLog{run: req.Run}
 	var wg sync.WaitGroup
 	for i, shard := range shards {
 		model := models[i%len(models)]
 		workerReq := req
 		workerReq.UserPrompt = buildShardPrompt(req.UserPrompt, shard)
+		workerReq.Capture = captures.forWorker(i, workerBackend, model, shard)
 		wg.Add(1)
 		go func(idx int, m string, sh string, wr Request) {
 			defer wg.Done()
@@ -136,13 +138,15 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 				return
 			}
 			resp, err := p.Complete(ctx, wr)
+			evidence, calls := providerEvidence(p, workerBackend, m, sh)
 			out <- hybridWorkerOutput{
 				Index:    idx,
 				Backend:  workerBackend,
 				Model:    m,
 				Shard:    sh,
 				Content:  resp,
-				Evidence: providerEvidence(p, workerBackend, m, sh),
+				Evidence: evidence,
+				Calls:    calls,
 				Provider: p,
 				Metadata: providerMetadataJSON(p),
 				Err:      err,
@@ -163,12 +167,13 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 		}
 		success++
 	}
-	// Number every captured item and write it, with the worker drafts, to
-	// the run record before anything else can fail. The numbers are the
-	// [E<seq>] IDs the aggregator and critics cite.
-	assignEvidenceIDs(results)
+	// Streaming workers captured their tool results as they arrived. Number
+	// and write the rest, and the worker drafts, before anything else can
+	// fail. The numbers are the [E<seq>] IDs the aggregator and critics cite.
 	st := hybridState{req: req, shards: shards, workers: results, started: started}
-	st.storeErr(recordWorkers(req.Run, results)...)
+	st.storeErr(captures.errors()...)
+	st.storeErr(assignEvidenceIDs(req.Run, results)...)
+	st.storeErr(recordWorkers(req.Run, results))
 
 	if err := unloadWorkers(ctx, results); err != nil {
 		return "", fmt.Errorf("unloading hybrid workers before aggregation: %w", err)
@@ -553,23 +558,77 @@ func (h *Hybrid) evidenceCapFor(backend string) int {
 	return defaultHybridEvidenceChars
 }
 
-func providerEvidence(provider Provider, backend, model, shard string) []critique.Evidence {
+// providerEvidence is a worker's raw tool results, labeled with the worker,
+// with the tool call behind each.
+func providerEvidence(provider Provider, backend, model, shard string) ([]critique.Evidence, []store.Call) {
 	ep, ok := provider.(EvidenceProvider)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	records := ep.Evidence()
 	out := make([]critique.Evidence, 0, len(records))
+	calls := make([]store.Call, 0, len(records))
 	for _, record := range records {
 		if strings.TrimSpace(record.Content) == "" {
 			continue
 		}
 		out = append(out, critique.Evidence{
-			Label:   fmt.Sprintf("%s/%s | shard: %s | %s", backend, model, shard, record.Label),
+			ID:      record.ID,
+			Label:   workerEvidenceLabel(backend, model, shard, record.Label),
 			Content: record.Content,
 		})
+		calls = append(calls, record.Call)
 	}
-	return out
+	return out, calls
+}
+
+func workerEvidenceLabel(backend, model, shard, label string) string {
+	return fmt.Sprintf("%s/%s | shard: %s | %s", backend, model, shard, label)
+}
+
+// captureLog writes workers' tool results to the run as they arrive. The
+// run numbers them, so parallel workers' captures interleave in arrival
+// order and never share a seq.
+type captureLog struct {
+	run  *store.Run
+	mu   sync.Mutex
+	errs []error
+}
+
+// forWorker is the Request.Capture for one worker, nil without a run.
+func (l *captureLog) forWorker(idx int, backend, model, shard string) CaptureFunc {
+	if l.run == nil {
+		return nil
+	}
+	return func(rec EvidenceRecord) string {
+		if strings.TrimSpace(rec.Content) == "" {
+			return ""
+		}
+		seqs, err := l.run.Append(store.Capture{
+			Worker:  idx + 1,
+			Shard:   shard,
+			Backend: backend,
+			Model:   model,
+			Call:    rec.Call,
+			Label:   workerEvidenceLabel(backend, model, shard, rec.Label),
+			Content: rec.Content,
+		})
+		if err != nil {
+			l.mu.Lock()
+			l.errs = append(l.errs, err)
+			l.mu.Unlock()
+		}
+		if len(seqs) == 0 {
+			return ""
+		}
+		return fmt.Sprintf("E%d", seqs[0])
+	}
+}
+
+func (l *captureLog) errors() []error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.errs
 }
 
 func unloadWorkers(ctx context.Context, workers []hybridWorkerOutput) error {
@@ -727,44 +786,61 @@ func (r *hybridState) metadataJSON() string {
 	return string(b)
 }
 
-// assignEvidenceIDs numbers every captured item E1..En in worker order,
-// failed workers included, so the IDs match captures.jsonl.
-func assignEvidenceIDs(workers []hybridWorkerOutput) {
+// assignEvidenceIDs gives every captured item its ledger ID. Items a
+// streaming provider captured as they arrived already have one. The rest
+// are written to the run now, in worker order, failed workers included.
+// Without a run they're numbered E1..En in worker order.
+func assignEvidenceIDs(run *store.Run, workers []hybridWorkerOutput) []error {
+	var errs []error
 	seq := 0
 	for wi := range workers {
-		for ei := range workers[wi].Evidence {
-			seq++
-			workers[wi].Evidence[ei].ID = fmt.Sprintf("E%d", seq)
+		w := &workers[wi]
+		for ei := range w.Evidence {
+			if w.Evidence[ei].ID != "" {
+				continue
+			}
+			if run == nil {
+				seq++
+				w.Evidence[ei].ID = fmt.Sprintf("E%d", seq)
+				continue
+			}
+			c := store.Capture{
+				Worker:  w.Index + 1,
+				Shard:   w.Shard,
+				Backend: w.Backend,
+				Model:   w.Model,
+				Label:   w.Evidence[ei].Label,
+				Content: w.Evidence[ei].Content,
+			}
+			if w.Err != nil {
+				c.WorkerError = w.Err.Error()
+			}
+			if ei < len(w.Calls) {
+				c.Call = w.Calls[ei]
+			}
+			seqs, err := run.Append(c)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if len(seqs) > 0 {
+				w.Evidence[ei].ID = fmt.Sprintf("E%d", seqs[0])
+			}
 		}
 	}
+	return errs
 }
 
-// recordWorkers writes every worker's captures and full draft to the run.
-// Evidence must already carry its IDs.
-func recordWorkers(run *store.Run, workers []hybridWorkerOutput) []error {
+// recordWorkers writes every worker's full draft to the run.
+func recordWorkers(run *store.Run, workers []hybridWorkerOutput) error {
 	if run == nil {
 		return nil
 	}
-	var captures []store.Capture
 	var drafts bytes.Buffer
 	enc := json.NewEncoder(&drafts)
 	for _, w := range workers {
 		var werr string
 		if w.Err != nil {
 			werr = w.Err.Error()
-		}
-		for _, e := range w.Evidence {
-			seq, _ := strconv.Atoi(strings.TrimPrefix(e.ID, "E"))
-			captures = append(captures, store.Capture{
-				Seq:         seq,
-				Worker:      w.Index + 1,
-				Shard:       w.Shard,
-				Backend:     w.Backend,
-				Model:       w.Model,
-				WorkerError: werr,
-				Label:       e.Label,
-				Content:     e.Content,
-			})
 		}
 		_ = enc.Encode(struct {
 			Worker        int             `json:"worker"`
@@ -777,7 +853,7 @@ func recordWorkers(run *store.Run, workers []hybridWorkerOutput) []error {
 			Metadata      json.RawMessage `json:"metadata,omitempty"`
 		}{w.Index + 1, w.Backend, w.Model, w.Shard, werr, len(w.Evidence), w.Content, w.Metadata})
 	}
-	return []error{run.Capture(captures...), run.WriteFile("workers.jsonl", drafts.Bytes())}
+	return run.WriteFile("workers.jsonl", drafts.Bytes())
 }
 
 // promptRecord is how an aggregator prompt is saved in the run record.

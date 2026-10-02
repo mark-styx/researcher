@@ -261,7 +261,7 @@ func TestParseCodexEvents_SkipsNoiseAndEmptySearches(t *testing.T) {
 	if len(run.evidence) != 1 {
 		t.Fatalf("evidence = %d, want 1 (empty result sets carry no evidence)", len(run.evidence))
 	}
-	if run.evidence[0].Label != "web_search open_page: https://example.org/a" {
+	if run.evidence[0].Label != "web_search open: https://example.org/a" {
 		t.Errorf("label = %q", run.evidence[0].Label)
 	}
 	if run.failure != "" || run.lastMessage != "" {
@@ -397,5 +397,101 @@ func TestHybrid_CodexWorkersClaudeAggregator(t *testing.T) {
 		if w.Backend != "codex" || w.EvidenceItems != 1 {
 			t.Errorf("worker metadata = %+v, want codex with 1 evidence item", w)
 		}
+	}
+}
+
+// Codex reports a page the model opened as action "other" with no URL; the
+// page is the result, with a "view" ref_id.
+func TestCodexSearchEvidence_OpenedPageAndRanks(t *testing.T) {
+	stream := strings.Join([]string{
+		`{"type":"item.completed","item":{"type":"web_search","query":"","action":{"type":"other"},"results":[{"type":"text_result","ref_id":"turn1view0","title":"Effective Go","url":"https://go.dev/doc/effective_go","snippet":"Total lines: 1753"}]}}`,
+		`{"type":"item.completed","item":{"type":"web_search","query":"gofmt","action":{"type":"search","query":"gofmt"},"results":[{"ref_id":"turn0search0","title":"A","url":"https://a.test/","snippet":"a"},{"ref_id":"turn0search1","title":"B","url":"https://b.test/","snippet":"b"}]}}`,
+		`{"type":"item.completed","item":{"type":"web_search","action":{"type":"find_in_page","url":"https://go.dev/doc/effective_go"},"results":[{"title":"Effective Go","url":"https://go.dev/doc/effective_go","snippet":"gofmt"}]}}`,
+	}, "\n")
+	run := parseCodexEvents([]byte(stream))
+	if len(run.evidence) != 3 {
+		t.Fatalf("evidence = %d, want 3", len(run.evidence))
+	}
+	open, search, find := run.evidence[0], run.evidence[1], run.evidence[2]
+	if open.Label != "web_search open: https://go.dev/doc/effective_go" || open.Action != "open" ||
+		open.URL != "https://go.dev/doc/effective_go" || open.Tool != "web_search" {
+		t.Errorf("open = %+v", open)
+	}
+	if r := open.Results[0]; !r.Opened || r.Rank != 0 || r.RefID != "turn1view0" {
+		t.Errorf("opened result = %+v, want opened with no rank", r)
+	}
+	if search.Action != "search" || search.Query != "gofmt" || search.URL != "" ||
+		search.Results[0].Rank != 1 || search.Results[1].Rank != 2 || search.Results[1].Opened {
+		t.Errorf("search = %+v, want ranks 1 and 2", search)
+	}
+	if find.Action != "find_in_page" || find.URL != "https://go.dev/doc/effective_go" || !find.Results[0].Opened {
+		t.Errorf("find = %+v", find)
+	}
+}
+
+func TestCodexAction(t *testing.T) {
+	cases := []struct{ typ, query, want string }{
+		{"search", "q", "search"},
+		{"", "q", "search"},
+		{"", "", "open"},
+		{"other", "", "open"},
+		{"other", "q", "open"},
+		{"open_page", "", "open"},
+		{"find_in_page", "", "find_in_page"},
+	}
+	for _, c := range cases {
+		if got := codexAction(c.typ, c.query); got != c.want {
+			t.Errorf("codexAction(%q, %q) = %q, want %q", c.typ, c.query, got, c.want)
+		}
+	}
+}
+
+// The capture callback runs while codex is still running: the fake waits
+// for the file the callback writes and fails if it never appears, as it
+// wouldn't if output were read only after exit.
+func TestCodex_Complete_CapturesBeforeExit(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "captured")
+	script := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output-last-message) shift; out="$1" ;;
+  esac
+  shift
+done
+cat > /dev/null
+printf '%s\n' '` + codexSearchEvent + `'
+i=0
+while [ ! -f "` + marker + `" ]; do
+  i=$((i+1))
+  if [ $i -gt 100 ]; then echo "never captured" >&2; exit 3; fi
+  sleep 0.05
+done
+printf 'answer' > "$out"
+`
+	binary := filepath.Join(dir, "fake-codex")
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var got []EvidenceRecord
+	c := &Codex{Binary: binary}
+	resp, err := c.Complete(context.Background(), Request{
+		UserPrompt: "q",
+		Capture: func(rec EvidenceRecord) string {
+			got = append(got, rec)
+			if err := os.WriteFile(marker, nil, 0o644); err != nil {
+				t.Error(err)
+			}
+			return "E7"
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp != "answer" || len(got) != 1 || got[0].Query != "illusion of consensus DOI" {
+		t.Errorf("resp %q, captured %+v", resp, got)
+	}
+	if ev := c.Evidence(); len(ev) != 1 || ev[0].ID != "E7" {
+		t.Errorf("Evidence() = %+v, want the captured ID", ev)
 	}
 }

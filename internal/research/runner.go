@@ -97,18 +97,34 @@ func (r *Runner) startRun(task Task) *store.Run {
 	return nil
 }
 
-// complete runs the provider and saves a single-shot provider's raw tool
-// results to the run straight away, before a later call on the same
-// provider (the categorizer, when no utility model is set) replaces them.
-// The hybrid backend writes its own captures while it runs.
+// complete runs the provider with a Capture that writes each tool result to
+// the run as it arrives. Afterwards it saves any result the provider didn't
+// stream, straight away, before a later call on the same provider (the
+// categorizer, when no utility model is set) replaces them. The hybrid
+// backend sets its own Capture for each worker.
 func (r *Runner) complete(ctx context.Context, run *store.Run, req llm.Request) (string, error) {
+	backend := r.provider.Name()
+	if run != nil && req.Capture == nil {
+		req.Capture = func(e llm.EvidenceRecord) string {
+			seqs, err := run.Append(store.Capture{Backend: backend, Call: e.Call, Label: e.Label, Content: e.Content})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", err)
+			}
+			if len(seqs) == 0 {
+				return ""
+			}
+			return fmt.Sprintf("E%d", seqs[0])
+		}
+	}
 	resp, err := r.provider.Complete(ctx, req)
 	if ep, ok := r.provider.(llm.EvidenceProvider); ok && run != nil {
 		var captures []store.Capture
-		for i, e := range ep.Evidence() {
-			captures = append(captures, store.Capture{Seq: i + 1, Backend: r.provider.Name(), Label: e.Label, Content: e.Content})
+		for _, e := range ep.Evidence() {
+			if e.ID == "" {
+				captures = append(captures, store.Capture{Backend: backend, Call: e.Call, Label: e.Label, Content: e.Content})
+			}
 		}
-		if cerr := run.Capture(captures...); cerr != nil {
+		if _, cerr := run.Append(captures...); cerr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: writing run record: %v\n", cerr)
 		}
 	}

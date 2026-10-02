@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/marklubin/researchguy/internal/store"
 )
 
 const maxCodexStderrChars = 4000
@@ -66,13 +69,25 @@ func (c *Codex) Complete(ctx context.Context, req Request) (string, error) {
 	// project AGENTS.md from wherever researchguy was launched.
 	cmd.Dir = workDir
 	cmd.Stdin = strings.NewReader(codexPrompt(req))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-
-	runErr := cmd.Run()
-	run := parseCodexEvents(stdout.Bytes())
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("codex stdout: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("starting codex CLI: %w", err)
+	}
+	// Events are read as they arrive, so each web search is captured to
+	// the run before the agent goes on, not when it exits.
+	parser := codexParser{capture: req.Capture}
+	readErr := parser.read(stdout)
+	runErr := cmd.Wait()
+	run := parser.run
 	c.setRun(run.evidence, run.metadataJSON(c))
+	if runErr == nil && readErr != nil {
+		runErr = fmt.Errorf("reading codex output: %w", readErr)
+	}
 
 	if run.failure != "" {
 		return "", fmt.Errorf("codex run failed: %s", run.failure)
@@ -195,6 +210,7 @@ type codexSearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
+	RefID   string `json:"ref_id"`
 }
 
 type codexRun struct {
@@ -205,48 +221,81 @@ type codexRun struct {
 	failure     string
 }
 
-func parseCodexEvents(stdout []byte) codexRun {
-	var run codexRun
-	scanner := bufio.NewScanner(bytes.NewReader(stdout))
-	scanner.Buffer(make([]byte, 0, 64*1024), 32*1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-		var ev codexEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-		switch ev.Type {
-		case "item.completed":
-			if ev.Item == nil {
-				continue
-			}
-			switch ev.Item.Type {
-			case "agent_message":
-				run.lastMessage = ev.Item.Text
-			case "web_search":
-				run.webSearches++
-				if rec, ok := codexSearchEvidence(ev.Item); ok {
-					run.evidence = append(run.evidence, rec)
-				}
-			}
-		case "turn.completed":
-			run.usage = ev.Usage
-		case "turn.failed":
-			if ev.Error != nil && ev.Error.Message != "" {
-				run.failure = ev.Error.Message
-			}
-		case "error":
-			if run.failure == "" {
-				run.failure = ev.Message
-			}
-		}
-	}
-	return run
+// codexParser reads the codex exec --json event stream. capture, when set,
+// gets each web search result as its event is read.
+type codexParser struct {
+	run     codexRun
+	capture CaptureFunc
 }
 
+func parseCodexEvents(stdout []byte) codexRun {
+	var p codexParser
+	_ = p.read(bytes.NewReader(stdout))
+	return p.run
+}
+
+// read feeds every line of r to the parser. It reads to EOF whatever the
+// lines hold, so codex never blocks on a full pipe.
+func (p *codexParser) read(r io.Reader) error {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			p.feed(line)
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (p *codexParser) feed(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 || line[0] != '{' {
+		return
+	}
+	var ev codexEvent
+	if err := json.Unmarshal(line, &ev); err != nil {
+		return
+	}
+	run := &p.run
+	switch ev.Type {
+	case "item.completed":
+		if ev.Item == nil {
+			return
+		}
+		switch ev.Item.Type {
+		case "agent_message":
+			run.lastMessage = ev.Item.Text
+		case "web_search":
+			run.webSearches++
+			if rec, ok := codexSearchEvidence(ev.Item); ok {
+				if p.capture != nil {
+					rec.ID = p.capture(rec)
+				}
+				run.evidence = append(run.evidence, rec)
+			}
+		}
+	case "turn.completed":
+		run.usage = ev.Usage
+	case "turn.failed":
+		if ev.Error != nil && ev.Error.Message != "" {
+			run.failure = ev.Error.Message
+		}
+	case "error":
+		if run.failure == "" {
+			run.failure = ev.Message
+		}
+	}
+}
+
+// codexSearchEvidence turns a web_search item into evidence. Codex reports
+// a page the model opened as a web_search item whose action has no URL
+// (type "other"); the page is the result, with a ref_id like "turn1view0"
+// where a search result's is "turn0search0".
 func codexSearchEvidence(item *codexItem) (EvidenceRecord, bool) {
 	if len(item.Results) == 0 {
 		return EvidenceRecord{}, false
@@ -255,15 +304,57 @@ func codexSearchEvidence(item *codexItem) (EvidenceRecord, bool) {
 	if query == "" {
 		query = item.Action.Query
 	}
-	label := "web_search: " + query
-	if item.Action.Type != "" && item.Action.Type != "search" {
-		label = fmt.Sprintf("web_search %s: %s", item.Action.Type, strings.TrimSpace(item.Action.URL+" "+query))
-	}
+	call := store.Call{Tool: "web_search", Action: codexAction(item.Action.Type, query), Query: query, URL: item.Action.URL}
+	rank := 0
 	var b strings.Builder
 	for _, r := range item.Results {
+		cr := store.CaptureResult{Title: r.Title, URL: r.URL, Snippet: r.Snippet, RefID: r.RefID}
+		if codexOpened(r.RefID, call.Action) {
+			cr.Opened = true
+		} else {
+			rank++
+			cr.Rank = rank
+		}
+		call.Results = append(call.Results, cr)
 		fmt.Fprintf(&b, "%s\n%s\n%s\n\n", r.Title, r.URL, r.Snippet)
 	}
-	return EvidenceRecord{Label: label, Content: strings.TrimSpace(b.String())}, true
+	if call.URL == "" && call.Action != "search" {
+		call.URL = item.Results[0].URL
+	}
+	label := "web_search: " + query
+	if call.Action != "search" {
+		label = fmt.Sprintf("web_search %s: %s", call.Action, strings.TrimSpace(call.URL+" "+query))
+	}
+	return EvidenceRecord{Label: label, Content: strings.TrimSpace(b.String()), Call: call}, true
+}
+
+// codexAction names what a web_search item did. "other" is how codex
+// reports opening a page.
+func codexAction(actionType, query string) string {
+	switch actionType {
+	case "search":
+		return "search"
+	case "", "other", "open_page":
+		if actionType == "" && query != "" {
+			return "search"
+		}
+		return "open"
+	default:
+		return actionType // find_in_page and anything newer, as codex names it
+	}
+}
+
+// codexOpened reports whether a result is a page the model read rather than
+// a search hit, from its ref_id when codex gives one.
+func codexOpened(refID, action string) bool {
+	switch {
+	case strings.Contains(refID, "view"):
+		return true
+	case strings.Contains(refID, "search"):
+		return false
+	default:
+		return action != "search"
+	}
 }
 
 func (r codexRun) metadataJSON(c *Codex) string {

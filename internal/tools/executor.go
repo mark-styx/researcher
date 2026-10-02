@@ -46,7 +46,7 @@ func (e *Executor) execWebSearch(ctx context.Context, call ToolCall) ToolResult 
 		return ToolResult{Name: call.Name, Content: fmt.Sprintf("search failed: %v", err), IsError: true}
 	}
 
-	return ToolResult{Name: call.Name, Content: FormatSearchResults(results)}
+	return ToolResult{Name: call.Name, Content: FormatSearchResults(results), Results: results}
 }
 
 func (e *Executor) execWebFetch(ctx context.Context, call ToolCall) ToolResult {

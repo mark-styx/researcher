@@ -124,6 +124,51 @@ func TestRun_SingleShotEvidenceIsCaptured(t *testing.T) {
 	}
 }
 
+// streamingProvider captures its first record through req.Capture while it
+// runs, as codex and ollama do, and leaves the second for the runner.
+type streamingProvider struct {
+	evidenceProvider
+	streamed []llm.EvidenceRecord
+}
+
+func (s *streamingProvider) Complete(ctx context.Context, req llm.Request) (string, error) {
+	if req.Capture == nil {
+		return "", errors.New("runner didn't pass a capture func")
+	}
+	first := s.evidence[0]
+	first.ID = req.Capture(first)
+	s.streamed = []llm.EvidenceRecord{first, s.evidence[1]}
+	return s.mockProvider.Complete(ctx, req)
+}
+
+func (s *streamingProvider) Evidence() []llm.EvidenceRecord { return s.streamed }
+
+func TestRun_SingleShotStreamedEvidenceIsWrittenOnce(t *testing.T) {
+	cfg := storeConfig(t)
+	p := &streamingProvider{evidenceProvider: evidenceProvider{
+		mockProvider: mockProvider{response: "answer"},
+		evidence: []llm.EvidenceRecord{
+			{Label: "web_search: a", Content: "results", Call: store.Call{Tool: "web_search", Action: "search", Query: "a"}},
+			{Label: "web_fetch: https://x", Content: "page x", Call: store.Call{Tool: "web_fetch", Action: "fetch", URL: "https://x"}},
+		},
+	}}
+	res, err := NewRunner(cfg, p).Run(context.Background(), Task{Type: TypeAsk, Topic: "q", NoSave: true, NoResearch: true, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.streamed[0].ID != "E1" {
+		t.Errorf("streamed record ID = %q, want E1", p.streamed[0].ID)
+	}
+	captures, err := store.ReadCaptures(res.RunDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captures) != 2 || captures[0].Action != "search" || captures[0].Backend != "mock" ||
+		captures[1].Seq != 2 || captures[1].URL != "https://x" {
+		t.Errorf("captures = %+v, want the streamed one then the other, once each", captures)
+	}
+}
+
 func TestRun_NoStoreDirRecordsNothing(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Grepai = config.GrepaiConfig{Binary: "nonexistent-grepai-xyz"}

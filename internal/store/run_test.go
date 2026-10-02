@@ -49,6 +49,9 @@ func TestStartRun_WritesRunningRecord(t *testing.T) {
 	if rec.StartedAt.IsZero() || rec.FinishedAt != nil {
 		t.Errorf("started %v finished %v, want started set and not finished", rec.StartedAt, rec.FinishedAt)
 	}
+	if host, _ := os.Hostname(); rec.PID != os.Getpid() || rec.Host != host {
+		t.Errorf("pid %d host %q, want this process", rec.PID, rec.Host)
+	}
 }
 
 func TestStartRun_CallerCannotPresetStatusOrCounts(t *testing.T) {
@@ -94,17 +97,25 @@ func TestStartRun_IDsAreUnique(t *testing.T) {
 	wg.Wait()
 }
 
-func TestCapture_AppendsAcrossCallsAndCounts(t *testing.T) {
+func TestAppend_NumbersAcrossCallsAndCounts(t *testing.T) {
 	_, r := startRun(t)
 	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	if err := r.Capture(
-		Capture{Seq: 1, Worker: 1, Shard: "a", Label: "web_search: x", Content: "one", CapturedAt: at},
-		Capture{Seq: 2, Worker: 1, Shard: "a", Label: "web_search: y", Content: "two\nlines"},
-	); err != nil {
+	seqs, err := r.Append(
+		// A caller's seq is ignored: the run numbers every capture.
+		Capture{Seq: 7, Worker: 1, Shard: "a", Label: "web_search: x", Content: "one", CapturedAt: at},
+		Capture{Worker: 1, Shard: "a", Label: "web_search: y", Content: "two\nlines"},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Capture(Capture{Seq: 3, Worker: 2, Shard: "b", WorkerError: "boom", Label: "l", Content: "three"}); err != nil {
-		t.Fatal(err)
+	if len(seqs) != 2 || seqs[0] != 1 || seqs[1] != 2 {
+		t.Errorf("seqs = %v, want [1 2]", seqs)
+	}
+	seqs, err = r.Append(Capture{Worker: 2, Shard: "b", WorkerError: "boom", Label: "l", Content: "three",
+		Call: Call{Tool: "web_search", Action: "open", URL: "https://x.test/a",
+			Results: []CaptureResult{{Opened: true, URL: "https://x.test/a", Title: "A", RefID: "turn1view0"}}}})
+	if err != nil || len(seqs) != 1 || seqs[0] != 3 {
+		t.Fatalf("seqs = %v, %v; want [3]", seqs, err)
 	}
 
 	got, err := ReadCaptures(r.Dir())
@@ -115,12 +126,13 @@ func TestCapture_AppendsAcrossCallsAndCounts(t *testing.T) {
 		t.Fatalf("read %d captures, want 3", len(got))
 	}
 	if got[0].Seq != 1 || got[0].Content != "one" || !got[0].CapturedAt.Equal(at) {
-		t.Errorf("capture 1 = %+v, want its preset time kept", got[0])
+		t.Errorf("capture 1 = %+v, want seq 1 and its preset time kept", got[0])
 	}
 	if got[1].Content != "two\nlines" || got[1].CapturedAt.IsZero() {
 		t.Errorf("capture 2 = %+v, want content intact and time filled in", got[1])
 	}
-	if got[2].WorkerError != "boom" || got[2].Worker != 2 {
+	if got[2].WorkerError != "boom" || got[2].Worker != 2 || got[2].Action != "open" ||
+		len(got[2].Results) != 1 || !got[2].Results[0].Opened || got[2].Results[0].RefID != "turn1view0" {
 		t.Errorf("capture 3 = %+v", got[2])
 	}
 	if rec := r.Record(); rec.Captures != 3 || !contains(rec.Files, "captures.jsonl") {
@@ -128,13 +140,63 @@ func TestCapture_AppendsAcrossCallsAndCounts(t *testing.T) {
 	}
 }
 
-func TestCapture_NoneIsNoop(t *testing.T) {
+func TestAppend_ParallelCallersGetDistinctSeqs(t *testing.T) {
 	_, r := startRun(t)
-	if err := r.Capture(); err != nil {
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				if _, err := r.Append(Capture{Worker: w, Label: "l", Content: "c"}); err != nil {
+					t.Error(err)
+				}
+			}
+		}(i + 1)
+	}
+	wg.Wait()
+	got, err := ReadCaptures(r.Dir())
+	if err != nil {
 		t.Fatal(err)
 	}
+	seen := map[int]bool{}
+	for _, c := range got {
+		if seen[c.Seq] {
+			t.Fatalf("seq %d written twice", c.Seq)
+		}
+		seen[c.Seq] = true
+	}
+	if len(got) != 200 || !seen[1] || !seen[200] {
+		t.Errorf("got %d captures, want seqs 1..200", len(got))
+	}
+}
+
+func TestAppend_FailedWriteStillUsesSeq(t *testing.T) {
+	_, r := startRun(t)
+	// A directory where captures.jsonl should be makes the write fail.
+	if err := os.Mkdir(filepath.Join(r.Dir(), "captures.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seqs, err := r.Append(Capture{Label: "l", Content: "c"})
+	if err == nil || len(seqs) != 1 || seqs[0] != 1 {
+		t.Fatalf("seqs = %v, err = %v; want seq 1 and an error", seqs, err)
+	}
+	if rec := r.Record(); rec.Captures != 0 {
+		t.Errorf("captures = %d, want 0 after a failed write", rec.Captures)
+	}
+	os.Remove(filepath.Join(r.Dir(), "captures.jsonl"))
+	if seqs, err := r.Append(Capture{Label: "l", Content: "c"}); err != nil || seqs[0] != 2 {
+		t.Errorf("next seq = %v, %v; want 2, never reusing a cited number", seqs, err)
+	}
+}
+
+func TestAppend_NoneIsNoop(t *testing.T) {
+	_, r := startRun(t)
+	if seqs, err := r.Append(); err != nil || seqs != nil {
+		t.Fatalf("Append() = %v, %v", seqs, err)
+	}
 	if _, err := os.Stat(filepath.Join(r.Dir(), "captures.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("empty capture created captures.jsonl (stat err %v)", err)
+		t.Errorf("empty append created captures.jsonl (stat err %v)", err)
 	}
 	if got, err := ReadCaptures(r.Dir()); err != nil || got != nil {
 		t.Errorf("ReadCaptures on a run without captures = %v, %v", got, err)
@@ -143,21 +205,50 @@ func TestCapture_NoneIsNoop(t *testing.T) {
 
 func TestReadCaptures_ReportsCorruptLine(t *testing.T) {
 	_, r := startRun(t)
-	if err := r.Capture(Capture{Seq: 1, Label: "l", Content: "ok"}); err != nil {
+	if _, err := r.Append(Capture{Label: "l", Content: "ok"}); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(filepath.Join(r.Dir(), "captures.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	appendRaw(t, r.Dir(), "{not json\n")
+	if _, err := r.Append(Capture{Label: "l", Content: "after"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadCaptures(r.Dir())
+	if err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("err = %v, want one naming line 2", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("want the 2 good captures around the corrupt line, got %d", len(got))
+	}
+}
+
+func TestScanCaptures_PartialLastLine(t *testing.T) {
+	_, r := startRun(t)
+	if _, err := r.Append(Capture{Label: "l", Content: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	full, _ := os.Stat(filepath.Join(r.Dir(), "captures.jsonl"))
+	appendRaw(t, r.Dir(), `{"seq":2,"label":"cut`)
+	log, err := ScanCaptures(r.Dir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.WriteString("{not json\n")
-	f.Close()
-	got, err := ReadCaptures(r.Dir())
-	if err == nil {
-		t.Fatal("want an error for a corrupt line")
+	if len(log.Captures) != 1 || !log.Partial || log.Bytes != full.Size() || len(log.BadLines) != 0 {
+		t.Errorf("log = %+v, want 1 capture, partial, %d bytes, no bad lines", log, full.Size())
 	}
-	if len(got) != 1 {
-		t.Errorf("want the 1 good capture before the corrupt line, got %d", len(got))
+	if _, err := ReadCaptures(r.Dir()); err != nil {
+		t.Errorf("a partial last line is a write in progress, not an error: %v", err)
+	}
+}
+
+func appendRaw(t *testing.T, dir, s string) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(dir, "captures.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -195,7 +286,7 @@ func TestWriteFile_RejectsBadNames(t *testing.T) {
 
 func TestFinish(t *testing.T) {
 	_, r := startRun(t)
-	if err := r.Capture(Capture{Seq: 1, Label: "l", Content: "c"}); err != nil {
+	if _, err := r.Append(Capture{Label: "l", Content: "c"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Finish(Finish{Status: StatusSucceeded, ReportPath: "/r/report.md", Metadata: `{"mode":"hybrid"}`}); err != nil {
@@ -233,8 +324,8 @@ func TestNilRunRecordsNothing(t *testing.T) {
 	if r.ID() != "" || r.Dir() != "" {
 		t.Error("nil run should have no id or dir")
 	}
-	if err := r.Capture(Capture{Seq: 1}); err != nil {
-		t.Error(err)
+	if seqs, err := r.Append(Capture{Seq: 1}); err != nil || seqs != nil {
+		t.Error(seqs, err)
 	}
 	if err := r.WriteFile("x", nil); err != nil {
 		t.Error(err)

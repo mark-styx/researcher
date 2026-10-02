@@ -2,8 +2,8 @@ package tools
 
 // Tool describes a function the LLM can call.
 type Tool struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
@@ -18,6 +18,9 @@ type ToolResult struct {
 	Name    string `json:"name"`
 	Content string `json:"content"`
 	IsError bool   `json:"is_error"`
+	// Results are web_search's results as parsed, which Content formats
+	// for the model.
+	Results []SearchResult `json:"results,omitempty"`
 }
 
 // DefaultTools returns the standard tool set for research tasks.

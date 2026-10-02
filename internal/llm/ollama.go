@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/tools"
 )
 
@@ -230,10 +231,11 @@ func (o *Ollama) doChatRun(ctx context.Context, model string, req Request) (olla
 				Content: result.Content,
 			})
 			if !result.IsError && strings.TrimSpace(result.Content) != "" {
-				run.evidence = append(run.evidence, EvidenceRecord{
+				run.evidence = append(run.evidence, req.capture(EvidenceRecord{
 					Label:   evidenceLabel(call),
 					Content: result.Content,
-				})
+					Call:    toolCallRecord(call, result),
+				}))
 			}
 		}
 	}
@@ -342,6 +344,23 @@ func keepAliveUnloads(value string) bool {
 	}
 	d, err := time.ParseDuration(value)
 	return err == nil && d == 0
+}
+
+// toolCallRecord describes a tool call for the run record.
+func toolCallRecord(call tools.ToolCall, result tools.ToolResult) store.Call {
+	rec := store.Call{Tool: call.Name}
+	switch call.Name {
+	case "web_search":
+		rec.Action = "search"
+		rec.Query, _ = call.Arguments["query"].(string)
+		for i, r := range result.Results {
+			rec.Results = append(rec.Results, store.CaptureResult{Rank: i + 1, Title: r.Title, URL: r.URL, Snippet: r.Snippet})
+		}
+	case "web_fetch":
+		rec.Action = "fetch"
+		rec.URL, _ = call.Arguments["url"].(string)
+	}
+	return rec
 }
 
 func evidenceLabel(call tools.ToolCall) string {

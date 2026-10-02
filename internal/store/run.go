@@ -5,11 +5,12 @@
 //
 //	<store.dir>/runs/<run_id>/
 //	  run.json        run record: task, status, timing, report path, metadata
-//	  captures.jsonl  one line per raw tool result, fsynced per batch
+//	  captures.jsonl  one line per raw tool result, fsynced as it arrives
 //	  <files>         worker drafts, the aggregator prompt and raw output
 //
-// See docs/research-store-design.md. This is phase 1: run records and the
-// full evidence ledger. The index (Postgres) and fetching come later.
+// The on-disk store is the record of truth. The Postgres index
+// (internal/store/index) is derived from it and can be rebuilt from it.
+// See docs/research-store-design.md.
 package store
 
 import (
@@ -26,12 +27,13 @@ import (
 	"time"
 )
 
-// Run statuses. A run whose process dies stays "running"; nothing marks it
-// interrupted yet.
+// Run statuses. A run whose process died before it finished stays
+// "running" on disk until Reconcile marks it interrupted.
 const (
-	StatusRunning   = "running"
-	StatusSucceeded = "succeeded"
-	StatusFailed    = "failed"
+	StatusRunning     = "running"
+	StatusSucceeded   = "succeeded"
+	StatusFailed      = "failed"
+	StatusInterrupted = "interrupted"
 )
 
 const (
@@ -60,21 +62,25 @@ func (s *Store) Dir() string { return s.dir }
 
 // RunRecord is run.json.
 type RunRecord struct {
-	ID          string          `json:"id"`
-	Kind        string          `json:"kind"`
-	Topic       string          `json:"topic"`
-	Backend     string          `json:"backend"`
-	Mode        string          `json:"mode,omitempty"`
-	BranchCount int             `json:"branch_count,omitempty"`
-	Sources     []string        `json:"sources,omitempty"`
-	Status      string          `json:"status"`
-	Error       string          `json:"error,omitempty"`
-	StartedAt   time.Time       `json:"started_at"`
-	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
-	ReportPath  string          `json:"report_path,omitempty"`
-	Captures    int             `json:"captures"`
-	Files       []string        `json:"files,omitempty"`
-	Metadata    json.RawMessage `json:"metadata,omitempty"`
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	Topic       string   `json:"topic"`
+	Backend     string   `json:"backend"`
+	Mode        string   `json:"mode,omitempty"`
+	BranchCount int      `json:"branch_count,omitempty"`
+	Sources     []string `json:"sources,omitempty"`
+	Status      string   `json:"status"`
+	Error       string   `json:"error,omitempty"`
+	// PID and Host are the process that ran it, so a run left "running" by
+	// a process that died can be told apart from one still in progress.
+	PID        int             `json:"pid,omitempty"`
+	Host       string          `json:"host,omitempty"`
+	StartedAt  time.Time       `json:"started_at"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	ReportPath string          `json:"report_path,omitempty"`
+	Captures   int             `json:"captures"`
+	Files      []string        `json:"files,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Capture is one raw tool result, a line of captures.jsonl. Seq is unique
@@ -84,13 +90,41 @@ type Capture struct {
 	CapturedAt time.Time `json:"captured_at"`
 	// Worker is the 1-based hybrid worker that collected it, 0 for a
 	// single-shot provider.
-	Worker      int    `json:"worker,omitempty"`
-	Shard       string `json:"shard,omitempty"`
-	Backend     string `json:"backend,omitempty"`
-	Model       string `json:"model,omitempty"`
+	Worker  int    `json:"worker,omitempty"`
+	Shard   string `json:"shard,omitempty"`
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
+	// WorkerError is set only on captures written after their worker
+	// failed. Captures written as they arrive can't know how it ended;
+	// workers.jsonl has every worker's error.
 	WorkerError string `json:"worker_error,omitempty"`
-	Label       string `json:"label"`
-	Content     string `json:"content"`
+	Call
+	Label   string `json:"label"`
+	Content string `json:"content"`
+}
+
+// Call is the tool call a capture came from. Captures written before
+// phase 2 have only Label and Content.
+type Call struct {
+	Tool string `json:"tool,omitempty"` // web_search, web_fetch
+	// Action is what the tool did: search, open (a page the model read),
+	// find_in_page, or fetch.
+	Action  string          `json:"action,omitempty"`
+	Query   string          `json:"query,omitempty"`
+	URL     string          `json:"url,omitempty"` // the page opened or fetched
+	Results []CaptureResult `json:"results,omitempty"`
+}
+
+// CaptureResult is one item a search or page open returned. Rank is the
+// 1-based position among the search results in the capture, 0 for a page
+// the model opened.
+type CaptureResult struct {
+	Rank    int    `json:"rank,omitempty"`
+	Opened  bool   `json:"opened,omitempty"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet,omitempty"`
+	RefID   string `json:"ref_id,omitempty"`
 }
 
 // Finish is what a run ends with.
@@ -108,6 +142,7 @@ type Run struct {
 
 	mu     sync.Mutex
 	record RunRecord
+	seq    int // last seq handed out
 }
 
 // StartRun creates a run directory and writes its record with status
@@ -124,6 +159,8 @@ func (s *Store) StartRun(rec RunRecord) (*Run, error) {
 	}
 	rec.ID = id
 	rec.Status = StatusRunning
+	rec.PID = os.Getpid()
+	rec.Host, _ = os.Hostname()
 	rec.StartedAt = now
 	rec.FinishedAt = nil
 	rec.Captures = 0
@@ -173,45 +210,69 @@ func (r *Run) Record() RunRecord {
 	return rec
 }
 
-// Capture appends captures to captures.jsonl and fsyncs before returning.
-// Callers number them; CapturedAt is set to now when zero.
-func (r *Run) Capture(captures ...Capture) error {
+// Append numbers captures with the run's next seqs, appends them to
+// captures.jsonl and fsyncs before returning. The run is the only source of
+// seqs, so captures from parallel workers never share one. The seqs are
+// returned, and used up, even when the write fails, so a number already
+// cited is never handed out twice. CapturedAt is set to now when zero.
+func (r *Run) Append(captures ...Capture) ([]int, error) {
 	if r == nil || len(captures) == 0 {
-		return nil
+		return nil, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	f, err := os.OpenFile(filepath.Join(r.dir, captureFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("opening captures: %w", err)
-	}
 	now := time.Now().UTC()
+	seqs := make([]int, len(captures))
 	var buf []byte
-	for _, c := range captures {
+	var encErr error
+	for i, c := range captures {
+		r.seq++
+		c.Seq = r.seq
+		seqs[i] = c.Seq
 		if c.CapturedAt.IsZero() {
 			c.CapturedAt = now
 		}
 		line, err := json.Marshal(c)
 		if err != nil {
-			f.Close()
-			return fmt.Errorf("encoding capture %d: %w", c.Seq, err)
+			encErr = fmt.Errorf("encoding capture %d: %w", c.Seq, err)
+			continue
 		}
 		buf = append(append(buf, line...), '\n')
 	}
+	written, err := r.appendLines(buf)
+	r.record.Captures += written
+	if written > 0 {
+		r.addFile(captureFile)
+	}
+	if err != nil {
+		return seqs, err
+	}
+	return seqs, encErr
+}
+
+// appendLines appends buf, whole lines, to captures.jsonl and fsyncs. It
+// reports how many lines are on disk.
+func (r *Run) appendLines(buf []byte) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	f, err := os.OpenFile(filepath.Join(r.dir, captureFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return 0, fmt.Errorf("opening captures: %w", err)
+	}
 	if _, err := f.Write(buf); err != nil {
 		f.Close()
-		return fmt.Errorf("writing captures: %w", err)
+		return 0, fmt.Errorf("writing captures: %w", err)
 	}
+	lines := bytes.Count(buf, []byte{'\n'})
 	if err := f.Sync(); err != nil {
 		f.Close()
-		return fmt.Errorf("syncing captures: %w", err)
+		return lines, fmt.Errorf("syncing captures: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		return fmt.Errorf("closing captures: %w", err)
+		return lines, fmt.Errorf("closing captures: %w", err)
 	}
-	r.record.Captures += len(captures)
-	r.addFile(captureFile)
-	return nil
+	return lines, nil
 }
 
 var runFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -270,11 +331,15 @@ func (r *Run) addFile(name string) {
 }
 
 func (r *Run) writeRecord() error {
-	b, err := json.MarshalIndent(r.record, "", "  ")
+	return writeRecordFile(r.dir, r.record)
+}
+
+func writeRecordFile(dir string, rec RunRecord) error {
+	b, err := json.MarshalIndent(rec, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding run record: %w", err)
 	}
-	return writeAtomic(filepath.Join(r.dir, recordFile), append(b, '\n'))
+	return writeAtomic(filepath.Join(dir, recordFile), append(b, '\n'))
 }
 
 // writeAtomic writes data to a temp file beside path, fsyncs it and renames
@@ -307,24 +372,64 @@ func writeAtomic(path string, data []byte) error {
 }
 
 // ReadCaptures reads a run's captures.jsonl. A missing file is no captures.
+// A line that doesn't decode is an error; ScanCaptures reads past it.
 func ReadCaptures(runDir string) ([]Capture, error) {
+	log, err := ScanCaptures(runDir)
+	if err != nil {
+		return log.Captures, err
+	}
+	if len(log.BadLines) > 0 {
+		return log.Captures, fmt.Errorf("decoding capture line %d: %s", log.BadLines[0], log.BadErr)
+	}
+	return log.Captures, nil
+}
+
+// CaptureLog is what ScanCaptures found in a captures.jsonl.
+type CaptureLog struct {
+	Captures []Capture
+	// Bytes is the length of the complete lines read. A last line without
+	// a newline is a write still in progress (or cut off by a crash), and
+	// is neither decoded nor counted.
+	Bytes    int64
+	Partial  bool
+	BadLines []int // 1-based numbers of complete lines that didn't decode
+	BadErr   string
+}
+
+// ScanCaptures reads every complete line of a run's captures.jsonl,
+// skipping lines that don't decode instead of stopping at them.
+func ScanCaptures(runDir string) (CaptureLog, error) {
+	var log CaptureLog
 	data, err := os.ReadFile(filepath.Join(runDir, captureFile))
 	if os.IsNotExist(err) {
-		return nil, nil
+		return log, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading captures: %w", err)
+		return log, fmt.Errorf("reading captures: %w", err)
 	}
-	var out []Capture
-	dec := json.NewDecoder(bytes.NewReader(data))
-	for dec.More() {
-		var c Capture
-		if err := dec.Decode(&c); err != nil {
-			return out, fmt.Errorf("decoding capture %d: %w", len(out)+1, err)
+	for n := 1; len(data) > 0; n++ {
+		i := bytes.IndexByte(data, '\n')
+		if i < 0 {
+			log.Partial = true
+			break
 		}
-		out = append(out, c)
+		line := data[:i]
+		data = data[i+1:]
+		log.Bytes += int64(i + 1)
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var c Capture
+		if err := json.Unmarshal(line, &c); err != nil {
+			log.BadLines = append(log.BadLines, n)
+			if log.BadErr == "" {
+				log.BadErr = err.Error()
+			}
+			continue
+		}
+		log.Captures = append(log.Captures, c)
 	}
-	return out, nil
+	return log, nil
 }
 
 // ReadRecord reads a run's run.json.

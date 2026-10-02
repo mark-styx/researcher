@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/config"
@@ -94,7 +95,7 @@ func TestAssignEvidenceIDs_NumbersAcrossWorkersIncludingFailed(t *testing.T) {
 		{Index: 2, Shard: "none"},
 		shardWorker(3, "b", 2, 10),
 	}
-	assignEvidenceIDs(workers)
+	assignEvidenceIDs(nil, workers)
 	var ids []string
 	for _, w := range workers {
 		for _, e := range w.Evidence {
@@ -368,9 +369,109 @@ func TestPromptRecord(t *testing.T) {
 // be cited under a number that doesn't match the run record.
 func TestBuildLedger_KeepsIDs(t *testing.T) {
 	w := shardWorker(0, "a", 3, 100)
-	assignEvidenceIDs([]hybridWorkerOutput{w})
+	assignEvidenceIDs(nil, []hybridWorkerOutput{w})
 	ev, _ := buildLedger([]hybridWorkerOutput{w}, 150)
 	if len(ev) != 2 || ev[0].ID != "E1" || ev[1].ID != "E2" {
 		t.Errorf("ledger = %+v, want E1 whole and E2 cut", ev)
+	}
+}
+
+// streamingStub captures each record through req.Capture during Complete,
+// as the codex and ollama providers do, then fails if err is set.
+type streamingStub struct {
+	records []EvidenceRecord
+	err     error
+	mu      sync.Mutex
+	got     []EvidenceRecord
+}
+
+func (s *streamingStub) Name() string { return "codex" }
+
+func (s *streamingStub) Complete(_ context.Context, req Request) (string, error) {
+	var got []EvidenceRecord
+	for _, r := range s.records {
+		got = append(got, req.capture(r))
+	}
+	s.mu.Lock()
+	s.got = got
+	s.mu.Unlock()
+	if s.err != nil {
+		return "", s.err
+	}
+	return "worker draft", nil
+}
+
+func (s *streamingStub) Evidence() []EvidenceRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]EvidenceRecord(nil), s.got...)
+}
+
+func TestHybridComplete_StreamedCapturesKeepTheirIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		streamErr error
+	}{
+		{"streaming worker succeeds", nil},
+		{"streaming worker fails after capturing", errors.New("codex died")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			aggregator := &stubProvider{name: "claude", resp: "===BEGIN REPORT===\nreport\n===END REPORT==="}
+			h := &Hybrid{
+				cfg:               &config.Config{Claude: config.ClaudeConfig{Model: "opus"}},
+				WorkerBackend:     "codex",
+				WorkerModels:      []string{"stream", "plain"},
+				AggregatorBackend: "claude",
+				AggregatorModel:   "opus",
+				MaxParallel:       2,
+				makeProvider: func(backend, model string) (Provider, error) {
+					switch model {
+					case "stream":
+						return &streamingStub{err: tc.streamErr, records: []EvidenceRecord{
+							{Label: "web_search: a", Content: "results a", Call: store.Call{Tool: "web_search", Action: "search", Query: "a",
+								Results: []store.CaptureResult{{Rank: 1, URL: "https://a.test/"}}}},
+							{Label: "web_search open: https://a.test/", Content: "page a", Call: store.Call{Tool: "web_search", Action: "open", URL: "https://a.test/"}},
+						}}, nil
+					case "plain":
+						return &stubProvider{name: "codex", resp: "worker draft", evidence: []EvidenceRecord{{Label: "web_search: b", Content: "results b"}}}, nil
+					}
+					return aggregator, nil
+				},
+			}
+			run := openRun(t)
+			if _, err := h.Complete(context.Background(), Request{UserPrompt: "topic", Run: run}); err != nil {
+				t.Fatal(err)
+			}
+			captures, err := store.ReadCaptures(run.Dir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(captures) != 3 {
+				t.Fatalf("captures = %d, want 3", len(captures))
+			}
+			// Streamed captures are written during the worker's call, so
+			// they come before the one written after the workers finish.
+			a, open, b := captures[0], captures[1], captures[2]
+			if a.Seq != 1 || a.Worker != 1 || a.Action != "search" || len(a.Results) != 1 || !strings.HasPrefix(a.Label, "codex/stream | shard: ") {
+				t.Errorf("capture 1 = %+v", a)
+			}
+			if open.Seq != 2 || open.Action != "open" || open.URL != "https://a.test/" {
+				t.Errorf("capture 2 = %+v", open)
+			}
+			if b.Seq != 3 || b.Worker != 2 || !strings.HasPrefix(b.Label, "codex/plain | shard: ") {
+				t.Errorf("capture 3 = %+v", b)
+			}
+			prompt := aggregator.lastReq.UserPrompt
+			if !strings.Contains(prompt, "[E3 | "+b.Label+"]") {
+				t.Errorf("aggregator prompt doesn't cite the plain worker's item as E3")
+			}
+			streamedCited := strings.Contains(prompt, "[E1 | "+a.Label+"]") && strings.Contains(prompt, "[E2 | "+open.Label+"]")
+			if tc.streamErr == nil && !streamedCited {
+				t.Error("aggregator prompt doesn't cite the streamed items by their capture seqs")
+			}
+			if tc.streamErr != nil && strings.Contains(prompt, "[E1 |") {
+				t.Error("a failed worker's evidence reached the aggregator")
+			}
+		})
 	}
 }

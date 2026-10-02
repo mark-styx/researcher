@@ -588,3 +588,81 @@ func TestOllama_CompleteCapturesSuccessfulToolEvidence(t *testing.T) {
 		t.Errorf("Evidence() = %+v", evidence)
 	}
 }
+
+type toolExecutorFunc func(tools.ToolCall) tools.ToolResult
+
+func (f toolExecutorFunc) Execute(_ context.Context, call tools.ToolCall) tools.ToolResult {
+	return f(call)
+}
+
+// Each tool result is handed to Request.Capture in the tool loop, with the
+// call's structure, before the next model turn.
+func TestOllama_CompleteCapturesEachToolResultAsItArrives(t *testing.T) {
+	var calls atomic.Int32
+	var capturedBeforeTurn2 int
+	var captured []EvidenceRecord
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/chat" {
+			return jsonHTTPResponse(http.StatusNotFound, nil), nil
+		}
+		if calls.Add(1) == 1 {
+			search, _ := json.Marshal(map[string]string{"query": "go generics"})
+			fetch, _ := json.Marshal(map[string]string{"url": "https://go.dev/blog/intro-generics"})
+			return jsonHTTPResponse(http.StatusOK, ollamaChatResponse{
+				Message: ollamaMessage{Role: "assistant", ToolCalls: []ollamaToolCall{
+					{Function: ollamaFunction{Name: "web_search", Arguments: search}},
+					{Function: ollamaFunction{Name: "web_fetch", Arguments: fetch}},
+					{Function: ollamaFunction{Name: "web_fetch", Arguments: fetch}}, // fails: not captured
+				}},
+			}), nil
+		}
+		capturedBeforeTurn2 = len(captured)
+		return jsonHTTPResponse(http.StatusOK, ollamaChatResponse{
+			Message: ollamaMessage{Role: "assistant", Content: "answer"},
+			Done:    true,
+		}), nil
+	})}
+	fetches := 0
+	o := &Ollama{
+		Host:          "http://ollama.test",
+		Model:         "tool-model",
+		MaxIterations: 3,
+		HTTPClient:    client,
+		Executor: toolExecutorFunc(func(call tools.ToolCall) tools.ToolResult {
+			if call.Name == "web_search" {
+				results := []tools.SearchResult{{Title: "A", URL: "https://a.test/", Snippet: "a"}, {Title: "B", URL: "https://b.test/"}}
+				return tools.ToolResult{Name: call.Name, Content: tools.FormatSearchResults(results), Results: results}
+			}
+			if fetches++; fetches > 1 {
+				return tools.ToolResult{Name: call.Name, Content: "fetch failed: 403", IsError: true}
+			}
+			return tools.ToolResult{Name: call.Name, Content: "page text"}
+		}),
+	}
+	_, err := o.Complete(context.Background(), Request{
+		UserPrompt: "research",
+		Tools:      tools.DefaultTools(),
+		Capture: func(rec EvidenceRecord) string {
+			captured = append(captured, rec)
+			return fmt.Sprintf("E%d", len(captured))
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capturedBeforeTurn2 != 2 || len(captured) != 2 {
+		t.Fatalf("captured %d before the next turn, %d total; want 2 and 2", capturedBeforeTurn2, len(captured))
+	}
+	search, fetch := captured[0], captured[1]
+	if search.Tool != "web_search" || search.Action != "search" || search.Query != "go generics" ||
+		len(search.Results) != 2 || search.Results[1].Rank != 2 || search.Results[1].URL != "https://b.test/" {
+		t.Errorf("search capture = %+v", search)
+	}
+	if fetch.Tool != "web_fetch" || fetch.Action != "fetch" || fetch.URL != "https://go.dev/blog/intro-generics" || fetch.Content != "page text" {
+		t.Errorf("fetch capture = %+v", fetch)
+	}
+	ev := o.Evidence()
+	if len(ev) != 2 || ev[0].ID != "E1" || ev[1].ID != "E2" {
+		t.Errorf("Evidence() = %+v, want the captured IDs", ev)
+	}
+}

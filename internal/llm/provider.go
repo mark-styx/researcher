@@ -24,8 +24,25 @@ type MetadataProvider interface {
 // EvidenceRecord is source material returned by a tool call during a model
 // run. It deliberately excludes the model's interpretation of that material.
 type EvidenceRecord struct {
+	// ID is the ledger ID (E<seq>) the record got when Request.Capture
+	// wrote it to the run, "" when nothing captured it.
+	ID      string `json:"id,omitempty"`
 	Label   string `json:"label"`
 	Content string `json:"content"`
+	// Call is the tool call, kept for the run record.
+	store.Call
+}
+
+// CaptureFunc writes one tool result to the run record as it arrives and
+// returns its ledger ID.
+type CaptureFunc func(EvidenceRecord) string
+
+// capture hands rec to req.Capture, if set, and returns rec with its ID.
+func (req Request) capture(rec EvidenceRecord) EvidenceRecord {
+	if req.Capture != nil && rec.ID == "" {
+		rec.ID = req.Capture(rec)
+	}
+	return rec
 }
 
 // EvidenceProvider exposes the raw tool results used during the last run.
@@ -54,6 +71,12 @@ type Request struct {
 	// its captures, worker drafts and aggregator prompt and output there.
 	// nil records nothing.
 	Run *store.Run
+
+	// Capture, when set, is called with each tool result as it arrives,
+	// before the model continues, so a provider that dies mid-run has
+	// already recorded what it collected. Providers that report Evidence
+	// call it; the hybrid backend sets it for each worker.
+	Capture CaptureFunc
 }
 
 // NewProvider creates an LLM provider based on config and optional overrides.
