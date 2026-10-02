@@ -150,7 +150,7 @@ back at every run that found it.
 | `captures` | Every raw tool result, as captured | `run_id`, `seq`, `shard`, `worker`, `tool`, `action` (`search`, `open`, `fetch`), `query`, `url`, `payload` jsonb, `captured_at`; unique `(run_id, seq)` |
 | `sources` | One row per thing that can be cited | `id`, `url_key` (via `graph.NormalizeURL`), `url`, `domain`, `title`, `kind` (`web`, `paper`, `court`, `book`, `video`, `report`), `doi`, `first_seen_at`, `node_id` |
 | `fetches` | Every fetch attempt, including failures | `source_id`, `attempted_at`, `http_status`, `final_url`, `error`, `document_id` |
-| `documents` | Distinct content versions of a source | `source_id`, `sha256`, `fetched_at`, `content_type`, `text_chars`, `published_at`, `published_precision` (`year`/`month`/`day`), `published_from`, `origin` (`primary`, `synthesis`); unique `(source_id, sha256)` |
+| `documents` | Distinct content versions of a source | `source_id`, `sha256`, `fetched_at`, `content_type`, `text_chars`, `published_at`, `published_precision` (`year`/`month`/`day`), `published_from`, `origin` (`primary`, `synthesis`), `content_kind` (`full`, `abstract`, `snippet`); unique `(source_id, sha256)` |
 | `passages` | Chunks of a document's text with offsets | `document_id`, `ord`, `char_start`, `char_end`, `text`, `tsv` (generated), `embedding vector(768)`, `embed_model`; HNSW index on `embedding`, GIN on `tsv` |
 | `claims` | Atomic assertions anchored to a verbatim quote | `text`, `quote`, `passage_id`, `char_start`, `char_end`, `quote_verified`, `as_of`, `volatile`, `extracted_at`, `extractor`, `embedding`; HNSW index |
 | `claim_links` | Relations between claims | `from_claim`, `to_claim`, `relation` (`same`, `supports`, `contradicts`, `refines`, `supersedes`), `method` (`rule`, `model`, `human`), `confidence`, `model`, `created_at` |
@@ -192,7 +192,53 @@ of each search (default 3, configurable) go into a fetch queue. The fetcher:
   keeps the old one.
 
 Every other URL seen in results becomes a `sources` row with its snippet, so
-it can still be found and fetched later.
+it can still be found and fetched later. Fetch scope decides what is fetched
+eagerly, not what is kept: a snippet-only source is fetched on demand when
+retrieval surfaces it or an agent calls `researchguy_ingest_url`, and the gap
+between `captured_at` and `fetched_at` is recorded.
+
+Opened pages are identifiable from the capture: a Codex page open is a
+`web_search` item with a non-search action and the page URL in
+`results[0].url`. `codexSearchEvidence` currently builds the label from
+`action.url`, which is empty for these, so phase 2 has to take the URL from
+the result.
+
+#### Measured fetch yield
+
+A plain HTTP fetch (browser user agent, 8 parallel, 20 s timeout) of the 350
+unique URLs cited in the six 2026-10-02 inquiry reports, on 2026-10-02:
+
+| Outcome | Count | Notes |
+|---|---|---|
+| Usable text (3,000+ chars) | 148 (42%) | PubMed 30/30, PMC 22/22, nature.com, PLOS, Frontiers, arXiv, news |
+| HTTP 403 | 136 | Concentrated in academic publishers. Failures of any kind by final host: SAGE 28, Wiley 21, ScienceDirect 16, Taylor & Francis 13, Science 10, OUP 10, PNAS 5 |
+| 200/203 with under 3,000 chars of text | 57 | JavaScript shells, redirect stubs (`linkinghub.elsevier.com`), APA DOI stubs |
+| Other | 9 | 404 x4, 400 x2, timeout x2, 402 x1 |
+
+Sizes per attempted URL: 382 KB raw (227 KB gzipped, since PDFs don't
+compress), 18.5 KB of extracted text, ~12.6 passages. Medians: HTML 146 KB
+raw and 8.5 KB text; PDF 1.1 MB raw and 77 KB text. The whole set took 52 s,
+~0.15 s per URL at 8 parallel.
+
+The fetcher therefore needs a scholarly path, because the blocked sources are
+mostly the papers reports lean on. For the 92 unusable URLs with a DOI,
+OpenAlex (`api.openalex.org/works/doi:<doi>`, no key) returned metadata and a
+publication date for all 92 and an abstract for 88. Its open-access
+locations were a poor rescue: 50 had one, and only 6 yielded usable text,
+because most point back to the same blocking publishers. None of the 92
+had a PMC ID. So for DOI sources the fetcher:
+
+- resolves the DOI through OpenAlex for title, authors, venue and
+  `publication_date` (`published_from = openalex`, precision from the date);
+- stores the abstract as a document with `content_kind = abstract`;
+- tries the publisher page, then the open-access location, then PMC or
+  arXiv when IDs exist, and stores full text when one works.
+
+Claims and quotes on an abstract-only source are labeled abstract-only. A
+quote the citation check can't find in an abstract-only or snippet-only
+source is `unverifiable`, not `not found`. Workers' search tools can read
+pages this fetcher can't, so missing text doesn't mean a worker invented
+the quote.
 
 ### Dates
 
@@ -422,10 +468,24 @@ Phase 1 is small and independent, and it fixes the drops on its own.
 
 1. **Index backend.** Postgres + pgvector in a new `researchguy` database
    (recommended, reasons above) or SQLite with brute-force vectors.
-2. **Fetch scope per run.** Opened pages, cited URLs and the top 3 results
-   per search (recommended), or every result URL. Fetching everything is
-   simpler but multiplies storage and fetch time by roughly the result count
-   per search (37 in the probe).
+2. **Eager fetch scope per run.** Opened pages, cited URLs and the top 3
+   results per search (recommended), or every result URL. Either way every
+   result is kept as a source with its snippet and can be fetched on demand.
+   Per-run estimates from the measured per-URL averages (URL counts are
+   estimates: ~58 cited URLs per report measured; 122-166 captured search
+   items per run; ~19 results per item, inferred from chars per item):
+
+   | Scope | URLs | Stored (gzip) | Text | Passages | Fetch + embed |
+   |---|---|---|---|---|---|
+   | Cited only | ~58 | ~13 MB | ~1 MB | ~730 | ~20 s |
+   | Opened + cited + top 3 | ~300-550 | ~70-125 MB | ~6-10 MB | ~4-7k | ~2-3 min |
+   | Every result | ~2.3-3.2k | ~0.5-0.7 GB | ~42-59 MB | ~29-40k | ~13-18 min |
+
+   Fetching every result costs ~4-10x the recommended scope per run, ~50-70
+   GB per 100 runs before cross-run dedup, and fills retrieval with pages no
+   worker judged relevant. The recommended scope records each result's rank
+   in the capture. After ~5 runs, measure how often a cited URL was only a
+   rank 4+ result nobody opened, and raise N if it's common.
 3. **Models for claims.** The local utility model (`qwen3.5:9b`) for
    extraction, where the mechanical quote check catches invented quotes, and
    a stronger model for `contradicts`/`supersedes` labels, which are judgment
