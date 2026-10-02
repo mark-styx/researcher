@@ -289,14 +289,18 @@ func TestFinish(t *testing.T) {
 	if _, err := r.Append(Capture{Label: "l", Content: "c"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Finish(Finish{Status: StatusSucceeded, ReportPath: "/r/report.md", Metadata: `{"mode":"hybrid"}`}); err != nil {
+	report := filepath.Join(t.TempDir(), "report.md")
+	if err := os.WriteFile(report, []byte("# Report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Finish(Finish{Status: StatusSucceeded, ReportPath: report, Metadata: `{"mode":"hybrid"}`}); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := ReadRecord(r.Dir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Status != StatusSucceeded || rec.ReportPath != "/r/report.md" || rec.FinishedAt == nil || rec.Captures != 1 {
+	if rec.Status != StatusSucceeded || rec.ReportPath != report || rec.ReportSHA256 != HashText("# Report") || rec.FinishedAt == nil || rec.Captures != 1 {
 		t.Errorf("record = %+v", rec)
 	}
 	var compact bytes.Buffer
@@ -351,4 +355,64 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+func TestReportSection_WatchFile(t *testing.T) {
+	watch := "# Topic — Watch Updates\n\n---\n\n## Update: 2026-09-01\n\n*Backend: x | Run: old*\n\nold https://old.example\n" +
+		"\n\n---\n\n## Update: 2026-10-01\n\n*Backend: x | Run: new*\n\nnew https://new.example\n" +
+		"\n\n---\n\n## Update: 2026-10-02\n\n*Backend: x | Run: newer*\n\nnewer https://newer.example\n"
+	sec := ReportSection([]byte(watch), "new")
+	if !strings.Contains(sec, "https://new.example") || strings.Contains(sec, "old.example") || strings.Contains(sec, "newer.example") {
+		t.Errorf("section = %q", sec)
+	}
+	if !strings.HasPrefix(sec, "\n## Update: 2026-10-01") {
+		t.Errorf("section doesn't start at its update header: %q", sec[:30])
+	}
+	if got := ReportSection([]byte("no tag https://x.example"), "zzz"); got != "no tag https://x.example" {
+		t.Errorf("untagged report = %q", got)
+	}
+}
+
+func TestFinish_CopiesReportSection(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.StartRun(RunRecord{Kind: "watch", Topic: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "watch.md")
+	body := "# T\n\n## Update: 2026-09-01\n\n*Run: earlier*\n\nold\n\n## Update: 2026-10-02\n\n*Run: " + r.ID() + "*\n\nnew findings\n"
+	if err := os.WriteFile(report, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Finish(Finish{Status: StatusSucceeded, ReportPath: report}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := ReadRecord(r.Dir())
+	if rec.ReportSHA256 == "" {
+		t.Fatal("no report_sha256")
+	}
+	text, err := s.ReadText(rec.ReportSHA256)
+	if err != nil || !strings.Contains(text, "new findings") || strings.Contains(text, "old") {
+		t.Errorf("stored section = %q, %v", text, err)
+	}
+
+	// A failed run's report isn't copied; a missing file still writes the
+	// record and says why.
+	f, _ := s.StartRun(RunRecord{Kind: "dive"})
+	if err := f.Finish(Finish{Status: StatusFailed, ReportPath: report}); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := ReadRecord(f.Dir()); rec.ReportSHA256 != "" {
+		t.Errorf("failed run copied its report: %+v", rec)
+	}
+	m, _ := s.StartRun(RunRecord{Kind: "dive"})
+	if err := m.Finish(Finish{Status: StatusSucceeded, ReportPath: filepath.Join(t.TempDir(), "gone.md")}); err == nil || !strings.Contains(err.Error(), "copying report") {
+		t.Errorf("missing report err = %v", err)
+	}
+	if rec, _ := ReadRecord(m.Dir()); rec.Status != StatusSucceeded || rec.ReportSHA256 != "" {
+		t.Errorf("record after a missing report = %+v", rec)
+	}
 }

@@ -2,7 +2,6 @@ package fetch
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -108,30 +107,8 @@ func CitedURLs(dir string, rec store.RunRecord) []string {
 	}
 	if rec.ReportPath != "" {
 		if b, err := os.ReadFile(rec.ReportPath); err == nil {
-			out = append(out, ExtractURLs(runSection(b, rec.ID))...)
+			out = append(out, ExtractURLs(store.ReportSection(b, rec.ID))...)
 		}
 	}
 	return out
-}
-
-// runSection returns the part of a report written by run id: from its
-// "Run: <id>" header to the next watch update, or the whole report when no
-// header names it.
-func runSection(b []byte, id string) string {
-	if id == "" {
-		return string(b)
-	}
-	i := bytes.Index(b, []byte("Run: "+id))
-	if i < 0 {
-		return string(b)
-	}
-	rest := b[i:]
-	if j := bytes.Index(rest, []byte("\n## Update: ")); j >= 0 {
-		rest = rest[:j]
-	}
-	// A watch update's header line sits just before its run tag.
-	if k := bytes.LastIndex(b[:i], []byte("\n## Update: ")); k >= 0 {
-		return string(b[k:i]) + string(rest)
-	}
-	return string(b[:i]) + string(rest)
 }

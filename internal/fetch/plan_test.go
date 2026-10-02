@@ -3,7 +3,6 @@ package fetch
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/store"
@@ -53,22 +52,6 @@ func TestPlan_OrderDedupAndTopN(t *testing.T) {
 	}
 	if got[6].DOI != "10.1234/abcd" {
 		t.Errorf("DOI = %q", got[6].DOI)
-	}
-}
-
-func TestRunSection_WatchFile(t *testing.T) {
-	watch := "# Topic — Watch Updates\n\n---\n\n## Update: 2026-09-01\n\n*Backend: x | Run: old*\n\nold https://old.example\n" +
-		"\n\n---\n\n## Update: 2026-10-01\n\n*Backend: x | Run: new*\n\nnew https://new.example\n" +
-		"\n\n---\n\n## Update: 2026-10-02\n\n*Backend: x | Run: newer*\n\nnewer https://newer.example\n"
-	sec := runSection([]byte(watch), "new")
-	if !strings.Contains(sec, "https://new.example") || strings.Contains(sec, "old.example") || strings.Contains(sec, "newer.example") {
-		t.Errorf("section = %q", sec)
-	}
-	if !strings.HasPrefix(sec, "\n## Update: 2026-10-01") {
-		t.Errorf("section doesn't start at its update header: %q", sec[:30])
-	}
-	if got := runSection([]byte("no tag https://x.example"), "zzz"); got != "no tag https://x.example" {
-		t.Errorf("untagged report = %q", got)
 	}
 }
 

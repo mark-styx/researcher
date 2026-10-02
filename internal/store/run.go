@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -73,14 +74,18 @@ type RunRecord struct {
 	Error       string   `json:"error,omitempty"`
 	// PID and Host are the process that ran it, so a run left "running" by
 	// a process that died can be told apart from one still in progress.
-	PID        int             `json:"pid,omitempty"`
-	Host       string          `json:"host,omitempty"`
-	StartedAt  time.Time       `json:"started_at"`
-	FinishedAt *time.Time      `json:"finished_at,omitempty"`
-	ReportPath string          `json:"report_path,omitempty"`
-	Captures   int             `json:"captures"`
-	Files      []string        `json:"files,omitempty"`
-	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	PID        int        `json:"pid,omitempty"`
+	Host       string     `json:"host,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ReportPath string     `json:"report_path,omitempty"`
+	// ReportSHA256 names the store text holding the run's part of its
+	// report, copied when the run succeeded, so the index can rebuild the
+	// report even after the file changes.
+	ReportSHA256 string          `json:"report_sha256,omitempty"`
+	Captures     int             `json:"captures"`
+	Files        []string        `json:"files,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Capture is one raw tool result, a line of captures.jsonl. Seq is unique
@@ -299,7 +304,10 @@ func (r *Run) WriteFile(name string, data []byte) error {
 	return nil
 }
 
-// Finish records how the run ended and rewrites run.json.
+// Finish records how the run ended and rewrites run.json. A succeeded
+// run's part of its report is copied into the store's text first; when
+// that fails the record is still written, and the error says why the copy
+// is missing.
 func (r *Run) Finish(f Finish) error {
 	if r == nil {
 		return nil
@@ -310,9 +318,56 @@ func (r *Run) Finish(f Finish) error {
 	r.record.Status = f.Status
 	r.record.Error = f.Error
 	r.record.ReportPath = f.ReportPath
+	r.record.ReportSHA256 = ""
 	r.record.FinishedAt = &now
 	r.record.Metadata = metadataJSON(f.Metadata)
-	return r.writeRecord()
+	var copyErr error
+	if f.Status == StatusSucceeded && f.ReportPath != "" {
+		r.record.ReportSHA256, copyErr = OfRunDir(r.dir).PutReport(r.record.ID, f.ReportPath)
+	}
+	if err := r.writeRecord(); err != nil {
+		return err
+	}
+	if copyErr != nil {
+		return fmt.Errorf("copying report into the store: %w", copyErr)
+	}
+	return nil
+}
+
+// PutReport copies run id's part of the report at path into the store's
+// text and returns its hash. It's blank when that part is empty.
+func (s *Store) PutReport(id, path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	section := strings.TrimSpace(ReportSection(b, id))
+	if section == "" {
+		return "", nil
+	}
+	return s.PutText(section)
+}
+
+// ReportSection returns the part of a report written by run id: from its
+// "Run: <id>" header to the next watch update, or the whole report when no
+// header names it.
+func ReportSection(b []byte, id string) string {
+	if id == "" {
+		return string(b)
+	}
+	i := bytes.Index(b, []byte("Run: "+id))
+	if i < 0 {
+		return string(b)
+	}
+	rest := b[i:]
+	if j := bytes.Index(rest, []byte("\n## Update: ")); j >= 0 {
+		rest = rest[:j]
+	}
+	// A watch update's header line sits just before its run tag.
+	if k := bytes.LastIndex(b[:i], []byte("\n## Update: ")); k >= 0 {
+		return string(b[k:i]) + string(rest)
+	}
+	return string(b[:i]) + string(rest)
 }
 
 // metadataJSON embeds provider metadata as-is when it's JSON, otherwise as
