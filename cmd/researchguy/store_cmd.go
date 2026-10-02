@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/marklubin/researchguy/internal/config"
+	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/store"
 	"github.com/marklubin/researchguy/internal/store/index"
 	"github.com/spf13/cobra"
@@ -26,12 +27,14 @@ func storeCmd() *cobra.Command {
 		Long: `Every task writes a run record and the raw evidence it collected under
 <store.dir>/runs/<run_id>/. That directory is the record of truth.
 
-With store.dsn set, runs are also indexed in Postgres when they finish, and
-the daemon catches up on any it missed. The index is derived from the store:
-rebuild recreates it from scratch.`,
+When a run ends, the documents it cited, opened and ranked highest are
+fetched into the store (store.fetch). With store.dsn set, runs are also
+indexed in Postgres, their documents split into passages and embedded
+(store.embed), and the daemon catches up on any it missed. The index is
+derived from the store: rebuild recreates it from scratch.`,
 		GroupID: "project",
 	}
-	cmd.AddCommand(storeInitCmd(), storeIngestCmd(), storeRebuildCmd(), storeDoctorCmd())
+	cmd.AddCommand(storeInitCmd(), storeIngestCmd(), storeFetchCmd(), storeEmbedCmd(), storeRebuildCmd(), storeDoctorCmd())
 	return cmd
 }
 
@@ -55,12 +58,18 @@ func requireDSN(cfg *config.Config) error {
 	return nil
 }
 
-// openIndex opens the index in store.dsn, migrating it.
+// openIndex opens the index in store.dsn, migrating it. Ingest attaches
+// store.embed.model's cached vectors to new passages.
 func openIndex(ctx context.Context, cfg *config.Config) (*index.Index, error) {
 	if err := requireDSN(cfg); err != nil {
 		return nil, err
 	}
-	return index.Open(ctx, cfg.Store.DSN)
+	ix, err := index.Open(ctx, cfg.Store.DSN)
+	if err != nil {
+		return nil, err
+	}
+	ix.SetEmbedModel(embed.New(cfg).Model())
+	return ix, nil
 }
 
 func storeInitCmd() *cobra.Command {
@@ -254,12 +263,17 @@ func printSyncStats(stats index.SyncStats, verb string) {
 	}
 	// Sources are shared across runs, so per-run counts don't add up to a
 	// total; `store doctor` shows the index's.
-	var captures, sightings int
+	var captures, sightings, documents, passages int
 	for _, rs := range stats.Ingested {
 		captures += rs.Captures
 		sightings += rs.Sightings
+		documents += rs.Documents
+		passages += rs.Passages
 	}
 	fmt.Printf("%s %d run(s): %d captures, %d sightings", verb, len(stats.Ingested), captures, sightings)
+	if documents > 0 || passages > 0 {
+		fmt.Printf(", %d new document(s), %d passage(s)", documents, passages)
+	}
 	if stats.UpToDate > 0 {
 		fmt.Printf("; %d already up to date", stats.UpToDate)
 	}
@@ -280,8 +294,11 @@ func failedErr(stats index.SyncStats) error {
 type doctorReport struct {
 	StoreDir string       `json:"store_dir"`
 	Store    store.Health `json:"store"`
-	Index    *doctorIndex `json:"index,omitempty"` // nil when store.dsn is blank
-	Problems []string     `json:"problems"`
+	// Unfetched are finished runs whose fetching isn't done; the daemon or
+	// `store fetch` gets to them. Not a problem: asks wait for it by design.
+	Unfetched []string     `json:"unfetched,omitempty"`
+	Index     *doctorIndex `json:"index,omitempty"` // nil when store.dsn is blank
+	Problems  []string     `json:"problems"`
 }
 
 type doctorIndex struct {
@@ -290,6 +307,8 @@ type doctorIndex struct {
 	SchemaVersion int           `json:"schema_version"`
 	LatestVersion int           `json:"latest_version"`
 	Counts        *index.Counts `json:"counts,omitempty"`
+	// EmbedModel is the model counts.unembedded is counted against.
+	EmbedModel string `json:"embed_model"`
 	// Unindexed are finished runs the index lacks or has out of date.
 	Unindexed []string `json:"unindexed,omitempty"`
 	// Running are runs still in progress that aren't indexed yet; the
@@ -361,6 +380,9 @@ func diagnose(ctx context.Context, cfg *config.Config, st *store.Store) (doctorR
 	if n := len(h.Truncated); n > 0 {
 		add("%d finished run(s) whose capture log ends mid-line: %s", n, strings.Join(h.Truncated, ", "))
 	}
+	if rep.Unfetched, err = st.PendingFetch(); err != nil {
+		add("listing runs waiting on fetching: %v", err)
+	}
 
 	if strings.TrimSpace(cfg.Store.DSN) == "" {
 		return rep, nil
@@ -392,6 +414,8 @@ func diagnose(ctx context.Context, cfg *config.Config, st *store.Store) (doctorR
 		add("index schema is version %d, this researchguy needs %d (`store ingest` or `store init` migrates it)", di.SchemaVersion, di.LatestVersion)
 		return rep, nil
 	}
+	di.EmbedModel = embed.New(cfg).Model()
+	ix.SetEmbedModel(di.EmbedModel)
 	counts, err := ix.Counts(ctx)
 	if err != nil {
 		di.Error = err.Error()
@@ -432,6 +456,9 @@ func printDoctor(rep doctorReport) {
 	if n := len(h.Unverifiable); n > 0 {
 		fmt.Printf("  %d running run(s) recorded no PID, so they can't be checked\n", n)
 	}
+	if n := len(rep.Unfetched); n > 0 {
+		fmt.Printf("  %d finished run(s) waiting on source fetching (`researchguy store fetch`)\n", n)
+	}
 
 	switch di := rep.Index; {
 	case di == nil:
@@ -442,6 +469,10 @@ func printDoctor(rep doctorReport) {
 		fmt.Printf("Index: %s, schema %d of %d\n", di.DSN, di.SchemaVersion, di.LatestVersion)
 		if c := di.Counts; c != nil {
 			fmt.Printf("  %d run(s), %d capture(s), %d source(s), %d sighting(s)\n", c.Runs, c.Captures, c.Sources, c.Sightings)
+			fmt.Printf("  %d fetch(es), %d document(s), %d passage(s)\n", c.Fetches, c.Documents, c.Passages)
+			if c.Unembedded > 0 {
+				fmt.Printf("  %d passage(s) without a %s vector (`researchguy store embed`)\n", c.Unembedded, di.EmbedModel)
+			}
 		}
 		if n := len(di.Running); n > 0 {
 			fmt.Printf("  %d running run(s) not indexed yet\n", n)
