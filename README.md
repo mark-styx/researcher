@@ -578,6 +578,8 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 
 `researchguy mcp --profile read` serves only the tools that read: search, context, list, read, graph list/show/find, find, passage, claim, timeline, document and source. It can't start research or write anything; the hybrid aggregator gets this profile.
 
+`researchguy mcp --profile ingest` adds `researchguy_ingest_url` to the read tools, for an agent researching a topic (bookworm's researchers get it): it can search and fetch pages into the store, but can't start research or write the graph.
+
 `researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `codex`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 
 ### Claude Code Configuration
