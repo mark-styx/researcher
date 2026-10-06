@@ -15,6 +15,7 @@ const (
 	profileFull   = "full"
 	profileRead   = "read"
 	profileIngest = "ingest"
+	profileWeb    = "web"
 )
 
 func mcpCmd() *cobra.Command {
@@ -56,6 +57,10 @@ profile while it writes a report.
 agent researching a topic: it can fetch pages into the store, but can't
 start research or write the graph.
 
+--profile web serves only web_search and web_fetch (DuckDuckGo search and
+page fetch, no keys). A Goose hybrid worker gets this profile, so its
+searches come back as evidence the aggregator can cite.
+
 Configure in Claude Code settings:
   {
     "mcpServers": {
@@ -67,12 +72,15 @@ Configure in Claude Code settings:
   }`,
 		Example: `  researchguy mcp
   researchguy mcp --profile read
-  researchguy mcp --profile ingest`,
+  researchguy mcp --profile ingest
+  researchguy mcp --profile web`,
 		GroupID: "setup",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if profile != profileFull && profile != profileRead && profile != profileIngest {
-				return fmt.Errorf("unknown --profile %q (want %s, %s or %s)", profile, profileFull, profileRead, profileIngest)
+			switch profile {
+			case profileFull, profileRead, profileIngest, profileWeb:
+			default:
+				return fmt.Errorf("unknown --profile %q (want %s, %s, %s or %s)", profile, profileFull, profileRead, profileIngest, profileWeb)
 			}
 			cfg, err := config.Load()
 			if err != nil {
@@ -83,6 +91,8 @@ Configure in Claude Code settings:
 				return server.ServeStdio(mcpserver.NewRead(cfg, Version))
 			case profileIngest:
 				return server.ServeStdio(mcpserver.NewIngest(cfg, Version))
+			case profileWeb:
+				return server.ServeStdio(mcpserver.NewWeb(cfg, Version))
 			}
 
 			provider, err := llm.NewProvider(cfg, "", "")
@@ -94,6 +104,6 @@ Configure in Claude Code settings:
 			return server.ServeStdio(s)
 		},
 	}
-	cmd.Flags().StringVar(&profile, "profile", profileFull, "Tools to serve: full, read (lookups only), or ingest (lookups and fetching into the store)")
+	cmd.Flags().StringVar(&profile, "profile", profileFull, "Tools to serve: full, read (lookups only), ingest (lookups and fetching into the store), or web (web_search and web_fetch only)")
 	return cmd
 }
