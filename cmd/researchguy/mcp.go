@@ -12,8 +12,9 @@ import (
 
 // MCP server profiles.
 const (
-	profileFull = "full"
-	profileRead = "read"
+	profileFull   = "full"
+	profileRead   = "read"
+	profileIngest = "ingest"
 )
 
 func mcpCmd() *cobra.Command {
@@ -51,6 +52,10 @@ read, find, passage, document, source and the graph's list, show and find.
 No LLM calls, no fetching, no graph writes. The hybrid aggregator gets this
 profile while it writes a report.
 
+--profile ingest adds researchguy_ingest_url to the read tools, for an
+agent researching a topic: it can fetch pages into the store, but can't
+start research or write the graph.
+
 Configure in Claude Code settings:
   {
     "mcpServers": {
@@ -61,19 +66,23 @@ Configure in Claude Code settings:
     }
   }`,
 		Example: `  researchguy mcp
-  researchguy mcp --profile read`,
+  researchguy mcp --profile read
+  researchguy mcp --profile ingest`,
 		GroupID: "setup",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if profile != profileFull && profile != profileRead {
-				return fmt.Errorf("unknown --profile %q (want %s or %s)", profile, profileFull, profileRead)
+			if profile != profileFull && profile != profileRead && profile != profileIngest {
+				return fmt.Errorf("unknown --profile %q (want %s, %s or %s)", profile, profileFull, profileRead, profileIngest)
 			}
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
 			}
-			if profile == profileRead {
+			switch profile {
+			case profileRead:
 				return server.ServeStdio(mcpserver.NewRead(cfg, Version))
+			case profileIngest:
+				return server.ServeStdio(mcpserver.NewIngest(cfg, Version))
 			}
 
 			provider, err := llm.NewProvider(cfg, "", "")
@@ -85,6 +94,6 @@ Configure in Claude Code settings:
 			return server.ServeStdio(s)
 		},
 	}
-	cmd.Flags().StringVar(&profile, "profile", profileFull, "Tools to serve: full, or read (lookups only)")
+	cmd.Flags().StringVar(&profile, "profile", profileFull, "Tools to serve: full, read (lookups only), or ingest (lookups and fetching into the store)")
 	return cmd
 }

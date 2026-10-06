@@ -13,6 +13,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/embed"
 	"github.com/marklubin/researchguy/internal/store"
@@ -23,7 +24,12 @@ import (
 
 func readClient(t *testing.T, cfg *config.Config) *client.Client {
 	t.Helper()
-	c, err := client.NewInProcessClient(NewRead(cfg, "test"))
+	return profileClient(t, NewRead(cfg, "test"))
+}
+
+func profileClient(t *testing.T, s *server.MCPServer) *client.Client {
+	t.Helper()
+	c, err := client.NewInProcessClient(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +65,37 @@ func TestReadProfile_OnlyReadTools(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Errorf("read profile tools = %v, want %v", names, want)
+	}
+}
+
+// The ingest profile is the read profile plus researchguy_ingest_url: an
+// agent researching a topic can fetch pages into the store, but can't start
+// research or write the graph.
+func TestIngestProfile_ReadToolsAndIngest(t *testing.T) {
+	c := profileClient(t, NewIngest(testConfig(t), "test"))
+	res, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range res.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	want := append(slices.Clone(ReadTools), "researchguy_ingest_url")
+	slices.Sort(want)
+	if !slices.Equal(names, want) {
+		t.Errorf("ingest profile tools = %v, want %v", names, want)
+	}
+	got := slices.Clone(IngestTools)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("IngestTools = %v, want %v", got, want)
+	}
+
+	ing := callOn(t, c, "researchguy_ingest_url", map[string]any{"url": "https://example.com/"})
+	if !ing.IsError || !strings.Contains(extractText(t, ing), "store.dsn is not set") {
+		t.Errorf("ingest without a dsn = %s", extractText(t, ing))
 	}
 }
 

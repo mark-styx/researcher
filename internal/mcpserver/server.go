@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,6 +42,18 @@ func New(cfg *config.Config, provider llm.Provider, version string) *server.MCPS
 // writes a report (`researchguy mcp --profile read`), so it can look up
 // evidence but not start research or change the record.
 func NewRead(cfg *config.Config, version string) *server.MCPServer {
+	return newLookup(cfg, version, false)
+}
+
+// NewIngest creates an MCP server with the read tools plus
+// researchguy_ingest_url, for an agent researching a topic
+// (`researchguy mcp --profile ingest`): it can search and fetch pages into
+// the store, but can't start research or write the graph.
+func NewIngest(cfg *config.Config, version string) *server.MCPServer {
+	return newLookup(cfg, version, true)
+}
+
+func newLookup(cfg *config.Config, version string, ingest bool) *server.MCPServer {
 	s := newServer(version)
 	s.AddTool(searchTool(), searchHandler(cfg))
 	st := &storeTools{cfg: cfg}
@@ -48,7 +61,7 @@ func NewRead(cfg *config.Config, version string) *server.MCPServer {
 	s.AddTool(listTool(), listHandler(cfg))
 	s.AddTool(readTool(), readHandler(cfg))
 	addGraphTools(s, cfg, false)
-	addStoreTools(s, st, false)
+	addStoreTools(s, st, ingest)
 	return s
 }
 
@@ -58,6 +71,9 @@ var ReadTools = []string{
 	"researchguy_graph_list", "researchguy_graph_show", "researchguy_graph_find",
 	"researchguy_find", "researchguy_passage", "researchguy_claim", "researchguy_timeline", "researchguy_document", "researchguy_source",
 }
+
+// IngestTools are the tools NewIngest registers.
+var IngestTools = append(slices.Clone(ReadTools), "researchguy_ingest_url")
 
 func newServer(version string) *server.MCPServer {
 	return server.NewMCPServer(
