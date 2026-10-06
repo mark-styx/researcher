@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -161,6 +162,9 @@ func (h *Hybrid) Complete(ctx context.Context, req Request) (string, error) {
 	var success int
 	var failures []string
 	for r := range out {
+		if r.Err == nil && wantsWebTools(req) && noEvidence(r) {
+			r.Err = errNoEvidence
+		}
 		results[r.Index] = r
 		if r.Err != nil {
 			failures = append(failures, fmt.Sprintf("%s/%s: %v", r.Backend, r.Model, r.Err))
@@ -610,6 +614,19 @@ func (h *Hybrid) evidenceCapFor(backend string) int {
 
 // providerEvidence is a worker's raw tool results, labeled with the worker,
 // with the tool call behind each.
+// errNoEvidence marks a worker that had web tools and wrote its draft
+// without one successful call. Nothing in the draft can be checked against
+// what it read, so the draft stays in the run record but out of the report.
+var errNoEvidence = errors.New("worker ran no successful tool calls")
+
+// noEvidence reports whether a worker whose backend reports its evidence
+// came back with none. Claude workers don't report it, so they're never
+// counted empty.
+func noEvidence(w hybridWorkerOutput) bool {
+	_, reports := w.Provider.(EvidenceProvider)
+	return reports && len(w.Evidence) == 0
+}
+
 func providerEvidence(provider Provider, backend, model, shard string) ([]critique.Evidence, []store.Call) {
 	ep, ok := provider.(EvidenceProvider)
 	if !ok {

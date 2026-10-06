@@ -3,12 +3,14 @@ package llm
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/marklubin/researchguy/internal/config"
 	"github.com/marklubin/researchguy/internal/critique"
+	"github.com/marklubin/researchguy/internal/tools"
 )
 
 type stubProvider struct {
@@ -546,5 +548,101 @@ func TestHybridComplete_UnloadsEachStageBeforeNextModel(t *testing.T) {
 	want := "worker:complete,worker:unload,aggregator:complete,aggregator:unload,verifier:complete,verifier:complete,verifier:unload"
 	if got != want {
 		t.Fatalf("lifecycle = %q, want %q", got, want)
+	}
+}
+
+// plainProvider doesn't report evidence, like the Claude provider.
+type plainProvider struct{ resp string }
+
+func (p *plainProvider) Name() string { return "plain" }
+
+func (p *plainProvider) Complete(context.Context, Request) (string, error) { return p.resp, nil }
+
+// guardHybrid has two workers: m1 searched and m2 wrote a draft with no
+// successful tool call. m2 is a plainProvider when m2Plain is set.
+func guardHybrid(aggregator Provider, m2Plain bool) *Hybrid {
+	return &Hybrid{
+		cfg:               &config.Config{Claude: config.ClaudeConfig{Model: "opus"}},
+		WorkerBackend:     "ollama",
+		WorkerModels:      []string{"m1", "m2"},
+		AggregatorBackend: "claude",
+		AggregatorModel:   "opus",
+		MaxParallel:       2,
+		makeProvider: func(backend, model string) (Provider, error) {
+			switch backend + "/" + model {
+			case "ollama/m1":
+				return &stubProvider{name: "m1", resp: "draft from sources", evidence: []EvidenceRecord{{Label: "web_search", Content: "a real result"}}}, nil
+			case "ollama/m2":
+				if m2Plain {
+					return &plainProvider{resp: "draft from nothing"}, nil
+				}
+				return &stubProvider{name: "m2", resp: "draft from nothing"}, nil
+			case "claude/opus":
+				return aggregator, nil
+			}
+			return nil, fmt.Errorf("unexpected provider %s/%s", backend, model)
+		},
+	}
+}
+
+// A worker given web tools that ran none successfully wrote from nothing it
+// read: its draft stays in the run record but never reaches the aggregator.
+func TestHybridComplete_DropsWorkerWithNoEvidence(t *testing.T) {
+	aggregator := &stubProvider{name: "claude", resp: "final"}
+	h := guardHybrid(aggregator, false)
+	run := openRun(t)
+	if _, err := h.Complete(context.Background(), Request{UserPrompt: "topic", Tools: tools.DefaultTools(), Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	prompt := aggregator.lastReq.UserPrompt
+	if !strings.Contains(prompt, "draft from sources") {
+		t.Errorf("aggregator prompt missing the worker with evidence")
+	}
+	if strings.Contains(prompt, "draft from nothing") {
+		t.Errorf("aggregator prompt has the draft of a worker with no evidence:\n%s", prompt)
+	}
+	workers := readFile(t, filepath.Join(run.Dir(), "workers.jsonl"))
+	if !strings.Contains(workers, "draft from nothing") || !strings.Contains(workers, errNoEvidence.Error()) {
+		t.Errorf("workers.jsonl should keep the empty worker's draft with its error:\n%s", workers)
+	}
+}
+
+func TestHybridComplete_AllWorkersWithoutEvidenceFail(t *testing.T) {
+	h := &Hybrid{
+		cfg:               &config.Config{Claude: config.ClaudeConfig{Model: "opus"}},
+		WorkerBackend:     "ollama",
+		WorkerModels:      []string{"m1"},
+		AggregatorBackend: "claude",
+		AggregatorModel:   "opus",
+		makeProvider: func(backend, model string) (Provider, error) {
+			return &stubProvider{name: model, resp: "confident prose"}, nil
+		},
+	}
+	_, err := h.Complete(context.Background(), Request{UserPrompt: "topic", Tools: tools.DefaultTools()})
+	if err == nil || !strings.Contains(err.Error(), "all hybrid workers failed") || !strings.Contains(err.Error(), errNoEvidence.Error()) {
+		t.Fatalf("err = %v, want every worker failed for no evidence", err)
+	}
+}
+
+// The guard needs both web tools on offer and a backend that reports what
+// it read. Without tools a draft is all a worker can give; a Claude worker
+// doesn't report evidence, so having none says nothing.
+func TestHybridComplete_EvidenceGuardScope(t *testing.T) {
+	for name, tc := range map[string]struct {
+		tools   []tools.Tool
+		m2Plain bool
+	}{
+		"no web tools":            {tools: nil},
+		"backend without reports": {tools: tools.DefaultTools(), m2Plain: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			aggregator := &stubProvider{name: "claude", resp: "final"}
+			if _, err := guardHybrid(aggregator, tc.m2Plain).Complete(context.Background(), Request{UserPrompt: "topic", Tools: tc.tools}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(aggregator.lastReq.UserPrompt, "draft from nothing") {
+				t.Errorf("the second worker's draft should reach the aggregator")
+			}
+		})
 	}
 }
