@@ -396,6 +396,8 @@ Uses the [Goose CLI](https://github.com/block/goose) through `goose run`. Each c
 
 When the request has tools, the one extension Goose gets is `researchguy mcp --profile web` (below), run from the same researchguy binary: `web_search` and `web_fetch`, the keyless search and page fetch the Ollama workers call. The backend reads `goose run --output-format stream-json`, so every successful search (ranked titles, URLs, snippets) and fetched page is kept as evidence the hybrid aggregator gets in its ledger, captured as each result arrives. A failed tool result is counted in the metadata (`tool_errors`) but isn't evidence.
 
+`goose.max_turns` (default 40) is the agent's turn limit, and each tool call uses a turn. With tools, the system prompt tells the agent its limit and to stop calling tools about five turns before it. A run that still ends without an answer, on Goose's "I've reached the maximum number of actions" notice or on a tool result, gets a finish pass: one more call with no tools, given the task and the tool results it gathered (up to ~120k chars), which writes the answer. The evidence is the first run's either way. If the finish pass fails too, the worker's draft says it has no findings and its evidence stays in the ledger. Metadata records `turn_limit`, `finish_pass` (`ok` or the error) and `finish_usage`.
+
 ```bash
 researchguy dive "topic" --backend goose
 ```

@@ -63,6 +63,10 @@ extending it.
   and Goose runs with `--no-profile` plus `researchguy mcp --profile web` and
   parses its stream-json, so their web results reach the ledger. A worker
   with web tools and no evidence is dropped before aggregation (`noEvidence`).
+  A Goose run that ends without an answer (turn-limit notice or a trailing
+  tool result) gets a tool-free finish pass over its evidence; a worker that
+  returns an error leaves the ledger, so Goose returns a no-findings draft
+  rather than an error when the finish pass fails.
 - Every runner task writes a run record through `internal/store`
   (`<store.dir>/runs/<id>/`): `run.json`, every raw tool result in
   `captures.jsonl`, and for hybrid the worker drafts and the aggregator's
