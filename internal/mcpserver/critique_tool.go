@@ -24,7 +24,7 @@ func critiqueTool() mcp.Tool {
 			mcp.Description("Evidence files, resolved like researchguy_read, read in order up to max_evidence_chars"),
 			mcp.WithStringItems()),
 		mcp.WithNumber("max_evidence_chars", mcp.Description(fmt.Sprintf("Cap on evidence sent to the critics (default %d)", critique.DefaultMaxEvidenceChars))),
-		mcp.WithString("backend", mcp.Description("Backend for this call. Default: the server's default backend"), mcp.Enum("claude", "ollama", "codex", "hybrid")),
+		mcp.WithString("backend", mcp.Description("Backend for this call. Default: the server's default backend"), mcp.Enum("claude", "ollama", "codex", "goose", "hybrid")),
 	)
 }
 
@@ -64,9 +64,9 @@ func critiqueHandler(cfg *config.Config, provider llm.Provider) server.ToolHandl
 
 		if backend := req.GetString("backend", ""); backend != "" {
 			switch backend {
-			case "claude", "ollama", "codex", "hybrid":
+			case "claude", "ollama", "codex", "goose", "hybrid":
 			default:
-				return mcp.NewToolResultError(fmt.Sprintf("invalid backend %q (want claude, ollama, codex, or hybrid)", backend)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("invalid backend %q (want claude, ollama, codex, goose, or hybrid)", backend)), nil
 			}
 			if provider, err = newProvider(cfg, backend, ""); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("creating %s provider: %v", backend, err)), nil

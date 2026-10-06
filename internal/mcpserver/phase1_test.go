@@ -59,6 +59,25 @@ func grepaiScript(t *testing.T, cfg *config.Config, results string) string {
 	return argsFile
 }
 
+func TestDive_GooseBackendAccepted(t *testing.T) {
+	cfg := testConfig(t)
+	goose := &namedProvider{name: "goose", mockProvider: mockProvider{responses: []string{`{"category":"c","filename":"f"}`, "report body"}}}
+	var gotBackend string
+	orig := newProvider
+	newProvider = func(_ *config.Config, backend, _ string) (llm.Provider, error) {
+		gotBackend = backend
+		return goose, nil
+	}
+	t.Cleanup(func() { newProvider = orig })
+
+	res := call(t, cfg, &mockProvider{response: "default"}, "researchguy_dive", map[string]any{"topic": "t", "backend": "goose", "no_research": true})
+	var out map[string]any
+	decode(t, res, &out)
+	if gotBackend != "goose" || out["backend"] != "goose" {
+		t.Errorf("backend = %q, output backend = %v, want goose", gotBackend, out["backend"])
+	}
+}
+
 func TestDive_HybridOptionsPassThrough(t *testing.T) {
 	cfg := testConfig(t)
 	hybrid := &namedProvider{name: "hybrid", mockProvider: mockProvider{responses: []string{`{"category":"c","filename":"f"}`, "report body"}}}

@@ -27,7 +27,7 @@ func projectsOption() mcp.ToolOption {
 // hybridOptions are shared by dive, review, and compare.
 func hybridOptions() []mcp.ToolOption {
 	return []mcp.ToolOption{
-		mcp.WithString("backend", mcp.Description("Backend for this call. mode and branches only take effect with hybrid. Default: the server's default backend"), mcp.Enum("claude", "ollama", "codex", "hybrid")),
+		mcp.WithString("backend", mcp.Description("Backend for this call. mode and branches only take effect with hybrid. Default: the server's default backend"), mcp.Enum("claude", "ollama", "codex", "goose", "hybrid")),
 		mcp.WithString("mode", mcp.Description("Hybrid branch-role set: landscape (tools/alternatives) or inquiry (contested claims, adds counter-evidence and funding-provenance branches)"), mcp.Enum("landscape", "inquiry")),
 		mcp.WithNumber("branches", mcp.Description("Hybrid fan-out: number of angles investigated in parallel (0 = backend default)")),
 		projectsOption(),
@@ -60,9 +60,9 @@ func parseResearchParams(cfg *config.Config, defaultProvider llm.Provider, req m
 	}
 	if backend := req.GetString("backend", ""); backend != "" {
 		switch backend {
-		case "claude", "ollama", "codex", "hybrid":
+		case "claude", "ollama", "codex", "goose", "hybrid":
 		default:
-			return p, fmt.Errorf("invalid backend %q (want claude, ollama, codex, or hybrid)", backend)
+			return p, fmt.Errorf("invalid backend %q (want claude, ollama, codex, goose, or hybrid)", backend)
 		}
 		prov, err := newProvider(cfg, backend, "")
 		if err != nil {

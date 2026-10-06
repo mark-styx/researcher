@@ -107,7 +107,7 @@ Use --dry-run to preview changes without moving any files.`,
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview changes without moving files")
-	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, codex, hybrid)")
+	cmd.Flags().StringVar(&backend, "backend", "", "LLM backend (claude, ollama, codex, goose, hybrid)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
 	return cmd
 }
