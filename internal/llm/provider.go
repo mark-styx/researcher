@@ -152,6 +152,18 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 			IgnoreUserConfig: cfg.Codex.IgnoreUserConfig,
 		}, nil
 
+	case "goose":
+		model := cfg.Goose.Model
+		if modelOverride != "" {
+			model = modelOverride
+		}
+		return &Goose{
+			Binary:   cfg.Goose.Binary,
+			Provider: cfg.Goose.Provider,
+			Model:    model,
+			MaxTurns: cfg.Goose.MaxTurns,
+		}, nil
+
 	case "hybrid":
 		aggregatorModel := cfg.Hybrid.AggregatorModel
 		if modelOverride != "" {
@@ -175,7 +187,7 @@ func NewProvider(cfg *config.Config, backendOverride, modelOverride string) (Pro
 		return h, nil
 
 	default:
-		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, codex, or hybrid)", backend)
+		return nil, fmt.Errorf("unknown backend: %q (expected claude, ollama, codex, goose, or hybrid)", backend)
 	}
 }
 

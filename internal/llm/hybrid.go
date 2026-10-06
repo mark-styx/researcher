@@ -324,12 +324,19 @@ func (h *Hybrid) resolveWorkerModels(workerBackend string) []string {
 		// Fall back to the worker backend's own model, never another
 		// backend's: an Ollama model name means nothing to Codex.
 		fallback := h.cfg.Ollama.Model
-		if workerBackend == "codex" {
+		switch workerBackend {
+		case "codex":
 			fallback = h.cfg.Codex.Model
+		case "goose":
+			fallback = h.cfg.Goose.Model
 		}
 		if strings.TrimSpace(fallback) != "" {
 			candidates = []string{fallback}
 		}
+	}
+	if len(candidates) == 0 && workerBackend == "goose" {
+		// A blank model is a real choice for Goose: its own configured one.
+		return []string{""}
 	}
 
 	seen := make(map[string]struct{})

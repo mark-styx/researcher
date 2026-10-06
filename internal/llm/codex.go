@@ -130,7 +130,7 @@ func (c *Codex) args(req Request, lastMessagePath, workDir string) []string {
 		args = append(args, "-c", "model_reasoning_effort="+tomlString(c.ReasoningEffort))
 	}
 	webSearch := "disabled"
-	if codexWantsWeb(req) {
+	if wantsWebTools(req) {
 		webSearch = "live"
 	}
 	args = append(args, "-c", "web_search="+tomlString(webSearch))
@@ -138,9 +138,10 @@ func (c *Codex) args(req Request, lastMessagePath, workDir string) []string {
 	return append(args, "-")
 }
 
-// codexWantsWeb maps our web_search/web_fetch tools onto Codex's built-in
-// web search, which also opens pages.
-func codexWantsWeb(req Request) bool {
+// wantsWebTools reports whether the request offers web_search or web_fetch.
+// Codex maps them onto its built-in web search, which also opens pages;
+// Goose gets them from the researchguy web extension.
+func wantsWebTools(req Request) bool {
 	for _, t := range req.Tools {
 		if t.Name == "web_search" || t.Name == "web_fetch" {
 			return true

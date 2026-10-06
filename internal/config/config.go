@@ -17,6 +17,7 @@ type Config struct {
 	Claude         ClaudeConfig    `yaml:"claude"`
 	Ollama         OllamaConfig    `yaml:"ollama"`
 	Codex          CodexConfig     `yaml:"codex"`
+	Goose          GooseConfig     `yaml:"goose"`
 	Hybrid         HybridConfig    `yaml:"hybrid"`
 	Tools          ToolsConfig     `yaml:"tools"`
 	Scheduler      SchedulerConfig `yaml:"scheduler"`
@@ -214,6 +215,16 @@ type CodexConfig struct {
 	IgnoreUserConfig bool `yaml:"ignore_user_config"`
 }
 
+// GooseConfig drives the Goose CLI backend ("goose run"). It always runs
+// without the user's profile, so their extensions don't load. Blank
+// provider or model leaves Goose's own configured default in place.
+type GooseConfig struct {
+	Binary   string `yaml:"binary"`
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+	MaxTurns int    `yaml:"max_turns"` // --max-turns per call
+}
+
 type HybridConfig struct {
 	WorkerBackend      string   `yaml:"worker_backend"`
 	WorkerModels       []string `yaml:"worker_models"`
@@ -276,7 +287,7 @@ func (g GrepaiConfig) ProjectList() []string {
 const DefaultYAML = `# Research database location
 research_dir: ~/sentinel/research
 
-# Default LLM backend ("claude", "ollama", "codex", or "hybrid")
+# Default LLM backend ("claude", "ollama", "codex", "goose", or "hybrid")
 default_backend: claude
 
 # Claude CLI configuration
@@ -308,8 +319,20 @@ codex:
   reasoning_effort: ""
   ignore_user_config: true
 
+# Goose CLI configuration ("goose run"). Runs without your Goose profile, so
+# none of its extensions load; with web tools on it gets researchguy's
+# web_search and web_fetch (researchguy mcp --profile web) and nothing else.
+# Blank provider/model use what Goose is configured with.
+goose:
+  binary: goose
+  provider: ""
+  model: ""
+  max_turns: 40
+
 # Hybrid configuration (small local workers + aggregator model).
-# worker_backend may be "codex" to run the shards through Codex instead.
+# worker_backend may be "codex" or "goose" to run the shards through that
+# CLI instead; worker_models are then that backend's model names (leave it
+# empty to use codex.model or goose.model).
 hybrid:
   worker_backend: ollama
   worker_models:
@@ -509,6 +532,10 @@ func defaults() *Config {
 		Codex: CodexConfig{
 			Binary:           "codex",
 			IgnoreUserConfig: true,
+		},
+		Goose: GooseConfig{
+			Binary:   "goose",
+			MaxTurns: 40,
 		},
 		Hybrid: HybridConfig{
 			WorkerBackend:      "ollama",

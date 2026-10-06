@@ -433,6 +433,46 @@ hybrid:
 	}
 }
 
+func TestGooseConfig_DefaultsAndYAML(t *testing.T) {
+	cfg := defaults()
+	if cfg.Goose != (GooseConfig{Binary: "goose", MaxTurns: 40}) {
+		t.Errorf("Goose defaults = %+v", cfg.Goose)
+	}
+	var parsed Config
+	if err := yaml.Unmarshal([]byte(DefaultYAML), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Goose != cfg.Goose {
+		t.Errorf("DefaultYAML goose = %+v, want defaults() %+v", parsed.Goose, cfg.Goose)
+	}
+}
+
+func TestLoad_GooseHybridWorkers(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RESEARCHGUY_CONFIG_DIR", dir)
+	data := `default_backend: hybrid
+goose:
+  provider: openai
+  model: glm-5.3
+hybrid:
+  worker_backend: goose
+  worker_models: []
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Goose != (GooseConfig{Binary: "goose", Provider: "openai", Model: "glm-5.3", MaxTurns: 40}) {
+		t.Errorf("Goose = %+v, want the set fields with the defaults kept", cfg.Goose)
+	}
+	if cfg.Hybrid.WorkerBackend != "goose" || len(cfg.Hybrid.WorkerModels) != 0 {
+		t.Errorf("Hybrid = %+v", cfg.Hybrid)
+	}
+}
+
 func TestHybridMaxEvidenceChars_DefaultsAndOverride(t *testing.T) {
 	// 0 lets the hybrid backend size the cap to the aggregator's backend.
 	if got := defaults().Hybrid.MaxEvidenceChars; got != 0 {
