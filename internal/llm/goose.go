@@ -65,9 +65,123 @@ func (g *Goose) Complete(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Events are read as they arrive, so each tool result is captured to
+	// the run before the agent goes on, not when it exits.
+	run, err := g.exec(ctx, args, req.UserPrompt, req.Capture)
+	g.setRun(run.evidence, run.metadataJSON(g))
+	if err != nil {
+		return "", err
+	}
+	text := strings.TrimSpace(run.lastMessage)
+	if (text == "" || hitTurnLimit(text)) && len(run.evidence) > 0 {
+		// The agent spent its turns on tools and never answered. Its tool
+		// results are the evidence either way, so one more call without
+		// tools writes the answer from them.
+		run.turnLimit = hitTurnLimit(text)
+		run.finishRan = true
+		answer, fin, ferr := g.finish(ctx, req, run.evidence)
+		run.finishUsage = fin.usage
+		if ferr != nil {
+			run.finishErr = ferr.Error()
+		}
+		g.setRun(run.evidence, run.metadataJSON(g))
+		if ferr == nil {
+			return answer, nil
+		}
+		// A failed worker's evidence is dropped from the ledger, so the
+		// worker still succeeds, with a draft that says what happened.
+		return fmt.Sprintf(gooseNoAnswerDraft, len(run.evidence)), nil
+	}
+	if text == "" {
+		return "", fmt.Errorf("goose returned no final message")
+	}
+	return text, nil
+}
+
+// gooseTurnLimitNotice starts the message goose ends a run with when it
+// runs out of turns. The run has no answer then.
+const gooseTurnLimitNotice = "I've reached the maximum number of actions"
+
+func hitTurnLimit(text string) bool {
+	text = strings.ReplaceAll(strings.TrimSpace(text), "’", "'")
+	return strings.HasPrefix(text, gooseTurnLimitNotice)
+}
+
+const gooseNoAnswerDraft = "(No findings: this worker ran out of turns before writing them, and the pass to write them from its tool results failed. Its %d tool results are in the evidence ledger.)"
+
+// maxGooseFinishChars caps the tool results the finish pass reads, and
+// maxGooseFinishItemChars caps any one of them.
+const (
+	maxGooseFinishChars     = 120000
+	maxGooseFinishItemChars = 8000
+)
+
+// finish asks goose, with no tools, for the answer to req from the tool
+// results a run gathered before it ran out of turns.
+func (g *Goose) finish(ctx context.Context, req Request, evidence []EvidenceRecord) (string, gooseRun, error) {
+	finReq := req
+	finReq.Tools = nil
+	args, err := g.args(finReq)
+	if err != nil {
+		return "", gooseRun{}, err
+	}
+	args = setArg(args, "--max-turns", "2")
+	run, err := g.exec(ctx, args, finishPrompt(req.UserPrompt, evidence), nil)
+	if err != nil {
+		return "", run, fmt.Errorf("finish pass: %w", err)
+	}
+	text := strings.TrimSpace(run.lastMessage)
+	if text == "" || hitTurnLimit(text) {
+		return "", run, fmt.Errorf("finish pass returned no answer")
+	}
+	return text, run, nil
+}
+
+// finishPrompt is the task again with the tool results, in the order they
+// arrived, under a cap.
+func finishPrompt(task string, evidence []EvidenceRecord) string {
+	var b strings.Builder
+	b.WriteString(task)
+	b.WriteString("\n\nYour tool budget for this task is used up, and you can't search or fetch anything more. Write your answer now, from the tool results below only. Say what they show, what they don't, and what you could not find or read.\n\n")
+	used := 0
+	for i, rec := range evidence {
+		content := rec.Content
+		if len(content) > maxGooseFinishItemChars {
+			content = content[:maxGooseFinishItemChars] + "\n[truncated]"
+		}
+		item := fmt.Sprintf("--- Tool result %d: %s\n%s\n\n", i+1, rec.Label, content)
+		if used+len(item) > maxGooseFinishChars {
+			fmt.Fprintf(&b, "[%d more tool results left out for length]\n", len(evidence)-i)
+			break
+		}
+		b.WriteString(item)
+		used += len(item)
+	}
+	return b.String()
+}
+
+// setArg replaces flag's value in args, or appends the flag before the
+// trailing "-i -".
+func setArg(args []string, flag, value string) []string {
+	out := append([]string(nil), args...)
+	for i, a := range out {
+		if a == flag && i+1 < len(out) {
+			out[i+1] = value
+			return out
+		}
+	}
+	n := len(out)
+	if n >= 2 && out[n-2] == "-i" {
+		return append(out[:n-2], flag, value, "-i", "-")
+	}
+	return append(out, flag, value)
+}
+
+// exec runs goose once with args and stdin, in an empty scratch dir.
+func (g *Goose) exec(ctx context.Context, args []string, stdin string, capture CaptureFunc) (gooseRun, error) {
 	workDir, err := os.MkdirTemp("", "researchguy-goose-")
 	if err != nil {
-		return "", fmt.Errorf("creating goose work dir: %w", err)
+		return gooseRun{}, fmt.Errorf("creating goose work dir: %w", err)
 	}
 	defer os.RemoveAll(workDir)
 
@@ -79,38 +193,30 @@ func (g *Goose) Complete(ctx context.Context, req Request) (string, error) {
 	// An empty scratch dir keeps the agent away from project files and any
 	// .goosehints where researchguy was launched.
 	cmd.Dir = workDir
-	cmd.Stdin = strings.NewReader(req.UserPrompt)
+	cmd.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("goose stdout: %w", err)
+		return gooseRun{}, fmt.Errorf("goose stdout: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("starting goose CLI: %w", err)
+		return gooseRun{}, fmt.Errorf("starting goose CLI: %w", err)
 	}
-	// Events are read as they arrive, so each tool result is captured to
-	// the run before the agent goes on, not when it exits.
-	parser := gooseParser{capture: req.Capture}
+	parser := gooseParser{capture: capture}
 	readErr := parser.read(stdout)
 	runErr := cmd.Wait()
 	run := parser.run
-	g.setRun(run.evidence, run.metadataJSON(g))
 	if runErr == nil && readErr != nil {
 		runErr = fmt.Errorf("reading goose output: %w", readErr)
 	}
-
 	if run.failure != "" {
-		return "", fmt.Errorf("goose run failed: %s", run.failure)
+		return run, fmt.Errorf("goose run failed: %s", run.failure)
 	}
 	if runErr != nil {
-		return "", fmt.Errorf("goose CLI failed: %w\nstderr: %s", runErr, tailString(stderr.String(), maxGooseStderrChars))
+		return run, fmt.Errorf("goose CLI failed: %w\nstderr: %s", runErr, tailString(stderr.String(), maxGooseStderrChars))
 	}
-	text := strings.TrimSpace(run.lastMessage)
-	if text == "" {
-		return "", fmt.Errorf("goose returned no final message")
-	}
-	return text, nil
+	return run, nil
 }
 
 func (g *Goose) args(req Request) ([]string, error) {
@@ -132,8 +238,14 @@ func (g *Goose) args(req Request) ([]string, error) {
 	if g.Model != "" {
 		args = append(args, "--model", g.Model)
 	}
-	if s := strings.TrimSpace(req.SystemPrompt); s != "" {
-		args = append(args, "--system", s)
+	system := strings.TrimSpace(req.SystemPrompt)
+	if wantsWebTools(req) {
+		// Agents otherwise call tools until goose stops them, and the run
+		// ends on goose's turn-limit notice instead of an answer.
+		system = strings.TrimSpace(system + "\n\n" + gooseBudget(turns))
+	}
+	if system != "" {
+		args = append(args, "--system", system)
 	}
 	if wantsWebTools(req) {
 		web, err := g.webCommand()
@@ -144,6 +256,16 @@ func (g *Goose) args(req Request) ([]string, error) {
 	}
 	// The prompt goes on stdin so long prompts never hit argv limits.
 	return append(args, "-i", "-"), nil
+}
+
+// gooseBudget tells the agent how many turns it has, leaving a few to
+// write its answer.
+func gooseBudget(turns int) string {
+	stop := turns - 5
+	if stop < 1 {
+		stop = 1
+	}
+	return fmt.Sprintf("You have at most %d turns for this task, and each tool call uses one. Stop calling tools after about %d and write your answer; a run that reaches the limit ends with no answer.", turns, stop)
 }
 
 func (g *Goose) webCommand() (string, error) {
@@ -236,6 +358,12 @@ type gooseRun struct {
 	model       string
 	usage       *gooseUsage
 	failure     string
+
+	// Set when the run ended without an answer and a finish pass ran.
+	turnLimit   bool
+	finishRan   bool
+	finishUsage *gooseUsage
+	finishErr   string
 }
 
 // gooseParser reads goose's stream-json events. capture, when set, gets
@@ -423,6 +551,17 @@ func gooseErrorText(raw json.RawMessage) string {
 	return string(raw)
 }
 
+// finishPass is "ok" or the error when a finish pass ran, else "".
+func (r gooseRun) finishPass() string {
+	switch {
+	case !r.finishRan:
+		return ""
+	case r.finishErr != "":
+		return truncateForMetadata(r.finishErr, 2000)
+	}
+	return "ok"
+}
+
 func (r gooseRun) metadataJSON(g *Goose) string {
 	model := r.model
 	if model == "" {
@@ -441,6 +580,9 @@ func (r gooseRun) metadataJSON(g *Goose) string {
 		EvidenceItems int         `json:"evidence_items"`
 		Usage         *gooseUsage `json:"usage,omitempty"`
 		Failure       string      `json:"failure,omitempty"`
+		TurnLimit     bool        `json:"turn_limit,omitempty"`
+		FinishPass    string      `json:"finish_pass,omitempty"`
+		FinishUsage   *gooseUsage `json:"finish_usage,omitempty"`
 	}{
 		Backend:       "goose",
 		Provider:      provider,
@@ -450,6 +592,9 @@ func (r gooseRun) metadataJSON(g *Goose) string {
 		EvidenceItems: len(r.evidence),
 		Usage:         r.usage,
 		Failure:       truncateForMetadata(r.failure, 2000),
+		TurnLimit:     r.turnLimit,
+		FinishPass:    r.finishPass(),
+		FinishUsage:   r.finishUsage,
 	}
 	b, err := json.Marshal(meta)
 	if err != nil {

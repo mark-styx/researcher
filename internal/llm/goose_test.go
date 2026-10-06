@@ -122,13 +122,17 @@ func TestGoose_Complete_EvidenceFinalMessageAndArgs(t *testing.T) {
 		"--max-turns":      "12",
 		"--provider":       "openai",
 		"--model":          "glm-test",
-		"--system":         "Be rigorous.",
 		"--with-extension": "researchguy:/opt/rg mcp --profile web",
 		"-i":               "-",
 	} {
 		if got := argAfter(args, flag); got != want {
 			t.Errorf("%s = %q, want %q", flag, got, want)
 		}
+	}
+	// The fake records one argv entry per line, so the multi-line system
+	// prompt spans lines.
+	if !strings.Contains(strings.Join(args, "\n"), "--system\nBe rigorous.\n\n"+gooseBudget(12)+"\n") {
+		t.Errorf("args %q should pass the system prompt and then the turn budget", args)
 	}
 	if stdin := readFile(t, filepath.Join(dir, "stdin.txt")); stdin != "When did the FDA post it?" {
 		t.Errorf("stdin = %q, want the user prompt alone", stdin)
@@ -209,16 +213,239 @@ func TestGoose_Complete_NoWebToolsNoExtension(t *testing.T) {
 }
 
 // Text the agent wrote before a tool call is narration, not the answer: a
-// run that ends on a tool result has no final message.
-func TestGoose_Complete_NoFinalMessageAfterTools(t *testing.T) {
-	binary, _ := fakeGoose(t, []string{gooseTextBefore, gooseSearchReq, gooseSearchResp, gooseComplete}, 0)
+// run that ends on a tool result has no final message. With nothing
+// gathered either, the worker fails.
+func TestGoose_Complete_NoFinalMessageNoEvidence(t *testing.T) {
+	binary, _ := fakeGoose(t, []string{gooseTextBefore, gooseFailedReq, gooseFailedResp, gooseComplete}, 0)
 	g := &Goose{Binary: binary, WebCommand: "rg mcp --profile web"}
 	_, err := g.Complete(context.Background(), Request{UserPrompt: "q", Tools: tools.DefaultTools()})
 	if err == nil || !strings.Contains(err.Error(), "goose returned no final message") {
 		t.Fatalf("err = %v, want no final message", err)
 	}
-	if len(g.Evidence()) != 1 {
-		t.Errorf("the search result should still be kept as evidence, got %d", len(g.Evidence()))
+}
+
+// fakeGooseTwoPass stands in for goose across a run and its finish pass: a
+// call with the web extension prints toolEvents, one without prints
+// finishEvents. Each call's argv and stdin go to args.<n>.txt and
+// stdin.<n>.txt under dir, numbered from 1.
+func fakeGooseTwoPass(t *testing.T, toolEvents, finishEvents []string) (binary, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	for name, events := range map[string][]string{"tools.jsonl": toolEvents, "finish.jsonl": finishEvents} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(events, "\n")+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := `#!/bin/sh
+dir="` + dir + `"
+n=$(( $(cat "$dir/count" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$dir/count"
+printf '%s\n' "$@" > "$dir/args.$n.txt"
+cat > "$dir/stdin.$n.txt"
+echo '    __( O)>  new session'
+case " $* " in
+  *" --with-extension "*) cat "$dir/tools.jsonl" ;;
+  *) cat "$dir/finish.jsonl" ;;
+esac
+`
+	binary = filepath.Join(dir, "fake-goose")
+	if err := os.WriteFile(binary, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return binary, dir
+}
+
+const gooseTurnLimitMsg = `{"type":"message","message":{"id":"m9","role":"assistant","content":[{"type":"text","text":"I've reached the maximum number of actions I can do without user input. Would you like me to continue?"}]}}`
+
+type gooseFinishMeta struct {
+	ToolCalls     int    `json:"tool_calls"`
+	EvidenceItems int    `json:"evidence_items"`
+	TurnLimit     bool   `json:"turn_limit"`
+	FinishPass    string `json:"finish_pass"`
+	FinishUsage   *struct {
+		TotalTokens int `json:"total_tokens"`
+	} `json:"finish_usage"`
+}
+
+func finishMeta(t *testing.T, g *Goose) gooseFinishMeta {
+	t.Helper()
+	var m gooseFinishMeta
+	if err := json.Unmarshal([]byte(g.Metadata()), &m); err != nil {
+		t.Fatalf("Metadata() not JSON: %v (%q)", err, g.Metadata())
+	}
+	return m
+}
+
+// A run that ends on goose's turn-limit notice has gathered evidence but
+// written nothing. One more call, with no tools, writes the answer from
+// what it gathered.
+func TestGoose_Complete_TurnLimitFinishPass(t *testing.T) {
+	toolEvents := []string{gooseSearchReq, gooseSearchResp, gooseFetchReq, gooseFetchResp, gooseTurnLimitMsg, gooseComplete}
+	finishEvents := append(gooseAnswer("f1", "From the results: ", "the FDA posted it."), `{"type":"complete","total_tokens":900,"input_tokens":800,"output_tokens":100}`)
+	binary, dir := fakeGooseTwoPass(t, toolEvents, finishEvents)
+
+	var captured int
+	g := &Goose{Binary: binary, Model: "glm-test", MaxTurns: 30, WebCommand: "rg mcp --profile web"}
+	got, err := g.Complete(context.Background(), Request{
+		SystemPrompt: "Be rigorous.",
+		UserPrompt:   "When did the FDA post it?",
+		Tools:        tools.DefaultTools(),
+		Capture:      func(EvidenceRecord) string { captured++; return fmt.Sprintf("E%d", captured) },
+	})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	if got != "From the results: the FDA posted it." {
+		t.Errorf("Complete() = %q, want the finish pass's answer", got)
+	}
+	if n := strings.TrimSpace(readFile(t, filepath.Join(dir, "count"))); n != "2" {
+		t.Fatalf("goose ran %s times, want 2", n)
+	}
+	args := strings.Split(strings.TrimSpace(readFile(t, filepath.Join(dir, "args.2.txt"))), "\n")
+	if argAfter(args, "--with-extension") != "" {
+		t.Errorf("finish pass args %v should have no tools", args)
+	}
+	if argAfter(args, "--max-turns") != "2" || argAfter(args, "--model") != "glm-test" || argAfter(args, "--system") != "Be rigorous." {
+		t.Errorf("finish pass args = %v, want 2 turns, the same model and the plain system prompt", args)
+	}
+	if last := args[len(args)-2:]; last[0] != "-i" || last[1] != "-" {
+		t.Errorf("finish pass args should end with -i -, got %v", args)
+	}
+	stdin := readFile(t, filepath.Join(dir, "stdin.2.txt"))
+	for _, want := range []string{"When did the FDA post it?", "Tool result 1: web_search", "You are not a horse.", "Tool result 2: web_fetch", "Why You Should Not Use Ivermectin", "used up"} {
+		if !strings.Contains(stdin, want) {
+			t.Errorf("finish prompt missing %q:\n%s", want, stdin)
+		}
+	}
+	if len(g.Evidence()) != 2 || captured != 2 {
+		t.Errorf("evidence = %d, captured %d, want the first run's 2 (the finish pass captures nothing)", len(g.Evidence()), captured)
+	}
+	m := finishMeta(t, g)
+	if !m.TurnLimit || m.FinishPass != "ok" || m.FinishUsage == nil || m.FinishUsage.TotalTokens != 900 || m.ToolCalls != 2 || m.EvidenceItems != 2 {
+		t.Errorf("metadata = %+v (%s)", m, g.Metadata())
+	}
+}
+
+// A run that ends on a tool result also gets the finish pass.
+func TestGoose_Complete_NoFinalMessageFinishPass(t *testing.T) {
+	binary, _ := fakeGooseTwoPass(t, []string{gooseTextBefore, gooseSearchReq, gooseSearchResp, gooseComplete}, gooseAnswer("f1", "answer from evidence"))
+	g := &Goose{Binary: binary, WebCommand: "rg mcp --profile web"}
+	got, err := g.Complete(context.Background(), Request{UserPrompt: "q", Tools: tools.DefaultTools()})
+	if err != nil || got != "answer from evidence" {
+		t.Fatalf("Complete() = %q, %v", got, err)
+	}
+	if m := finishMeta(t, g); m.TurnLimit || m.FinishPass != "ok" {
+		t.Errorf("metadata = %+v, want a finish pass without the turn-limit flag", m)
+	}
+}
+
+// If the finish pass fails too, the worker still succeeds with a draft
+// that says so, because a failed worker's evidence leaves the ledger.
+func TestGoose_Complete_FinishPassFails(t *testing.T) {
+	for name, finishEvents := range map[string][]string{
+		"no answer":  {gooseComplete},
+		"turn limit": {gooseTurnLimitMsg},
+		"error":      {`{"type":"error","error":"provider returned 500"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			binary, _ := fakeGooseTwoPass(t, []string{gooseSearchReq, gooseSearchResp, gooseTurnLimitMsg}, finishEvents)
+			g := &Goose{Binary: binary, WebCommand: "rg mcp --profile web"}
+			got, err := g.Complete(context.Background(), Request{UserPrompt: "q", Tools: tools.DefaultTools()})
+			if err != nil {
+				t.Fatalf("Complete() error: %v", err)
+			}
+			if got != fmt.Sprintf(gooseNoAnswerDraft, 1) {
+				t.Errorf("Complete() = %q, want the no-answer draft", got)
+			}
+			if hitTurnLimit(got) {
+				t.Errorf("the no-answer draft should not read as goose's notice")
+			}
+			m := finishMeta(t, g)
+			if !m.TurnLimit || m.FinishPass == "ok" || m.FinishPass == "" {
+				t.Errorf("metadata = %+v, want the finish error recorded", m)
+			}
+			if len(g.Evidence()) != 1 {
+				t.Errorf("evidence = %d, want 1", len(g.Evidence()))
+			}
+		})
+	}
+}
+
+// With no evidence there is nothing to write from: the notice is returned
+// as goose gave it, in one call, and the hybrid no-evidence check fails the
+// worker.
+func TestGoose_Complete_TurnLimitNoEvidence(t *testing.T) {
+	binary, dir := fakeGooseTwoPass(t, []string{gooseFailedReq, gooseFailedResp, gooseTurnLimitMsg}, gooseAnswer("f1", "should not run"))
+	g := &Goose{Binary: binary, WebCommand: "rg mcp --profile web"}
+	got, err := g.Complete(context.Background(), Request{UserPrompt: "q", Tools: tools.DefaultTools()})
+	if err != nil || !hitTurnLimit(got) {
+		t.Fatalf("Complete() = %q, %v, want goose's notice", got, err)
+	}
+	if n := strings.TrimSpace(readFile(t, filepath.Join(dir, "count"))); n != "1" {
+		t.Errorf("goose ran %s times, want 1", n)
+	}
+	if m := finishMeta(t, g); m.FinishPass != "" {
+		t.Errorf("finish_pass = %q, want none", m.FinishPass)
+	}
+}
+
+func TestHitTurnLimit(t *testing.T) {
+	for text, want := range map[string]bool{
+		"I've reached the maximum number of actions I can do without user input. Would you like me to continue?": true,
+		"  I\u2019ve reached the maximum number of actions I can do":                                             true,
+		"The FDA posted it.": false,
+		"":                   false,
+		"Note: I've reached the maximum number of actions": false,
+	} {
+		if got := hitTurnLimit(text); got != want {
+			t.Errorf("hitTurnLimit(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+func TestFinishPrompt_Caps(t *testing.T) {
+	big := strings.Repeat("x", maxGooseFinishItemChars+500)
+	var ev []EvidenceRecord
+	for i := 0; i < 40; i++ {
+		ev = append(ev, EvidenceRecord{Label: fmt.Sprintf("web_fetch {\"url\":\"https://e.example/%d\"}", i), Content: big})
+	}
+	p := finishPrompt("task", ev)
+	if !strings.HasPrefix(p, "task\n") {
+		t.Errorf("prompt should start with the task")
+	}
+	if len(p) > maxGooseFinishChars+2000 {
+		t.Errorf("prompt is %d chars, want about %d at most", len(p), maxGooseFinishChars)
+	}
+	if !strings.Contains(p, "[truncated]") || !strings.Contains(p, "more tool results left out for length") {
+		t.Errorf("prompt should mark truncated items and left-out ones")
+	}
+	if strings.Contains(finishPrompt("task", nil), "Tool result") {
+		t.Errorf("no evidence should list no tool results")
+	}
+}
+
+func TestSetArg(t *testing.T) {
+	got := setArg([]string{"run", "--max-turns", "30", "-i", "-"}, "--max-turns", "2")
+	if strings.Join(got, " ") != "run --max-turns 2 -i -" {
+		t.Errorf("replace = %v", got)
+	}
+	got = setArg([]string{"run", "-i", "-"}, "--max-turns", "2")
+	if strings.Join(got, " ") != "run --max-turns 2 -i -" {
+		t.Errorf("insert = %v", got)
+	}
+	orig := []string{"run", "--max-turns", "30"}
+	setArg(orig, "--max-turns", "2")
+	if orig[2] != "30" {
+		t.Errorf("setArg should not change its input")
+	}
+}
+
+func TestGooseBudget(t *testing.T) {
+	if b := gooseBudget(30); !strings.Contains(b, "at most 30 turns") || !strings.Contains(b, "after about 25") {
+		t.Errorf("gooseBudget(30) = %q", b)
+	}
+	if b := gooseBudget(3); !strings.Contains(b, "after about 1 ") {
+		t.Errorf("gooseBudget(3) = %q, want a floor of 1", b)
 	}
 }
 
