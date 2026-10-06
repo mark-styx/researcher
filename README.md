@@ -16,7 +16,7 @@ A CLI that automates research workflows using LLM backends. Generate structured 
 - **Task scheduling** — cron-based recurring research with a background daemon
 - **Task queue** — batch one-shot research tasks with priority ordering
 - **MCP server** — expose all tools to Claude Code and other MCP clients via stdio
-- **Multi-backend**: supports Claude CLI, Codex CLI, Ollama, and hybrid worker aggregation
+- **Multi-backend**: supports Claude CLI, Codex CLI, Goose CLI, Ollama, and hybrid worker aggregation
 - **Epistemic branch roles** — hybrid backend fan-out driven by a `--mode` (`landscape`, `inquiry`) instead of generic angles, plus a `--branches` effort/breadth dial
 - **Evidence-ledger critics**: hybrid verification checks the unchanged draft against raw successful tool results and reports flags instead of rewriting
 - **Run records**: every task writes what it collected (raw tool results, worker drafts, the aggregator's prompt and raw output, metadata) to `<store.dir>/runs/<run_id>/`, so evidence that didn't fit in a prompt is still on disk and a report's `[E12]` citations resolve to a captured item
@@ -168,7 +168,7 @@ Config file: `~/.researchguy/config.yaml` (created by `researchguy init`)
 # Where research output is saved
 research_dir: ~/sentinel/research
 
-# LLM backend: "claude", "ollama", "codex", or "hybrid"
+# LLM backend: "claude", "ollama", "codex", "goose", or "hybrid"
 default_backend: claude
 
 # Claude CLI settings
@@ -194,6 +194,13 @@ codex:
   model: ""
   reasoning_effort: ""
   ignore_user_config: true
+
+# Goose CLI settings (blank provider/model = what Goose is configured with)
+goose:
+  binary: goose
+  provider: ""
+  model: ""
+  max_turns: 40
 
 # Hybrid settings (fan-out to worker models, then aggregate)
 hybrid:
@@ -383,6 +390,29 @@ store:
 
 Keep that in its own config dir (`RESEARCHGUY_CONFIG_DIR=~/.researchguy/codex-hybrid researchguy dive ...`) if the MCP server should keep its default stack. A dive doesn't touch `tasks.db`, so a separate config dir is safe for it. Graph and scheduler commands do read `tasks.db` from the config dir, so run those with your main config. Set `store.dir` as above so its run records land in the same store as the main config's.
 
+### Goose
+
+Uses the [Goose CLI](https://github.com/block/goose) through `goose run`. Each call runs in a fresh empty scratch dir with `--no-session` and `--no-profile`, so none of your Goose extensions load: not the developer shell, and not a researchguy MCP server that could start research inside research. The prompt goes on stdin and the system prompt through `--system`. Blank `provider` and `model` leave Goose's own configured ones in place.
+
+When the request has tools, the one extension Goose gets is `researchguy mcp --profile web` (below), run from the same researchguy binary: `web_search` and `web_fetch`, the keyless search and page fetch the Ollama workers call. The backend reads `goose run --output-format stream-json`, so every successful search (ranked titles, URLs, snippets) and fetched page is kept as evidence the hybrid aggregator gets in its ledger, captured as each result arrives. A failed tool result is counted in the metadata (`tool_errors`) but isn't evidence.
+
+```bash
+researchguy dive "topic" --backend goose
+```
+
+As the hybrid worker backend, leave `worker_models` empty to run every shard on `goose.model`, or Goose's own default when that's blank:
+
+```yaml
+hybrid:
+  worker_backend: goose
+  worker_models: []
+  aggregator_backend: claude
+  aggregator_model: opus
+  max_parallel: 3
+```
+
+`worker_models` are Goose model names here, so an Ollama model list left over from an Ollama worker setup goes to Goose as `--model` and fails. The separate config dir advice under Codex applies the same way.
+
 ### Hybrid backend: modes and critics
 
 The hybrid backend fans out to worker models, unloads them, runs one aggregation stage, then optionally runs two flag-only critic passes:
@@ -398,6 +428,8 @@ researchguy dive "topic" --backend hybrid --mode inquiry --branches 5
 Without `--branches`, a named mode covers its complete role set: four branches for `landscape` and five for `inquiry`. General mode defaults to the number of configured worker models. Set `--branches` explicitly when cost or latency matters more than full role coverage.
 
 Worker prose is analysis, not evidence. Successful tool results form an evidence ledger that is passed separately to the aggregator and optional critics. Every item gets an ID (`E1`, `E2`, ...) numbered across all workers, and the aggregator cites items by it (`[E12]`). The whole ledger is written to the run record (`captures.jsonl`, below) before aggregation, under the same IDs.
+
+A worker that had web tools and came back without one successful tool result is marked failed ("worker ran no successful tool calls"): its draft stays in the run record (`workers.jsonl`) but doesn't reach the aggregator, and a run where every worker came back empty fails. A local model can write a draft that describes searches it never ran; nothing in it can be checked against the ledger. Claude workers don't report their evidence, so the check skips them.
 
 `hybrid.max_evidence_chars` caps how much of the ledger one prompt receives. `0` (the default) sizes it to the backend that reads it: ~2M chars for claude, which is ~500-670k tokens and leaves room in Opus's 1M-token window for the drafts and the report, and 80000 for Ollama or Codex. Set it explicitly for a smaller-window claude model such as haiku. The cap is split evenly across shards, and a shard that needs less than its share passes the rest to the others, so the first shard can't fill the ledger and starve the counter-evidence branches. When the critics' backend has a smaller budget than the aggregator's, they get their own cut of the ledger. Run metadata records `evidence_ledger` (items and chars captured vs. passed, and how many shards made it in), plus `critic_evidence_ledger` when the critics got a different cut.
 
@@ -579,6 +611,8 @@ The `researchguy mcp` command starts a [Model Context Protocol](https://modelcon
 `researchguy mcp --profile read` serves only the tools that read: search, context, list, read, graph list/show/find, find, passage, claim, timeline, document and source. It can't start research or write anything; the hybrid aggregator gets this profile.
 
 `researchguy mcp --profile ingest` adds `researchguy_ingest_url` to the read tools, for an agent researching a topic (bookworm's researchers get it): it can search and fetch pages into the store, but can't start research or write the graph.
+
+`researchguy mcp --profile web` serves only `web_search` and `web_fetch`: no store, no graph, no research. A Goose worker gets this profile. `web_search` returns its ranked results as structured content along with the text list.
 
 `researchguy_dive`/`_review`/`_compare` accept `no_research`/`max_age` params (same semantics as the CLI flags), plus `backend` (`claude`, `ollama`, `codex`, `hybrid`), `mode` (`landscape`, `inquiry`), `branches`, and `projects`. `mode`/`branches` only apply with the hybrid backend; with any other backend the result carries a `warning`. `researchguy_ask`, `_search`, and `_context` accept `projects`; `researchguy_ask` additionally accepts `no_save`. `max_age: none` disables the freshness filter.
 
