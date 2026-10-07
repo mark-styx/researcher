@@ -26,9 +26,9 @@ With store.dsn set it also includes the store index's evidence (what
 dated and labeled primary or synthesis. Store evidence isn't dropped for
 age unless --max-age is given, which limits it by collection date.
 
-Large files (book research) contribute only their matched chunks. Use
---project to search specific grepai workspace projects and --max-age none to
-include older research.`,
+Large files (book research) contribute only their matched chunks, cut at
+40 KB a file. Use --project to search specific grepai workspace projects and
+--max-age none to include older research.`,
 		Example: `  researchguy context "Operation Mockingbird"
   researchguy context "Operation Mockingbird" --project research --project the_poisoned_well --max-age none --json`,
 		GroupID: "research",

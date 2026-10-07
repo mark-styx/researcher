@@ -172,7 +172,7 @@ func BuildContext(ctx context.Context, cfg *config.Config, topic string, opts Co
 					kept = append(kept, c)
 				}
 			}
-			body = joinChunks(kept)
+			body = capChunks(joinChunks(kept))
 		}
 		if strings.TrimSpace(body) == "" {
 			continue
@@ -335,6 +335,16 @@ func containedIn(body string, texts []string) bool {
 		}
 	}
 	return false
+}
+
+// capChunks cuts a file's joined chunks to MaxWholeFileBytes. grepai's
+// chunk of a minified file is the one line it has, hundreds of KB long, and
+// a file included as chunks gets no more room than one included whole.
+func capChunks(body string) string {
+	if len(body) <= MaxWholeFileBytes {
+		return body
+	}
+	return TruncateBytes(body, MaxWholeFileBytes) + fmt.Sprintf("\n[chunks cut at %d bytes]", MaxWholeFileBytes)
 }
 
 func joinChunks(chunks []SearchResult) string {

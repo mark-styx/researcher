@@ -77,6 +77,37 @@ func TestBuildContextAcrossProjects(t *testing.T) {
 	}
 }
 
+// A minified file is one line, so grepai's one chunk of it can be the
+// whole file: three such chunks of ~350 KB made a dive's context 1.1 MB,
+// past ARG_MAX for an argv prompt and past most context windows. A file
+// included as chunks gets no more room than one included whole.
+func TestBuildContextCapsChunkedFile(t *testing.T) {
+	cfg, _, book := workspaceFixture(t)
+	minified := strings.Repeat("var a=function(){return 1};", 13000)
+	path := filepath.Join(book, "research", "web", "page.js")
+	if err := os.WriteFile(path, []byte(minified), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script, _ := fakeGrepai(t, []SearchResult{
+		{FilePath: "ws/the_book/research/web/page.js", StartLine: 1, EndLine: 1, Score: 0.7, Content: minified},
+	})
+	cfg.Grepai.Binary = script
+
+	got, err := BuildContext(context.Background(), cfg, "t", ContextOptions{MaxAge: "none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 1 {
+		t.Fatalf("count = %d, want the file kept", got.Count)
+	}
+	if len(got.Context) > MaxWholeFileBytes+200 {
+		t.Errorf("context is %d bytes, want the file's chunks cut to about %d", len(got.Context), MaxWholeFileBytes)
+	}
+	if !strings.Contains(got.Context, "[lines 1-1]\nvar a=function") || !strings.Contains(got.Context, "cut at") {
+		t.Errorf("want the chunk's start and a note that it was cut:\n%s", got.Context[len(got.Context)-300:])
+	}
+}
+
 func TestBuildContextFreshnessDefault(t *testing.T) {
 	cfg, research, _ := workspaceFixture(t)
 	old := filepath.Join(research, "cat", "old.md")
