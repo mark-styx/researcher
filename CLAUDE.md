@@ -101,6 +101,15 @@ extending it.
   `--strict-mcp-config` instead. That skips the `settings.json` env block
   too, so keep the retry without MCP on "Not logged in", and never pass the
   OAuth token through `--settings` or a file.
+- Goose has no file form of `--system`, and a recipe can't be combined
+  with `-i`, so the Goose provider writes the system prompt and the prompt
+  into one recipe file (`--recipe`). Keep both off argv for the same
+  `ARG_MAX` reason. Goose renders a recipe as a template before parsing it,
+  so `gooseRecipe` writes every brace as a JSON escape; keep that, or a
+  `{{` in a fetched page breaks the run.
+- `BuildContext` cuts a file included as chunks at `MaxWholeFileBytes`,
+  the same room a file included whole gets. A minified file is one line,
+  so its one chunk can be the whole file.
 - The hybrid backend calls `Request.BeforeAggregate` after the workers are
   recorded and unloaded; the runner uses it to fetch, index and embed the
   run, and to hand the aggregator the sources table and the read-profile
