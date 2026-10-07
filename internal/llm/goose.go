@@ -28,6 +28,7 @@ const (
 // among them, and the developer shell). With web tools in the request it
 // adds `researchguy mcp --profile web` as its only extension, and keeps the
 // pages and search results the agent saw as evidence for the hybrid ledger.
+// The system prompt and the prompt go in a recipe file, never on argv.
 type Goose struct {
 	Binary   string
 	Provider string // blank = Goose's own configured provider
@@ -67,7 +68,7 @@ func (g *Goose) Complete(ctx context.Context, req Request) (string, error) {
 	}
 	// Events are read as they arrive, so each tool result is captured to
 	// the run before the agent goes on, not when it exits.
-	run, err := g.exec(ctx, args, req.UserPrompt, req.Capture)
+	run, err := g.exec(ctx, args, g.system(req), req.UserPrompt, req.Capture)
 	g.setRun(run.evidence, run.metadataJSON(g))
 	if err != nil {
 		return "", err
@@ -126,7 +127,7 @@ func (g *Goose) finish(ctx context.Context, req Request, evidence []EvidenceReco
 		return "", gooseRun{}, err
 	}
 	args = setArg(args, "--max-turns", "2")
-	run, err := g.exec(ctx, args, finishPrompt(req.UserPrompt, evidence), nil)
+	run, err := g.exec(ctx, args, g.system(finReq), finishPrompt(req.UserPrompt, evidence), nil)
 	if err != nil {
 		return "", run, fmt.Errorf("finish pass: %w", err)
 	}
@@ -160,8 +161,7 @@ func finishPrompt(task string, evidence []EvidenceRecord) string {
 	return b.String()
 }
 
-// setArg replaces flag's value in args, or appends the flag before the
-// trailing "-i -".
+// setArg replaces flag's value in args, or appends the flag.
 func setArg(args []string, flag, value string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
@@ -170,30 +170,32 @@ func setArg(args []string, flag, value string) []string {
 			return out
 		}
 	}
-	n := len(out)
-	if n >= 2 && out[n-2] == "-i" {
-		return append(out[:n-2], flag, value, "-i", "-")
-	}
 	return append(out, flag, value)
 }
 
-// exec runs goose once with args and stdin, in an empty scratch dir.
-func (g *Goose) exec(ctx context.Context, args []string, stdin string, capture CaptureFunc) (gooseRun, error) {
+// exec runs goose once with args, and system and prompt in a recipe file,
+// in an empty scratch dir.
+func (g *Goose) exec(ctx context.Context, args []string, system, prompt string, capture CaptureFunc) (gooseRun, error) {
 	workDir, err := os.MkdirTemp("", "researchguy-goose-")
 	if err != nil {
 		return gooseRun{}, fmt.Errorf("creating goose work dir: %w", err)
 	}
 	defer os.RemoveAll(workDir)
+	// The recipe sits outside the scratch dir, so that stays empty.
+	recipe, err := writeGooseRecipe(system, prompt)
+	if err != nil {
+		return gooseRun{}, err
+	}
+	defer os.Remove(recipe)
 
 	binary := g.Binary
 	if binary == "" {
 		binary = "goose"
 	}
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd := exec.CommandContext(ctx, binary, append(append([]string(nil), args...), "--recipe", recipe)...)
 	// An empty scratch dir keeps the agent away from project files and any
 	// .goosehints where researchguy was launched.
 	cmd.Dir = workDir
-	cmd.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
@@ -219,17 +221,21 @@ func (g *Goose) exec(ctx context.Context, args []string, stdin string, capture C
 	return run, nil
 }
 
-func (g *Goose) args(req Request) ([]string, error) {
-	turns := g.MaxTurns
-	if turns <= 0 {
-		turns = defaultGooseTurns
+func (g *Goose) turns() int {
+	if g.MaxTurns <= 0 {
+		return defaultGooseTurns
 	}
+	return g.MaxTurns
+}
+
+// args is the command line for req, less the recipe.
+func (g *Goose) args(req Request) ([]string, error) {
 	args := []string{
 		"run",
 		"--no-session",
 		"--no-profile",
 		"--output-format", "stream-json",
-		"--max-turns", fmt.Sprint(turns),
+		"--max-turns", fmt.Sprint(g.turns()),
 		"--max-tool-repetitions", "3",
 	}
 	if g.Provider != "" {
@@ -238,15 +244,6 @@ func (g *Goose) args(req Request) ([]string, error) {
 	if g.Model != "" {
 		args = append(args, "--model", g.Model)
 	}
-	system := strings.TrimSpace(req.SystemPrompt)
-	if wantsWebTools(req) {
-		// Agents otherwise call tools until goose stops them, and the run
-		// ends on goose's turn-limit notice instead of an answer.
-		system = strings.TrimSpace(system + "\n\n" + gooseBudget(turns))
-	}
-	if system != "" {
-		args = append(args, "--system", system)
-	}
 	if wantsWebTools(req) {
 		web, err := g.webCommand()
 		if err != nil {
@@ -254,8 +251,63 @@ func (g *Goose) args(req Request) ([]string, error) {
 		}
 		args = append(args, "--with-extension", gooseExtension+":"+web)
 	}
-	// The prompt goes on stdin so long prompts never hit argv limits.
-	return append(args, "-i", "-"), nil
+	return args, nil
+}
+
+// system is req's system prompt, plus the turn budget when the agent has
+// web tools.
+func (g *Goose) system(req Request) string {
+	system := strings.TrimSpace(req.SystemPrompt)
+	if wantsWebTools(req) {
+		// Agents otherwise call tools until goose stops them, and the run
+		// ends on goose's turn-limit notice instead of an answer.
+		system = strings.TrimSpace(system + "\n\n" + gooseBudget(g.turns()))
+	}
+	return system
+}
+
+// writeGooseRecipe writes a recipe file for one run and returns its path.
+// goose has no file form of --system, and a dive's system prompt carries
+// its research context, which can pass ARG_MAX (1 MiB on macOS) on argv.
+// A recipe can't be combined with -i, so the prompt goes in it too.
+func writeGooseRecipe(system, prompt string) (string, error) {
+	f, err := os.CreateTemp("", "researchguy-goose-recipe-*.json")
+	if err != nil {
+		return "", fmt.Errorf("creating goose recipe: %w", err)
+	}
+	_, werr := f.Write(gooseRecipe(system, prompt))
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("writing goose recipe: %w", werr)
+	}
+	return f.Name(), nil
+}
+
+// gooseRecipe is the recipe: the system prompt as its instructions, and
+// the prompt. goose renders a recipe file as a template before parsing it,
+// so every brace in the text is written as a JSON escape, and a "{{" in a
+// fetched page or a report reaches the model as written, not as a tag.
+func gooseRecipe(system, prompt string) []byte {
+	var b bytes.Buffer
+	b.WriteString(`{"version":"1.0.0","title":"researchguy","description":"one researchguy goose run"`)
+	if system != "" {
+		b.WriteString(`,"instructions":`)
+		b.Write(gooseJSONString(system))
+	}
+	b.WriteString(`,"prompt":`)
+	b.Write(gooseJSONString(prompt))
+	b.WriteString("}")
+	return b.Bytes()
+}
+
+func gooseJSONString(s string) []byte {
+	out, _ := json.Marshal(s) // a string always marshals
+	out = bytes.ReplaceAll(out, []byte("{"), []byte(`\u007b`))
+	return bytes.ReplaceAll(out, []byte("}"), []byte(`\u007d`))
 }
 
 // gooseBudget tells the agent how many turns it has, leaving a few to

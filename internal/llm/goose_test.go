@@ -53,6 +53,11 @@ dir="` + dir + `"
 printf '%s\n' "$@" > "$dir/args.txt"
 pwd > "$dir/cwd.txt"
 cat > "$dir/stdin.txt"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--recipe" ]; then cp "$a" "$dir/recipe.json"; fi
+  prev="$a"
+done
 echo '    __( O)>  new session'
 echo '     L L     goose is ready'
 cat "$dir/events.jsonl"
@@ -64,6 +69,16 @@ exit ` + fmt.Sprint(exitCode) + `
 		t.Fatal(err)
 	}
 	return binary, dir
+}
+
+// readGooseRecipe reads the recipe file a fake goose was given, raw and parsed.
+func readGooseRecipe(t *testing.T, path string) (raw string, r struct{ Instructions, Prompt string }) {
+	t.Helper()
+	raw = readFile(t, path)
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		t.Fatalf("recipe %s is not JSON: %v", path, err)
+	}
+	return raw, r
 }
 
 func gooseArgs(t *testing.T, dir string) []string {
@@ -123,23 +138,34 @@ func TestGoose_Complete_EvidenceFinalMessageAndArgs(t *testing.T) {
 		"--provider":       "openai",
 		"--model":          "glm-test",
 		"--with-extension": "researchguy:/opt/rg mcp --profile web",
-		"-i":               "-",
 	} {
 		if got := argAfter(args, flag); got != want {
 			t.Errorf("%s = %q, want %q", flag, got, want)
 		}
 	}
-	// The fake records one argv entry per line, so the multi-line system
-	// prompt spans lines.
-	if !strings.Contains(strings.Join(args, "\n"), "--system\nBe rigorous.\n\n"+gooseBudget(12)+"\n") {
-		t.Errorf("args %q should pass the system prompt and then the turn budget", args)
+	if argAfter(args, "--system") != "" || argAfter(args, "-i") != "" {
+		t.Errorf("args %q should carry no prompt", args)
 	}
-	if stdin := readFile(t, filepath.Join(dir, "stdin.txt")); stdin != "When did the FDA post it?" {
-		t.Errorf("stdin = %q, want the user prompt alone", stdin)
+	_, r := readGooseRecipe(t, filepath.Join(dir, "recipe.json"))
+	if r.Instructions != "Be rigorous.\n\n"+gooseBudget(12) {
+		t.Errorf("recipe instructions = %q, want the system prompt and then the turn budget", r.Instructions)
+	}
+	if r.Prompt != "When did the FDA post it?" {
+		t.Errorf("recipe prompt = %q, want the user prompt alone", r.Prompt)
+	}
+	if stdin := readFile(t, filepath.Join(dir, "stdin.txt")); stdin != "" {
+		t.Errorf("stdin = %q, want nothing", stdin)
+	}
+	recipe := argAfter(args, "--recipe")
+	if _, err := os.Stat(recipe); !os.IsNotExist(err) {
+		t.Errorf("recipe %q should be removed after the run", recipe)
 	}
 	cwd := strings.TrimSpace(readFile(t, filepath.Join(dir, "cwd.txt")))
 	if !strings.Contains(filepath.Base(cwd), "researchguy-goose-") {
 		t.Errorf("goose ran in %q, want an isolated scratch dir", cwd)
+	}
+	if filepath.Dir(recipe) == cwd {
+		t.Errorf("recipe %q should sit outside the scratch dir", recipe)
 	}
 	if _, err := os.Stat(cwd); !os.IsNotExist(err) {
 		t.Errorf("scratch dir %q should be removed after the run", cwd)
@@ -204,11 +230,40 @@ func TestGoose_Complete_NoWebToolsNoExtension(t *testing.T) {
 			t.Errorf("args %v should not have %s", args, flag)
 		}
 	}
+	if raw, r := readGooseRecipe(t, filepath.Join(dir, "recipe.json")); strings.Contains(raw, `"instructions"`) || r.Prompt != "summarize" {
+		t.Errorf("recipe = %s, want the prompt and no instructions", raw)
+	}
 	if got := argAfter(args, "--max-turns"); got != fmt.Sprint(defaultGooseTurns) {
 		t.Errorf("--max-turns = %q, want the default %d", got, defaultGooseTurns)
 	}
 	if len(g.Evidence()) != 0 {
 		t.Errorf("Evidence() = %v, want none", g.Evidence())
+	}
+}
+
+// A system prompt past ARG_MAX (1 MiB on macOS, 128 KiB for one argument
+// on Linux) used to go on argv as --system, and every worker failed with
+// "argument list too long". Both prompts go in the recipe file instead.
+func TestGoose_Complete_LongPromptsStayOffArgv(t *testing.T) {
+	binary, dir := fakeGoose(t, gooseAnswer("m1", "done"), 0)
+	system := strings.Repeat("Existing research, whole files and chunks.\n", 50000) + "end"
+	prompt := strings.Repeat("The topic, with its rules. ", 50000) + "end"
+	g := &Goose{Binary: binary}
+	got, err := g.Complete(context.Background(), Request{SystemPrompt: system, UserPrompt: prompt})
+	if err != nil {
+		t.Fatalf("Complete() error: %v", err)
+	}
+	if got != "done" {
+		t.Errorf("Complete() = %q, want done", got)
+	}
+	for _, a := range gooseArgs(t, dir) {
+		if len(a) > 4096 {
+			t.Fatalf("an argument of %d bytes went on argv", len(a))
+		}
+	}
+	_, r := readGooseRecipe(t, filepath.Join(dir, "recipe.json"))
+	if r.Instructions != system || r.Prompt != prompt {
+		t.Errorf("recipe has %d bytes of instructions and %d of prompt, want %d and %d", len(r.Instructions), len(r.Prompt), len(system), len(prompt))
 	}
 }
 
@@ -226,8 +281,8 @@ func TestGoose_Complete_NoFinalMessageNoEvidence(t *testing.T) {
 
 // fakeGooseTwoPass stands in for goose across a run and its finish pass: a
 // call with the web extension prints toolEvents, one without prints
-// finishEvents. Each call's argv and stdin go to args.<n>.txt and
-// stdin.<n>.txt under dir, numbered from 1.
+// finishEvents. Each call's argv, stdin and recipe go to args.<n>.txt,
+// stdin.<n>.txt and recipe.<n>.json under dir, numbered from 1.
 func fakeGooseTwoPass(t *testing.T, toolEvents, finishEvents []string) (binary, dir string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -242,6 +297,11 @@ n=$(( $(cat "$dir/count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$dir/count"
 printf '%s\n' "$@" > "$dir/args.$n.txt"
 cat > "$dir/stdin.$n.txt"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--recipe" ]; then cp "$a" "$dir/recipe.$n.json"; fi
+  prev="$a"
+done
 echo '    __( O)>  new session'
 case " $* " in
   *" --with-extension "*) cat "$dir/tools.jsonl" ;;
@@ -305,16 +365,16 @@ func TestGoose_Complete_TurnLimitFinishPass(t *testing.T) {
 	if argAfter(args, "--with-extension") != "" {
 		t.Errorf("finish pass args %v should have no tools", args)
 	}
-	if argAfter(args, "--max-turns") != "2" || argAfter(args, "--model") != "glm-test" || argAfter(args, "--system") != "Be rigorous." {
-		t.Errorf("finish pass args = %v, want 2 turns, the same model and the plain system prompt", args)
+	if argAfter(args, "--max-turns") != "2" || argAfter(args, "--model") != "glm-test" {
+		t.Errorf("finish pass args = %v, want 2 turns and the same model", args)
 	}
-	if last := args[len(args)-2:]; last[0] != "-i" || last[1] != "-" {
-		t.Errorf("finish pass args should end with -i -, got %v", args)
+	_, r := readGooseRecipe(t, filepath.Join(dir, "recipe.2.json"))
+	if r.Instructions != "Be rigorous." {
+		t.Errorf("finish pass instructions = %q, want the plain system prompt", r.Instructions)
 	}
-	stdin := readFile(t, filepath.Join(dir, "stdin.2.txt"))
 	for _, want := range []string{"When did the FDA post it?", "Tool result 1: web_search", "You are not a horse.", "Tool result 2: web_fetch", "Why You Should Not Use Ivermectin", "used up"} {
-		if !strings.Contains(stdin, want) {
-			t.Errorf("finish prompt missing %q:\n%s", want, stdin)
+		if !strings.Contains(r.Prompt, want) {
+			t.Errorf("finish prompt missing %q:\n%s", want, r.Prompt)
 		}
 	}
 	if len(g.Evidence()) != 2 || captured != 2 {
@@ -425,18 +485,43 @@ func TestFinishPrompt_Caps(t *testing.T) {
 }
 
 func TestSetArg(t *testing.T) {
-	got := setArg([]string{"run", "--max-turns", "30", "-i", "-"}, "--max-turns", "2")
-	if strings.Join(got, " ") != "run --max-turns 2 -i -" {
+	got := setArg([]string{"run", "--max-turns", "30", "--no-session"}, "--max-turns", "2")
+	if strings.Join(got, " ") != "run --max-turns 2 --no-session" {
 		t.Errorf("replace = %v", got)
 	}
-	got = setArg([]string{"run", "-i", "-"}, "--max-turns", "2")
-	if strings.Join(got, " ") != "run --max-turns 2 -i -" {
+	got = setArg([]string{"run", "--no-session"}, "--max-turns", "2")
+	if strings.Join(got, " ") != "run --no-session --max-turns 2" {
 		t.Errorf("insert = %v", got)
 	}
 	orig := []string{"run", "--max-turns", "30"}
 	setArg(orig, "--max-turns", "2")
 	if orig[2] != "30" {
 		t.Errorf("setArg should not change its input")
+	}
+}
+
+// goose renders a recipe file as a template before parsing it. Every brace
+// in the text is a JSON escape, so the file's only braces are its own, and
+// the text parses back unchanged.
+func TestGooseRecipe_BracesEscaped(t *testing.T) {
+	system := "Report says {{ name }} and {% raw %}x{% endraw %} {# note #}.\nQuote: \"a\" \u2014 \U000E0041"
+	prompt := "Topic {x} and }} {{"
+	raw := string(gooseRecipe(system, prompt))
+	if strings.Count(raw, "{") != 1 || strings.Count(raw, "}") != 1 {
+		t.Errorf("recipe has braces from the text: %s", raw)
+	}
+	var r struct{ Version, Title, Description, Instructions, Prompt string }
+	if err := json.Unmarshal([]byte(raw), &r); err != nil {
+		t.Fatalf("recipe not JSON: %v", err)
+	}
+	if r.Instructions != system || r.Prompt != prompt {
+		t.Errorf("round trip = %q, %q", r.Instructions, r.Prompt)
+	}
+	if r.Version == "" || r.Title == "" || r.Description == "" {
+		t.Errorf("recipe lacks the fields goose requires: %+v", r)
+	}
+	if raw := string(gooseRecipe("", "p")); strings.Contains(raw, "instructions") {
+		t.Errorf("an empty system prompt should leave instructions out: %s", raw)
 	}
 }
 
